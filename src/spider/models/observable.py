@@ -29,7 +29,7 @@ def canonicalize_observable(obs_type: ObservableType, value: str) -> str:
         if not norm.startswith("AS") and norm.isdigit():
             norm = f"AS{norm}"
         return norm
-    elif obs_type == ObservableType.USERNAME:
+    elif obs_type in (ObservableType.USERNAME, ObservableType.ACCOUNT):
         return cleaned.lower()
     return cleaned
 

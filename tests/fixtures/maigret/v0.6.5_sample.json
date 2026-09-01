@@ -1,0 +1,22 @@
+{
+  "username": "johndoe1998",
+  "sites": {
+    "GitHub": {
+      "status": "Found",
+      "url_user": "https://github.com/johndoe1998",
+      "url_main": "https://github.com",
+      "tags": ["coding", "opensource"],
+      "rank": 1
+    },
+    "Reddit": {
+      "status": "Found",
+      "url_user": "https://reddit.com/user/johndoe1998",
+      "url_main": "https://reddit.com",
+      "tags": ["social", "forum"],
+      "rank": 2
+    },
+    "Twitter": {
+      "status": "Not found"
+    }
+  }
+}

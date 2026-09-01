@@ -1,11 +1,11 @@
-# NEXT ACTIONS — PHASE 3: MAIGRET INTEGRATION
+# NEXT ACTIONS — PHASE 4: UNCOVER INTEGRATION
 
-1. Implement Maigret adapter (`src/spider/providers/maigret/adapter.py`):
-   - Capability: `USERNAME_DISCOVERY`
-   - Accepts: `USERNAME`
-   - Produces: `ACCOUNT`, `URL`
-   - Strict conservative resolution: Emits `SHARES_USERNAME` or `POSSIBLY_SAME_IDENTITY` assertions with explicit confidence, never automatic `SAME_PERSON`.
-2. Create frozen contract fixture in `tests/fixtures/maigret/v0.6.5_sample.json`.
-3. Create contract and conservative resolution tests (`tests/contract/test_maigret.py`, `tests/unit/test_conservative_resolution.py`).
+1. Implement Uncover adapter (`src/spider/providers/uncover/adapter.py`):
+   - Capability: `INTERNET_INTELLIGENCE`
+   - Accepts: `[DOMAIN, IP_ADDRESS, ORGANIZATION]`
+   - Produces: `[IP_ADDRESS, HOSTNAME, URL, CERTIFICATE]`
+   - Missing credential state handling: If API keys (Shodan, Censys, etc.) are missing, transition state to `MISSING_CREDENTIAL` or `DEGRADED` without causing SPIDER or the case to fail.
+2. Create frozen contract fixture in `tests/fixtures/uncover/v1.2.1_sample.jsonl`.
+3. Create contract tests (`tests/contract/test_uncover.py`).
 4. Run full test suite and verify 100% pass.
-5. Proceed to Phase 4 (Uncover).
+5. Proceed to Phase 5 (CLI, MCP Server, Docs, Final Audit).
