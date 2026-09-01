@@ -1,0 +1,110 @@
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
+from typing import Dict, Any, List, Optional
+from sqlalchemy import delete, select
+from spider.cli.main import get_service
+from spider.storage.schema import CaseRecord, TargetRecord, ObservationRecord, EntityRecord, AssertionRecord, EvidenceRefRecord, TaskRunRecord, ProviderRunRecord, ExecutionLedgerRecord
+
+router = APIRouter(prefix="/cases", tags=["Cases"])
+
+class CreateCaseRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+@router.get("", response_model=List[Dict[str, Any]])
+async def list_cases():
+    service = get_service()
+    await service.start()
+    try:
+        cases = await service.list_cases()
+        return cases
+    finally:
+        await service.stop()
+
+@router.post("", response_model=Dict[str, Any])
+async def create_case(req: CreateCaseRequest):
+    service = get_service()
+    await service.start()
+    try:
+        case = await service.create_case(name=req.name, description=req.description, tags=req.tags)
+        return case
+    finally:
+        await service.stop()
+
+@router.get("/{case_id}", response_model=Dict[str, Any])
+async def get_case(case_id: str):
+    service = get_service()
+    await service.start()
+    try:
+        async with service.db_manager.session_factory() as session:
+            case_rec = await session.get(CaseRecord, case_id)
+            if not case_rec:
+                raise HTTPException(status_code=404, detail="Case not found")
+            
+            targets_res = await session.execute(select(TargetRecord).where(TargetRecord.case_id == case_id))
+            targets = [{"id": t.id, "type": t.observable_type, "value": t.canonical_value, "scope_authorized": t.scope_authorized} for t in targets_res.scalars().all()]
+            
+            entities = await service.get_case_entities(case_id)
+            assertions = await service.get_case_assertions(case_id)
+            summary = await service.get_graph_summary(case_id)
+            
+            return {
+                "id": case_rec.id,
+                "name": case_rec.name,
+                "description": case_rec.description,
+                "tags": case_rec.tags or [],
+                "status": case_rec.status,
+                "created_at": case_rec.created_at.isoformat() if case_rec.created_at else "",
+                "targets": targets,
+                "entities_count": len(entities),
+                "assertions_count": len(assertions),
+                "summary": summary
+            }
+    finally:
+        await service.stop()
+
+@router.delete("/{case_id}")
+async def delete_case(case_id: str):
+    service = get_service()
+    await service.start()
+    try:
+        async def _delete_txn(session):
+            case_rec = await session.get(CaseRecord, case_id)
+            if not case_rec:
+                raise HTTPException(status_code=404, detail="Case not found")
+            
+            # Cascade delete all related records for this case
+            await session.execute(delete(EvidenceRefRecord).where(EvidenceRefRecord.assertion_id.in_(
+                select(AssertionRecord.id).where(AssertionRecord.case_id == case_id)
+            )))
+            await session.execute(delete(AssertionRecord).where(AssertionRecord.case_id == case_id))
+            await session.execute(delete(EntityRecord).where(EntityRecord.case_id == case_id))
+            await session.execute(delete(ObservationRecord).where(ObservationRecord.case_id == case_id))
+            await session.execute(delete(TaskRunRecord).where(TaskRunRecord.case_id == case_id))
+            await session.execute(delete(ProviderRunRecord).where(ProviderRunRecord.case_id == case_id))
+            await session.execute(delete(ExecutionLedgerRecord).where(ExecutionLedgerRecord.case_id == case_id))
+            await session.execute(delete(TargetRecord).where(TargetRecord.case_id == case_id))
+            await session.execute(delete(CaseRecord).where(CaseRecord.id == case_id))
+            return {"status": "DELETED", "case_id": case_id}
+
+        return await service.db_writer.submit(_delete_txn)
+    finally:
+        await service.stop()
+
+@router.get("/{case_id}/export")
+async def export_case(case_id: str):
+    service = get_service()
+    await service.start()
+    try:
+        entities = await service.get_case_entities(case_id)
+        assertions = await service.get_case_assertions(case_id)
+        summary = await service.get_graph_summary(case_id)
+        return {
+            "case_id": case_id,
+            "summary": summary,
+            "entities": entities,
+            "assertions": assertions
+        }
+    finally:
+        await service.stop()

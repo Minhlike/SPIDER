@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SPIDER — Evidence-First OSINT Orchestration Engine</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <script src="/static/vendor/cytoscape.min.js"></script>
+</head>
+<body>
+  <div id="sidebar">
+    <div class="logo-container">
+      <div class="logo-icon">&#x1F577;</div>
+      <div class="logo-text">SPIDER</div>
+    </div>
+    <ul class="nav-links">
+      <li class="nav-item active" id="nav-dashboard" onclick="switchView('dashboard')">
+        <span>&#x1F4CA;</span> Dashboard
+      </li>
+      <li class="nav-item" id="nav-investigate" onclick="switchView('investigate')">
+        <span>&#x1F50D;</span> New Investigation
+      </li>
+      <li class="nav-item" id="nav-providers" onclick="switchView('providers')">
+        <span>&#x2699;</span> Provider Health
+      </li>
+    </ul>
+    <div class="sidebar-footer">
+      <span>Backend: 127.0.0.1:8765</span>
+      <span class="ws-status-indicator" id="ws-indicator" title="WebSocket Live Connected"></span>
+    </div>
+  </div>
+
+  <div id="main-wrapper">
+    <header>
+      <div class="header-title" id="header-breadcrumb">SPIDER Engine Console</div>
+      <div id="notification-bar" style="display:none; color:var(--accent-cyan); font-size:13px; font-weight:600;"></div>
+    </header>
+
+    <div id="content-container">
+      <!-- 1. DASHBOARD VIEW -->
+      <div id="view-dashboard" class="view-panel active">
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-label">Investigation Cases</div>
+            <div class="kpi-value" id="kpi-cases">-</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Active Providers</div>
+            <div class="kpi-value" id="kpi-providers">-</div>
+          </div>
+        </div>
+
+        <div class="table-container">
+          <div class="table-header">
+            <span>Recent Investigations</span>
+            <button class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="switchView('investigate')">+ New Investigation</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Case Name</th>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="recent-cases-tbody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 2. NEW INVESTIGATION VIEW -->
+      <div id="view-investigate" class="view-panel">
+        <div class="table-container" style="max-width: 700px; padding: 24px;">
+          <h2 style="font-size:18px; font-weight:700; margin-bottom:20px;">Start Evidence-First OSINT Investigation</h2>
+          
+          <div class="form-group">
+            <label class="form-label">Target Value (Domain, IP, Username, Email, etc.)</label>
+            <input type="text" id="target-input" class="form-input" placeholder="e.g. example.com, AS15133, user1998, admin@corp.com" autocomplete="off">
+            <small style="color:var(--text-muted); margin-top:4px; display:block;">Detected Type: <strong id="type-preview" style="color:var(--accent-cyan);">UNKNOWN</strong></small>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Network Safety Policy Profile</label>
+            <select id="profile-select" class="form-select">
+              <option value="passive_standard">passive_standard (Default Safe: 3rd-Party Passive OSINT Registries Only)</option>
+              <option value="local_only">local_only (Strict Offline Processing)</option>
+              <option value="active_authorized">active_authorized (Target Direct Active Discovery - Requires Scope Auth)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Max Recursion Depth</label>
+            <select id="depth-select" class="form-select">
+              <option value="1">1 (Single Hop Discovery)</option>
+              <option value="2" selected>2 (Fan-Out: Target &rarr; Hosts &rarr; Infrastructure)</option>
+              <option value="3">3 (Deep Multi-Hop Expansion)</option>
+            </select>
+          </div>
+
+          <div class="form-group" style="display:flex; align-items:center; gap:8px; margin-top:20px;">
+            <input type="checkbox" id="authorized-checkbox">
+            <label for="authorized-checkbox" style="font-size:13px; color:var(--text-secondary); cursor:pointer;">Target is within authorized investigation scope</label>
+          </div>
+
+          <div style="margin-top:24px; display:flex; gap:12px;">
+            <button class="btn btn-primary" id="btn-start-investigate" onclick="startInvestigation()">Start Investigation</button>
+            <button class="btn btn-secondary" onclick="switchView('dashboard')">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. CASE DETAIL & KNOWLEDGE GRAPH VIEW -->
+      <div id="view-case_detail" class="view-panel">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
+          <div>
+            <h2 id="case-title" style="font-size:20px; font-weight:700;">Case Name</h2>
+            <p id="case-meta" style="font-size:12px; color:var(--text-muted); margin-top:4px;"></p>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn-secondary" onclick="triggerRebuild()">Rebuild Graph</button>
+            <button class="btn btn-secondary" onclick="exportCaseData()">Export JSON</button>
+            <button class="btn btn-danger" onclick="deleteCurrentCase()">Delete</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card" style="padding:10px 14px;">
+            <div class="kpi-label">Discovered Entities</div>
+            <div class="kpi-value" id="case-kpi-entities">-</div>
+          </div>
+          <div class="kpi-card" style="padding:10px 14px;">
+            <div class="kpi-label">Materialized Assertions</div>
+            <div class="kpi-value" id="case-kpi-assertions">-</div>
+          </div>
+        </div>
+
+        <!-- Graph Controls -->
+        <div class="graph-toolbar">
+          <select id="filter-entity-type" class="form-select" style="width:160px; padding:6px 10px;" onchange="loadKnowledgeGraph(currentCaseId)">
+            <option value="">All Entity Types</option>
+            <option value="DOMAIN">Domains</option>
+            <option value="HOSTNAME">Hostnames</option>
+            <option value="IP_ADDRESS">IP Addresses</option>
+            <option value="ASN">ASNs</option>
+            <option value="CIDR">CIDRs</option>
+            <option value="ORGANIZATION">Organizations</option>
+            <option value="ACCOUNT">Accounts</option>
+          </select>
+
+          <select id="filter-min-conf" class="form-select" style="width:150px; padding:6px 10px;" onchange="loadKnowledgeGraph(currentCaseId)">
+            <option value="0.0">All Confidence</option>
+            <option value="0.8">&gt;= 80% Confidence</option>
+            <option value="0.9">&gt;= 90% Confidence</option>
+          </select>
+
+          <input type="text" id="filter-search" class="form-input" placeholder="Search nodes..." style="width:180px; padding:6px 10px;" oninput="loadKnowledgeGraph(currentCaseId)">
+
+          <span class="badge badge-running" id="graph-node-count-badge">Loading...</span>
+        </div>
+
+        <div id="cy-container"></div>
+      </div>
+
+      <!-- 4. PROVIDER HEALTH VIEW -->
+      <div id="view-providers" class="view-panel">
+        <div class="table-container">
+          <div class="table-header">
+            <span>Provider Diagnostics & Capabilities Matrix</span>
+            <button class="btn btn-secondary" style="padding:6px 12px; font-size:12px;" onclick="loadProviders()">Refresh Diagnostics</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Provider ID</th>
+                <th>Version</th>
+                <th>Status</th>
+                <th>Capabilities</th>
+                <th>Network Class</th>
+                <th>Health Diagnostic</th>
+              </tr>
+            </thead>
+            <tbody id="providers-tbody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Evidence / Node Inspector Drawer -->
+  <div id="side-drawer" class="drawer">
+    <div class="drawer-header">
+      <span id="drawer-title" style="font-weight:700; font-size:15px;">Inspector</span>
+      <button class="drawer-close" onclick="closeDrawer()">&times;</button>
+    </div>
+    <div class="drawer-body" id="drawer-content"></div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
