@@ -1,0 +1,50 @@
+[
+  {
+    "type": "INTERNET_NAME",
+    "data": "dev.example.com",
+    "source": "sfp_dnsresolve",
+    "confidence": 100,
+    "visibility": "passive",
+    "risk": 0
+  },
+  {
+    "type": "IP_ADDRESS",
+    "data": "93.184.216.37",
+    "source": "sfp_dnsresolve",
+    "confidence": 100,
+    "visibility": "passive",
+    "risk": 0
+  },
+  {
+    "type": "EMAILADDR",
+    "data": "security@example.com",
+    "source": "sfp_hunter",
+    "confidence": 90,
+    "visibility": "passive",
+    "risk": 0
+  },
+  {
+    "type": "PHONE_NUMBER",
+    "data": "+1-800-555-0199",
+    "source": "sfp_phone",
+    "confidence": 85,
+    "visibility": "passive",
+    "risk": 0
+  },
+  {
+    "type": "BGP_AS_OWNER",
+    "data": "AS15133",
+    "source": "sfp_bgpview",
+    "confidence": 100,
+    "visibility": "passive",
+    "risk": 0
+  },
+  {
+    "type": "USERNAME",
+    "data": "secops_admin",
+    "source": "sfp_github",
+    "confidence": 80,
+    "visibility": "passive",
+    "risk": 0
+  }
+]

@@ -1,10 +1,11 @@
-# NEXT ACTIONS — PHASE 2: SPIDERFOOT INTEGRATION
+# NEXT ACTIONS — PHASE 3: MAIGRET INTEGRATION
 
-1. Set up SpiderFoot v4.0 integration:
-   - SpiderFoot as broad OSINT provider (capability `BROAD_OSINT`, `DNS_INTELLIGENCE`, etc.).
-   - Implement `SpiderFootAdapter` behind strict boundary in `src/spider/providers/spiderfoot/adapter.py`.
-   - Support headless execution mode and structured export parsing (JSON/SQLite).
-2. Create frozen contract fixtures in `tests/fixtures/spiderfoot/v4.0_sample.json`.
-3. Implement contract tests (`tests/contract/test_spiderfoot.py`).
-4. Implement integration tests and verify full test suite passes.
-5. Proceed to Phase 3 (Maigret).
+1. Implement Maigret adapter (`src/spider/providers/maigret/adapter.py`):
+   - Capability: `USERNAME_DISCOVERY`
+   - Accepts: `USERNAME`
+   - Produces: `ACCOUNT`, `URL`
+   - Strict conservative resolution: Emits `SHARES_USERNAME` or `POSSIBLY_SAME_IDENTITY` assertions with explicit confidence, never automatic `SAME_PERSON`.
+2. Create frozen contract fixture in `tests/fixtures/maigret/v0.6.5_sample.json`.
+3. Create contract and conservative resolution tests (`tests/contract/test_maigret.py`, `tests/unit/test_conservative_resolution.py`).
+4. Run full test suite and verify 100% pass.
+5. Proceed to Phase 4 (Uncover).
