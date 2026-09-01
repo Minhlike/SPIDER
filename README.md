@@ -41,7 +41,20 @@ External OSINT Tools (Subfinder, Metabigor, SpiderFoot, Maigret, Uncover)
 
 ---
 
-## 🚀 Quick Start & CLI
+## 🚀 Quick Start: Local Web UI & CLI
+
+### Launching Local Web UI (Recommended)
+Simply double-click or run:
+`cmd
+start_spider.bat
+`
+This automatically starts the backend on 127.0.0.1:8765 and opens your default browser.
+To stop the server cleanly:
+`cmd
+stop_spider.bat
+`
+
+### CLI Commands (For Automation & Power Users)
 
 ### Diagnostics & Doctor
 ```powershell

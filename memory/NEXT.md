@@ -1,8 +1,8 @@
-# SPIDER V1.0.0 — COMPLETED & READY
+# SPIDER V1.1.0 (WITH LOCAL WEB UI) — COMPLETED & READY
 
-All Definition of Done criteria for SPIDER V1.0.0 have been met with 100% test pass rate across all 29 automated tests.
+All 20 Definition of Done criteria for SPIDER Local Web UI have been fulfilled with 100% test pass rate across 37 automated tests.
 
-## Recommended Next Milestones (V2.0)
-1. Build optional Web UI canvas visualization using Cytoscape / Vis.js.
-2. Add PostgreSQL storage backend adapter.
-3. Add optional REST API using FastAPI.
+## Recommended Next Milestones
+1. Multi-target batch import from file / CSV via Web UI.
+2. Advanced Cytoscape graph clustering (community detection / Louvain layouts).
+3. PDF intelligence report generation from Knowledge Graph.
