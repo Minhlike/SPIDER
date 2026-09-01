@@ -17,6 +17,7 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
 
 class DatabaseManager:
     def __init__(self, db_path: str = "data/spider.db"):
+        db_path = db_path or "data/spider.db"
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         # Using aiosqlite for async sqlite

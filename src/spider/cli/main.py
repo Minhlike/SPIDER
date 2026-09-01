@@ -6,16 +6,10 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
-from spider.service.service import SpiderService
+from spider.core.factory import create_spider_service
 from spider.models.enums import ObservableType, ProviderState
 from spider.models.budget import ExecutionBudget
-from spider.providers.fake.provider_a import FakeProviderA
-from spider.providers.fake.provider_b import FakeProviderB
-from spider.providers.subfinder.adapter import SubfinderAdapter
-from spider.providers.metabigor.adapter import MetabigorAdapter
-from spider.providers.spiderfoot.adapter import SpiderFootAdapter
-from spider.providers.maigret.adapter import MaigretAdapter
-from spider.providers.uncover.adapter import UncoverAdapter
+from spider.models.classifier import TargetClassifier
 
 app = typer.Typer(
     name="spider",
@@ -29,54 +23,35 @@ app.add_typer(provider_app, name="provider")
 
 console = Console()
 
-def get_service() -> SpiderService:
-    service = SpiderService()
-    service.provider_manager.register_adapter(FakeProviderA())
-    service.provider_manager.register_adapter(FakeProviderB())
-    service.provider_manager.register_adapter(SubfinderAdapter())
-    service.provider_manager.register_adapter(MetabigorAdapter())
-    service.provider_manager.register_adapter(SpiderFootAdapter())
-    service.provider_manager.register_adapter(MaigretAdapter())
-    service.provider_manager.register_adapter(UncoverAdapter())
-    return service
-
 def infer_observable_type(target: str) -> ObservableType:
-    val = target.strip().lower()
-    if "@" in val and "." in val and not val.endswith(".com"):
-        return ObservableType.ACCOUNT
-    if "@" in val:
-        return ObservableType.EMAIL
-    if val.startswith("as") and val[2:].isdigit():
-        return ObservableType.ASN
-    if "/" in val and any(c.isdigit() for c in val):
-        return ObservableType.CIDR
-    if any(c.isalpha() for c in val) and "." in val:
-        return ObservableType.DOMAIN
-    if all(c.isdigit() or c == "." for c in val) and val.count(".") == 3:
-        return ObservableType.IP_ADDRESS
-    return ObservableType.USERNAME
+    result = TargetClassifier.classify(target)
+    return result.detected_type
 
 @app.command()
 def doctor(json_output: bool = typer.Option(False, "--json", help="Output machine-readable JSON")):
     """Run comprehensive system, database, and provider health diagnostics."""
     async def _run():
-        service = get_service()
+        service = create_spider_service(mode="production")
         await service.start()
         try:
             diag = await service.doctor()
             if json_output:
                 console.print(json.dumps(diag, indent=2))
             else:
-                console.print(Panel.fit("[bold green]SPIDER System Health Report[/bold green]", border_style="green"))
-                table = Table(title="Provider Diagnostics")
+                console.print(Panel.fit("[bold green]SPIDER System Health & Reality Report[/bold green]", border_style="green"))
+                table = Table(title="Provider Diagnostics & Reality Verification")
                 table.add_column("Provider ID", style="cyan")
                 table.add_column("Status", style="bold")
+                table.add_column("Version", style="magenta")
+                table.add_column("Latency (ms)", justify="right")
                 table.add_column("Message", style="white")
 
                 for pid, info in diag["providers"].items():
-                    state = info["state"]
-                    color = "green" if state == "READY" else ("yellow" if state == "MISSING_CREDENTIAL" else "red")
-                    table.add_row(pid, f"[{color}]{state}[/{color}]", info["message"])
+                    state = info.get("state", "UNKNOWN")
+                    color = "green" if state == "READY" else ("yellow" if "LIMITED" in state or "DEGRADED" in state or "MISSING_CREDENTIAL" in state else "red")
+                    ver = info.get("provider_version") or "N/A"
+                    lat = f"{info.get('latency_ms', 0):.1f}" if info.get("latency_ms") else "-"
+                    table.add_row(pid, f"[{color}]{state}[/{color}]", ver, lat, info.get("message", "OK"))
                 console.print(table)
         finally:
             await service.stop()
@@ -87,20 +62,21 @@ def investigate(
     target: str = typer.Argument(..., help="Target value (domain, IP, username, email, etc.)"),
     case_name: Optional[str] = typer.Option(None, "--name", "-n", help="Case name"),
     authorized: bool = typer.Option(False, "--authorized", "-a", help="Explicit authorized scope flag"),
-    max_depth: int = typer.Option(3, "--max-depth", "-d", help="Maximum recursion depth"),
+    max_depth: int = typer.Option(2, "--max-depth", "-d", help="Maximum recursion depth"),
     profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Policy profile name"),
     json_output: bool = typer.Option(False, "--json", help="Output machine-readable JSON")
 ):
     """Execute an end-to-end evidence-first OSINT investigation on a target."""
     async def _run():
-        service = get_service()
+        service = create_spider_service(mode="production")
         await service.start()
         try:
             name = case_name or f"Investigation: {target}"
             case_res = await service.create_case(name=name, tags=["cli", "investigation"])
             case_id = case_res["id"]
 
-            obs_type = infer_observable_type(target)
+            classification = TargetClassifier.classify(target)
+            obs_type = classification.detected_type
             await service.add_target(case_id, target, obs_type, scope_authorized=authorized)
 
             budget = ExecutionBudget(max_depth=max_depth)
@@ -120,15 +96,21 @@ def investigate(
                 }
                 console.print(json.dumps(res, indent=2))
             else:
-                summary_text = f"Case ID: {case_id}\nTarget: {target} ({obs_type.value})\nStatus: {run_res['status']}\nTasks Run: {run_res['tasks_executed']}\nObservations: {run_res['observations_collected']}"
+                summary_text = (
+                    f"Case ID: {case_id}\n"
+                    f"Target: {target} ({obs_type.value})\n"
+                    f"Status: {run_res['status']}\n"
+                    f"Tasks Run: {run_res['tasks_executed']} | Observations: {run_res['observations_collected']}\n"
+                    f"Entities Discovered: {len(entities)} | Assertions: {len(assertions)}"
+                )
                 console.print(Panel(summary_text, title="Investigation Results", border_style="cyan"))
                 
-                t_ent = Table(title="Discovered Entities")
+                t_ent = Table(title="Top Discovered Entities")
                 t_ent.add_column("Type", style="magenta")
                 t_ent.add_column("Canonical Name", style="bold green")
                 t_ent.add_column("Observations", justify="right")
                 t_ent.add_column("First Seen", style="dim")
-                for e in entities:
+                for e in entities[:20]:
                     t_ent.add_row(e["type"], e["canonical_name"], str(e["observation_count"]), e["first_seen"][:19])
                 console.print(t_ent)
 
@@ -137,7 +119,7 @@ def investigate(
                 t_asrt.add_column("Relationship Type", style="yellow")
                 t_asrt.add_column("Confidence", justify="right")
                 t_asrt.add_column("Sources", style="cyan")
-                for a in assertions:
+                for a in assertions[:20]:
                     t_asrt.add_row(a["id"][:8], a["assertion_type"], f"{a['confidence']:.2f}", ",".join(a["source_families"] or ["-"]))
                 console.print(t_asrt)
         finally:
@@ -151,7 +133,7 @@ def explain(
 ):
     """Trace an assertion back to its underlying evidence, independent source families, and raw artifacts."""
     async def _run():
-        service = get_service()
+        service = create_spider_service(mode="production")
         await service.start()
         try:
             explanation = await service.explain_assertion(assertion_id)
@@ -200,7 +182,7 @@ def rebuild(
 ):
     """Rebuild the materialized Knowledge Graph from the append-only observation log without network queries."""
     async def _run():
-        service = get_service()
+        service = create_spider_service(mode="production")
         await service.start()
         try:
             res = await service.rebuild_case(case_id)
@@ -217,7 +199,7 @@ def rebuild(
 def list_cases(json_output: bool = typer.Option(False, "--json", help="Output machine-readable JSON")):
     """List all stored investigation cases."""
     async def _run():
-        service = get_service()
+        service = create_spider_service(mode="production")
         await service.start()
         try:
             cases = await service.list_cases()
@@ -239,51 +221,53 @@ def list_cases(json_output: bool = typer.Option(False, "--json", help="Output ma
 @provider_app.command("list")
 def list_providers(json_output: bool = typer.Option(False, "--json", help="Output machine-readable JSON")):
     """List all registered providers and their capabilities."""
-    async def _run():
-        service = get_service()
-        adapters = service.provider_manager.list_adapters()
-        res = []
-        for a in adapters:
-            res.append({
-                "provider_id": a.provider_id(),
-                "version": a.version(),
-                "adapter_version": a.adapter_version(),
-                "capabilities": a.capabilities(),
-                "network_class": a.network_class().value,
-                "accepts": [t.value for t in a.accepts()],
-                "produces": [t.value for t in a.produces()]
-            })
-        if json_output:
-            console.print(json.dumps(res, indent=2))
-        else:
-            table = Table(title="Registered OSINT Providers")
-            table.add_column("Provider ID", style="cyan")
-            table.add_column("Version", style="magenta")
-            table.add_column("Capabilities", style="yellow")
-            table.add_column("Network Class", style="green")
-            for p in res:
-                table.add_row(p["provider_id"], p["version"], ",".join(p["capabilities"]), p["network_class"])
-            console.print(table)
-    asyncio.run(_run())
+    service = create_spider_service(mode="production")
+    adapters = service.provider_manager.list_adapters()
+    res = []
+    for a in adapters:
+        res.append({
+            "provider_id": a.provider_id(),
+            "version": a.version(),
+            "adapter_version": a.adapter_version(),
+            "capabilities": a.capabilities(),
+            "network_class": a.network_class().value,
+            "accepts": [t.value for t in a.accepts()],
+            "produces": [t.value for t in a.produces()]
+        })
+    if json_output:
+        console.print(json.dumps(res, indent=2))
+    else:
+        table = Table(title="Registered OSINT Providers (Production)")
+        table.add_column("Provider ID", style="cyan")
+        table.add_column("Version", style="magenta")
+        table.add_column("Capabilities", style="yellow")
+        table.add_column("Network Class", style="green")
+        for p in res:
+            table.add_row(p["provider_id"], p["version"], ",".join(p["capabilities"]), p["network_class"])
+        console.print(table)
 
 @provider_app.command("health")
 def check_provider_health(json_output: bool = typer.Option(False, "--json", help="Output machine-readable JSON")):
     """Check real-time health for all registered providers."""
     async def _run():
-        service = get_service()
-        health = await service.check_provider_health()
-        if json_output:
-            console.print(json.dumps(health, indent=2))
-        else:
-            table = Table(title="Provider Health Status")
-            table.add_column("Provider ID", style="cyan")
-            table.add_column("State", style="bold")
-            table.add_column("Message", style="white")
-            for pid, h in health.items():
-                state = h["state"]
-                color = "green" if state == "READY" else ("yellow" if state == "MISSING_CREDENTIAL" else "red")
-                table.add_row(pid, f"[{color}]{state}[/{color}]", h["message"])
-            console.print(table)
+        service = create_spider_service(mode="production")
+        await service.start()
+        try:
+            health = await service.check_provider_health()
+            if json_output:
+                console.print(json.dumps(health, indent=2))
+            else:
+                table = Table(title="Provider Health Status")
+                table.add_column("Provider ID", style="cyan")
+                table.add_column("State", style="bold")
+                table.add_column("Message", style="white")
+                for pid, h in health.items():
+                    state = h.get("state", "UNKNOWN")
+                    color = "green" if state == "READY" else ("yellow" if "LIMITED" in state or "DEGRADED" in state or "MISSING_CREDENTIAL" in state else "red")
+                    table.add_row(pid, f"[{color}]{state}[/{color}]", h.get("message", "OK"))
+                console.print(table)
+        finally:
+            await service.stop()
     asyncio.run(_run())
 
 if __name__ == "__main__":

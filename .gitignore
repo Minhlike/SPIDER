@@ -70,3 +70,8 @@ Desktop.ini
 *secret*
 *credentials*
 config/local_override.yaml
+
+tools/spiderfoot/
+data/*.db*
+data/*.pid
+reports/

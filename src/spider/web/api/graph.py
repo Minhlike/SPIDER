@@ -1,8 +1,13 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request, Depends
 from typing import Dict, Any, List, Optional
-from spider.cli.main import get_service
+from spider.service.service import SpiderService
+from spider.core.factory import create_spider_service
 
 router = APIRouter(prefix="/cases/{case_id}/graph", tags=["Knowledge Graph"])
+
+def get_srv(request: Request) -> SpiderService:
+    from spider.web.app import get_service
+    return get_service(request)
 
 @router.get("", response_model=Dict[str, Any])
 async def get_case_graph(
@@ -12,10 +17,13 @@ async def get_case_graph(
     min_confidence: float = 0.0,
     search: Optional[str] = None,
     max_nodes: int = 250,
-    center_node_id: Optional[str] = None
+    center_node_id: Optional[str] = None,
+    service: SpiderService = Depends(get_srv)
 ):
-    service = get_service()
-    await service.start()
+    is_temp = False
+    if not service.db_manager:
+        await service.start()
+        is_temp = True
     try:
         all_entities = await service.get_case_entities(case_id)
         all_assertions = await service.get_case_assertions(case_id)
@@ -38,7 +46,6 @@ async def get_case_graph(
                 continue
             if assertion_type and isinstance(assertion_type, str) and a["assertion_type"].upper() != assertion_type.upper():
                 continue
-            # Keep assertion if both or either connected node is in entity set
             if a["source_entity_id"] in entity_id_set or a["target_entity_id"] in entity_id_set:
                 filtered_assertions.append(a)
 
@@ -101,4 +108,5 @@ async def get_case_graph(
             "elements": elements
         }
     finally:
-        await service.stop()
+        if is_temp:
+            await service.stop()

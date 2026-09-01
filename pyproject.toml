@@ -25,3 +25,7 @@ spider = "spider.cli.main:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["tools", "runtime", ".git", ".pytest_cache"]

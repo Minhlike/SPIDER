@@ -164,8 +164,20 @@ class SpiderEngine:
                     configuration_hash=cand.execution_key.configuration_hash
                 )
 
-                # Execute task via ProviderManager
-                exec_result = await self.provider_manager.execute_task(task, current_obs, lineage)
+                # Execute task via ProviderManager with bounded safety timeout
+                try:
+                    exec_result = await asyncio.wait_for(
+                        self.provider_manager.execute_task(task, current_obs, lineage),
+                        timeout=30.0
+                    )
+                except asyncio.TimeoutError:
+                    exec_result = ProviderExecutionResult(
+                        raw_content=b"Task timeout",
+                        observations=[],
+                        exit_code=124,
+                        error_message="Task execution exceeded 30s timeout",
+                        mime_type="text/plain"
+                    )
                 executed_key_hashes.add(cand.execution_key.key_string)
                 total_tasks_run += 1
                 scheduler.ledger.provider_calls_count += 1

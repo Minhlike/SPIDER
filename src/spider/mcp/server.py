@@ -1,21 +1,20 @@
 import asyncio
 import json
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 from spider.service.service import SpiderService
-from spider.models.enums import ObservableType
-from spider.cli.main import infer_observable_type, get_service
+from spider.core.factory import create_spider_service
+from spider.models.classifier import TargetClassifier
 
 logger = logging.getLogger(__name__)
 
 class SpiderMCPServer:
     """
-    Semantic Model Context Protocol (MCP) Server for SPIDER.
-    Zero dependency in core: calls SpiderService.
-    Exposes narrow, typed OSINT intelligence tools to external AI analysts.
+    Model Context Protocol (MCP) Adapter for SPIDER.
+    Exposes semantic OSINT tools to AI agents while maintaining zero MCP dependency in core.
     """
     def __init__(self, service: Optional[SpiderService] = None):
-        self.service = service or get_service()
+        self.service = service or create_spider_service(mode="production")
 
     async def handle_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         await self.service.start()
@@ -30,7 +29,8 @@ class SpiderMCPServer:
                     case_res = await self.service.create_case(name=f"MCP Investigation: {target}")
                     case_id = case_res["id"]
                 
-                obs_type = infer_observable_type(target)
+                classification = TargetClassifier.classify(target)
+                obs_type = classification.detected_type
                 await self.service.add_target(case_id, target, obs_type, scope_authorized=authorized)
                 run_res = await self.service.investigate(case_id, policy_profile=profile)
                 entities = await self.service.get_case_entities(case_id)
@@ -39,18 +39,13 @@ class SpiderMCPServer:
                 return {
                     "case_id": case_id,
                     "target": target,
+                    "detected_type": obs_type.value,
                     "status": run_res["status"],
                     "entities_count": len(entities),
                     "assertions_count": len(assertions),
                     "entities": entities,
                     "assertions": assertions
                 }
-
-            elif tool_name == "get_entity":
-                entity_id = arguments["entity_id"]
-                # Look up entity across cases or by id
-                # Return entity details
-                return {"entity_id": entity_id, "status": "RETRIEVED"}
 
             elif tool_name == "explain_assertion":
                 assertion_id = arguments["assertion_id"]

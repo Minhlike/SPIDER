@@ -8,6 +8,7 @@ from spider.models.raw_artifact import RawArtifactRef
 
 class ArtifactRepository:
     def __init__(self, artifacts_dir: str = "data/runs"):
+        artifacts_dir = artifacts_dir or "data/runs"
         self.artifacts_dir = Path(artifacts_dir)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
 

@@ -1,22 +1,46 @@
-﻿version: "1.0"
+version: "1.0"
 capabilities:
-  BROAD_OSINT:
-    description: "Comprehensive multi-source OSINT discovery"
-    default_providers: ["spiderfoot"]
-    input_types: ["DOMAIN", "IP_ADDRESS", "EMAIL", "PHONE", "USERNAME", "ORGANIZATION"]
-    output_types: ["DOMAIN", "HOSTNAME", "IP_ADDRESS", "EMAIL", "PHONE", "USERNAME", "ACCOUNT", "CERTIFICATE", "ASN"]
-  
+  DNS_ENUMERATION:
+    description: "Native forward and reverse DNS enumeration (A, AAAA, MX, NS, TXT, SOA, PTR)"
+    default_providers: ["native_dns"]
+    input_types: ["DOMAIN", "HOSTNAME", "EMAIL", "IP_ADDRESS"]
+    output_types: ["DOMAIN", "HOSTNAME", "IP_ADDRESS", "IPV6_ADDRESS"]
+
+  MAIL_INFRASTRUCTURE:
+    description: "Mail server infrastructure, MX records, SPF/DMARC, and email domain decomposition"
+    default_providers: ["native_dns", "spiderfoot"]
+    input_types: ["EMAIL", "DOMAIN"]
+    output_types: ["DOMAIN", "HOSTNAME", "IP_ADDRESS"]
+
+  CERTIFICATE_TRANSPARENCY:
+    description: "Passive Certificate Transparency log enumeration"
+    default_providers: ["native_ct"]
+    input_types: ["DOMAIN"]
+    output_types: ["HOSTNAME", "CERTIFICATE"]
+
+  REGISTRY_LOOKUP:
+    description: "RDAP and BGP routing registry lookups for IP, ASN, and Domain ownership"
+    default_providers: ["native_rdap", "metabigor"]
+    input_types: ["IP_ADDRESS", "ASN", "DOMAIN"]
+    output_types: ["ASN", "CIDR", "ORGANIZATION"]
+
   SUBDOMAIN_DISCOVERY:
     description: "Passive discovery of domain subdomains and hosts"
-    default_providers: ["subfinder"]
+    default_providers: ["subfinder", "native_ct", "native_dns"]
     input_types: ["DOMAIN"]
     output_types: ["HOSTNAME", "IP_ADDRESS"]
 
   INFRASTRUCTURE_DISCOVERY:
     description: "Network, ASN, IP range and hosting infrastructure discovery"
-    default_providers: ["metabigor"]
+    default_providers: ["metabigor", "native_rdap"]
     input_types: ["DOMAIN", "IP_ADDRESS", "ASN", "ORGANIZATION"]
     output_types: ["IP_ADDRESS", "CIDR", "ASN", "ORGANIZATION"]
+
+  BROAD_OSINT:
+    description: "Comprehensive multi-source OSINT discovery"
+    default_providers: ["spiderfoot"]
+    input_types: ["DOMAIN", "IP_ADDRESS", "EMAIL", "PHONE", "USERNAME", "ORGANIZATION"]
+    output_types: ["DOMAIN", "HOSTNAME", "IP_ADDRESS", "EMAIL", "PHONE", "USERNAME", "ACCOUNT", "CERTIFICATE", "ASN"]
 
   USERNAME_DISCOVERY:
     description: "Social media, code repositories, and account enumeration by username"
@@ -29,9 +53,3 @@ capabilities:
     default_providers: ["uncover"]
     input_types: ["DOMAIN", "IP_ADDRESS", "ORGANIZATION"]
     output_types: ["IP_ADDRESS", "HOSTNAME", "URL", "CERTIFICATE"]
-
-  CORRELATION:
-    description: "Internal correlation and entity resolution"
-    default_providers: ["core_resolver"]
-    input_types: ["UNKNOWN"]
-    output_types: ["UNKNOWN"]
