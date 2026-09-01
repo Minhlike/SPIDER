@@ -10,7 +10,7 @@ def infer_assertion_type(source_type: ObservableType, target_type: ObservableTyp
         return AssertionType.BELONGS_TO_ASN
     elif source_type in (ObservableType.IP_ADDRESS, ObservableType.ASN) and target_type == ObservableType.ORGANIZATION:
         return AssertionType.BELONGS_TO_ORG
-    elif source_type == ObservableType.IP_ADDRESS and target_type == ObservableType.CIDR:
+    elif source_type in (ObservableType.IP_ADDRESS, ObservableType.ASN) and target_type == ObservableType.CIDR:
         return AssertionType.HOSTED_ON
     elif source_type == ObservableType.USERNAME and target_type == ObservableType.ACCOUNT:
         return AssertionType.SHARES_USERNAME

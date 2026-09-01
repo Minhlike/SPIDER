@@ -1,13 +1,10 @@
-# NEXT ACTIONS — PHASE 1: SUBFINDER + METABIGOR
+# NEXT ACTIONS — PHASE 2: SPIDERFOOT INTEGRATION
 
-1. Download pinned official Windows x64 binaries:
-   - Subfinder v2.16.0 (MIT) from ProjectDiscovery GitHub releases.
-   - Metabigor v2.2.0 (MIT) from j3ssie GitHub releases.
-2. Verify SHA-256 checksums against official upstream checksums.txt.
-3. Place executables in `tools/subfinder/subfinder.exe` and `tools/metabigor/metabigor.exe`.
-4. Create frozen contract fixtures in `tests/fixtures/subfinder/` and `tests/fixtures/metabigor/`.
-5. Implement `SubfinderAdapter` and `MetabigorAdapter` adhering to `BaseProviderAdapter`.
-6. Write contract tests (`tests/contract/test_subfinder.py`, `tests/contract/test_metabigor.py`).
-7. Write vertical slice integration test (`tests/integration/test_subfinder_metabigor_slice.py`):
-   `DOMAIN (example.com)` -> `HOSTNAME` -> `IP_ADDRESS` -> `ASN`.
-8. Run full test suite and verify 100% pass.
+1. Set up SpiderFoot v4.0 integration:
+   - SpiderFoot as broad OSINT provider (capability `BROAD_OSINT`, `DNS_INTELLIGENCE`, etc.).
+   - Implement `SpiderFootAdapter` behind strict boundary in `src/spider/providers/spiderfoot/adapter.py`.
+   - Support headless execution mode and structured export parsing (JSON/SQLite).
+2. Create frozen contract fixtures in `tests/fixtures/spiderfoot/v4.0_sample.json`.
+3. Implement contract tests (`tests/contract/test_spiderfoot.py`).
+4. Implement integration tests and verify full test suite passes.
+5. Proceed to Phase 3 (Maigret).

@@ -1,0 +1,3 @@
+{"host":"api.example.com","ip":"93.184.216.34","sources":["crtsh","censys"]}
+{"host":"admin.example.com","ip":"93.184.216.35","sources":["virustotal","certspotter"]}
+{"host":"mail.example.com","ip":"93.184.216.36","sources":["dnsdumpster"]}

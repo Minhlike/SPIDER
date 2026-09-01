@@ -1,0 +1,14 @@
+[
+  {
+    "asn": "AS15133",
+    "org": "EdgeCast Networks, Inc.",
+    "cidr": "93.184.216.0/24",
+    "source": "bgpview"
+  },
+  {
+    "asn": "AS13335",
+    "org": "Cloudflare, Inc.",
+    "cidr": "104.16.0.0/12",
+    "source": "bgpview"
+  }
+]
