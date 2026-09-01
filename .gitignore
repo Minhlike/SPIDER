@@ -1,0 +1,72 @@
+﻿# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environments & Runtimes
+.venv/
+venv/
+runtime/
+ENV/
+env/
+
+# Tools & Binaries (External runtimes)
+tools/*.exe
+tools/*.zip
+tools/*.tar.gz
+tools/*_extracted/
+
+# Runtime Data & Databases
+data/spider.db
+data/spider.db-shm
+data/spider.db-wal
+data/runs/*
+data/cases/*
+data/cache/*
+!data/runs/.gitkeep
+!data/cases/.gitkeep
+!data/cache/.gitkeep
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Pytest / Coverage / Linting
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / OS specific
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+Thumbs.db
+Desktop.ini
+
+# Secrets and local config overrides
+*.env
+*.env.local
+*secret*
+*credentials*
+config/local_override.yaml

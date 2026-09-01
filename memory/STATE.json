@@ -1,0 +1,42 @@
+{
+  "phase": "PHASE_1_SUBFINDER_METABIGOR",
+  "version": "0.1.0",
+  "providers": {
+    "fake_a": {
+      "status": "READY",
+      "version": "1.0.0"
+    },
+    "fake_b": {
+      "status": "READY",
+      "version": "1.0.0"
+    },
+    "subfinder": {
+      "status": "PENDING_PHASE_1",
+      "version": "v2.16.0"
+    },
+    "metabigor": {
+      "status": "PENDING_PHASE_1",
+      "version": "v2.2.0"
+    },
+    "spiderfoot": {
+      "status": "PENDING_PHASE_2",
+      "version": "v4.0"
+    },
+    "maigret": {
+      "status": "PENDING_PHASE_3",
+      "version": "v0.6.5"
+    },
+    "uncover": {
+      "status": "PENDING_PHASE_4",
+      "version": "v1.2.1"
+    }
+  },
+  "test_status": {
+    "total": 8,
+    "passed": 8,
+    "failed": 0,
+    "coverage": "90%+"
+  },
+  "blockers": [],
+  "next_action": "Download and verify Subfinder (v2.16.0) & Metabigor (v2.2.0) Windows binaries, implement SubfinderAdapter & MetabigorAdapter, write contract fixtures and tests."
+}

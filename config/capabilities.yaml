@@ -1,0 +1,37 @@
+﻿version: "1.0"
+capabilities:
+  BROAD_OSINT:
+    description: "Comprehensive multi-source OSINT discovery"
+    default_providers: ["spiderfoot"]
+    input_types: ["DOMAIN", "IP_ADDRESS", "EMAIL", "PHONE", "USERNAME", "ORGANIZATION"]
+    output_types: ["DOMAIN", "HOSTNAME", "IP_ADDRESS", "EMAIL", "PHONE", "USERNAME", "ACCOUNT", "CERTIFICATE", "ASN"]
+  
+  SUBDOMAIN_DISCOVERY:
+    description: "Passive discovery of domain subdomains and hosts"
+    default_providers: ["subfinder"]
+    input_types: ["DOMAIN"]
+    output_types: ["HOSTNAME", "IP_ADDRESS"]
+
+  INFRASTRUCTURE_DISCOVERY:
+    description: "Network, ASN, IP range and hosting infrastructure discovery"
+    default_providers: ["metabigor"]
+    input_types: ["DOMAIN", "IP_ADDRESS", "ASN", "ORGANIZATION"]
+    output_types: ["IP_ADDRESS", "CIDR", "ASN", "ORGANIZATION"]
+
+  USERNAME_DISCOVERY:
+    description: "Social media, code repositories, and account enumeration by username"
+    default_providers: ["maigret"]
+    input_types: ["USERNAME"]
+    output_types: ["ACCOUNT", "URL"]
+
+  INTERNET_INTELLIGENCE:
+    description: "Internet-wide search engine and asset discovery"
+    default_providers: ["uncover"]
+    input_types: ["DOMAIN", "IP_ADDRESS", "ORGANIZATION"]
+    output_types: ["IP_ADDRESS", "HOSTNAME", "URL", "CERTIFICATE"]
+
+  CORRELATION:
+    description: "Internal correlation and entity resolution"
+    default_providers: ["core_resolver"]
+    input_types: ["UNKNOWN"]
+    output_types: ["UNKNOWN"]

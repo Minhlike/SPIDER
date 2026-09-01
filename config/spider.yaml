@@ -1,0 +1,10 @@
+﻿version: "1.0"
+storage:
+  database_path: "data/spider.db"
+  artifacts_dir: "data/runs"
+  wal_mode: true
+
+engine:
+  default_policy_profile: "passive_standard"
+  concurrency_limit: 4
+  log_level: "INFO"

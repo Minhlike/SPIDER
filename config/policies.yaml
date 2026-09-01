@@ -1,0 +1,36 @@
+﻿version: "1.0"
+default_profile: "passive_standard"
+
+profiles:
+  local_only:
+    description: "Strict offline analysis without any network queries"
+    allowed_network_classes:
+      - LOCAL_ONLY
+    require_authorized_scope: false
+
+  passive_standard:
+    description: "Default safe mode: Queries third-party OSINT registries and passive indices"
+    allowed_network_classes:
+      - LOCAL_ONLY
+      - THIRD_PARTY_ONLY
+    require_authorized_scope: false
+
+  active_authorized:
+    description: "Target direct querying and active discovery for authorized targets"
+    allowed_network_classes:
+      - LOCAL_ONLY
+      - THIRD_PARTY_ONLY
+      - TARGET_DIRECT
+      - TARGET_ACTIVE
+    require_authorized_scope: true
+
+budgets:
+  default:
+    max_entities: 500
+    max_depth: 3
+    max_requests: 100
+    max_runtime_seconds: 300
+    max_parallel_tasks: 4
+    max_provider_calls: 50
+    max_branch_work: 20
+    diminishing_returns_cutoff: 3

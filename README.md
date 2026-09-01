@@ -1,0 +1,1 @@
+# SPIDER — Evidence-First OSINT Orchestration Engine for Windows
