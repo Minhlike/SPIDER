@@ -1,25 +1,25 @@
-# HANDOFF A2→A1
-HEAD: cdbf05a
-REMOTE_SYNC: unpushed (origin/main is at 1fa6246, local main ahead by 1 commit)
+# HANDOFF A2â†’A1
+HEAD: c731ce9
+REMOTE_SYNC: synced (origin/main matches local HEAD)
 WORKTREE: clean
 VERSION: v2.0.0
 RELEASE_GATE: PASS (Core data plane & Product UI fully verified)
 
 ## DELTA
-- src/spider/service/insights.py (CaseInsightsBuilder) → Aggregates run metrics, provider contributions, explainable empty reason, and type-specific intelligence cards.
-- src/spider/web/api/cases.py (GET /api/cases/{case_id}/insights) → Exposes structured insights payload for UI and API consumers.
-- src/spider/web/api/investigate.py (POST /api/investigate) → Returns persistent {case_id, run_id, status: "QUEUED"} in <50ms; background task drives async run.
-- src/spider/web/api/settings.py (GET/POST /api/settings) → Manages language, theme, default profile, budget, provider toggles, and masked API keys.
-- src/spider/web/api/providers.py (POST /api/providers/{provider_id}/test) → Live diagnostic check per provider on demand.
-- src/spider/web/app.py (/api/classify) → Supports both GET and POST for TargetClassifier; returns type, detected_type, confidence, canonical_value.
-- src/spider/providers/spiderfoot/adapter.py (accepts, parse) → Excluded EMAIL (native DNS/MX resolves it faster); fixed JSON stream/array dual parsing; mapped ASN for BGP_AS_OWNER.
-- src/spider/providers/native/ct.py (execute, parse) → Removed wildcard prefix; added 3.5s timeout; capped observations to 50 items.
-- src/spider/providers/metabigor/adapter.py (_build_command, parse) → Added -t 3 arg and stdin=DEVNULL; capped BGP/net observations to 50 items.
-- src/spider/providers/uncover/adapter.py (execute) → Instant MISSING_CREDENTIAL return in 0.001s when no API keys exist.
-- src/spider/scheduler/scheduler.py (schedule_candidate_tasks) → Deduplicated candidate tasks by provider_id per observable.
-- src/spider/web/static/index.html → Vietnamese default, 6-tab case workflow, KPI cards, settings modal, and inspector drawer.
-- src/spider/web/static/css/style.css → Light Professional theme default, .dark-theme toggle, type-specific cards, bounded graph container.
-- src/spider/web/static/js/app.js → Client-side SPA engine with i18n, classification debounce, live progress, provider tests, provenance drawer, and Cytoscape graph.
+- src/spider/service/insights.py (CaseInsightsBuilder) â†’ Aggregates run metrics, provider contributions, explainable empty reason, and type-specific intelligence cards.
+- src/spider/web/api/cases.py (GET /api/cases/{case_id}/insights) â†’ Exposes structured insights payload for UI and API consumers.
+- src/spider/web/api/investigate.py (POST /api/investigate) â†’ Returns persistent {case_id, run_id, status: "QUEUED"} in <50ms; background task drives async run.
+- src/spider/web/api/settings.py (GET/POST /api/settings) â†’ Manages language, theme, default profile, budget, provider toggles, and masked API keys.
+- src/spider/web/api/providers.py (POST /api/providers/{provider_id}/test) â†’ Live diagnostic check per provider on demand.
+- src/spider/web/app.py (/api/classify) â†’ Supports both GET and POST for TargetClassifier; returns type, detected_type, confidence, canonical_value.
+- src/spider/providers/spiderfoot/adapter.py (accepts, parse) â†’ Excluded EMAIL (native DNS/MX resolves it faster); fixed JSON stream/array dual parsing; mapped ASN for BGP_AS_OWNER.
+- src/spider/providers/native/ct.py (execute, parse) â†’ Removed wildcard prefix; added 3.5s timeout; capped observations to 50 items.
+- src/spider/providers/metabigor/adapter.py (_build_command, parse) â†’ Added -t 3 arg and stdin=DEVNULL; capped BGP/net observations to 50 items.
+- src/spider/providers/uncover/adapter.py (execute) â†’ Instant MISSING_CREDENTIAL return in 0.001s when no API keys exist.
+- src/spider/scheduler/scheduler.py (schedule_candidate_tasks) â†’ Deduplicated candidate tasks by provider_id per observable.
+- src/spider/web/static/index.html â†’ Vietnamese default, 6-tab case workflow, KPI cards, settings modal, and inspector drawer.
+- src/spider/web/static/css/style.css â†’ Light Professional theme default, .dark-theme toggle, type-specific cards, bounded graph container.
+- src/spider/web/static/js/app.js â†’ Client-side SPA engine with i18n, classification debounce, live progress, provider tests, provenance drawer, and Cytoscape graph.
 
 ## CONTRACTS_CHANGED
 - POST /api/investigate: Returns {case_id, run_id, status: "QUEUED"} synchronously; run continues in background.
@@ -29,10 +29,10 @@ RELEASE_GATE: PASS (Core data plane & Product UI fully verified)
 - POST /api/providers/{provider_id}/test: Returns {provider_id, state, message} for on-demand live provider verification.
 
 ## LIVE_VERIFIED
-- EMAIL: admin@example.com → PASS (11.2s; DNS/MX/IP/SPF/DMARC pivots resolved, 8 entities, 8 assertions, 0 dead-end).
-- DOMAIN: example.com → PASS (19.3s; subdomains, DNS, CT logs capped, Metabigor BGP capped, 26 entities, 25 assertions).
-- IP: 93.184.216.34 → PASS (14.1s; RDAP ASN/CIDR/Org + reverse PTR hostnames resolved).
-- USERNAME: octocat → PASS (11.8s; Maigret bounded --top-sites 15 account enumeration).
+- EMAIL: admin@example.com â†’ PASS (11.2s; DNS/MX/IP/SPF/DMARC pivots resolved, 8 entities, 8 assertions, 0 dead-end).
+- DOMAIN: example.com â†’ PASS (19.3s; subdomains, DNS, CT logs capped, Metabigor BGP capped, 26 entities, 25 assertions).
+- IP: 93.184.216.34 â†’ PASS (14.1s; RDAP ASN/CIDR/Org + reverse PTR hostnames resolved).
+- USERNAME: octocat â†’ PASS (11.8s; Maigret bounded --top-sites 15 account enumeration).
 
 ## TESTS
 - command: runtime\venv\Scripts\pytest.exe -v
@@ -41,7 +41,7 @@ RELEASE_GATE: PASS (Core data plane & Product UI fully verified)
 
 ## UX_DELIVERED
 - Default interface is Vietnamese with Professional Light Theme; one-click toggle for English and Dark Theme.
-- 6-tab case workflow: Summary (Tổng quan) → Live Progress (Tiến trình) → Findings (Phát hiện) → Sources (Nguồn dữ liệu) → Evidence (Bằng chứng) → Graph (Mạng liên kết).
+- 6-tab case workflow: Summary (Tá»•ng quan) â†’ Live Progress (Tiáº¿n trÃ¬nh) â†’ Findings (PhÃ¡t hiá»‡n) â†’ Sources (Nguá»“n dá»¯ liá»‡u) â†’ Evidence (Báº±ng chá»©ng) â†’ Graph (Máº¡ng liÃªn káº¿t).
 - Target input auto-classifies via TargetClassifier on debounced input.
 - Type-specific intelligence cards expose domain/mail/DNS pivots for EMAIL, DOMAIN, IP, USERNAME, PHONE.
 - Explainable empty state banner displays executed sources, sources with zero yield, and missing credentials when findings are empty.
@@ -64,7 +64,7 @@ RELEASE_GATE: PASS (Core data plane & Product UI fully verified)
 - Verify Git remote permissions before pushing branch main to GitHub.
 
 ## NEXT_FOR_AGENT1
-1. Push commit cdbf05a to origin/main (git push origin main).
+1. (Done) Pushed commit to origin/main.
 2. Add end-to-end browser automation tests (Playwright) for the 6-tab UI workflow.
 3. Add a Windows one-click desktop shortcut/batch script (run_spider.bat) for non-technical users.
 
