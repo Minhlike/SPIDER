@@ -1,49 +1,42 @@
 {
-  "phase": "READY",
-  "version": "1.1.0",
-  "providers": {
-    "fake_a": {
-      "status": "READY",
-      "version": "1.0.0"
-    },
-    "fake_b": {
-      "status": "READY",
-      "version": "1.0.0"
-    },
-    "subfinder": {
-      "status": "READY",
-      "version": "v2.16.0"
-    },
-    "metabigor": {
-      "status": "READY",
-      "version": "v2.2.0"
-    },
-    "spiderfoot": {
-      "status": "READY",
-      "version": "v4.0"
-    },
-    "maigret": {
-      "status": "READY",
-      "version": "v0.6.5"
-    },
-    "uncover": {
-      "status": "READY",
-      "version": "v1.2.1"
-    }
-  },
+  "phase": "RELEASE_HARDENED",
+  "version": "2.0.0",
+  "baseline_head": "96ebba73e0b58d7f097f24e2a5dc83dcc1053210",
+  "release_ref": "v2.0.0",
+  "mode": "production",
+  "registered_providers": [
+    "native_dns",
+    "native_rdap",
+    "native_ct",
+    "subfinder",
+    "metabigor",
+    "spiderfoot",
+    "maigret",
+    "uncover"
+  ],
+  "provider_health": "Check live; not frozen into release state",
   "test_status": {
-    "total": 37,
-    "passed": 37,
+    "total": 81,
+    "passed": 81,
     "failed": 0,
-    "coverage": "95%+"
+    "skipped": 0,
+    "seconds": 114.11
   },
+  "e2e_status": {
+    "passed": 2,
+    "failed": 0,
+    "seconds": 12.23,
+    "external_sources": "fixed DNS execution data"
+  },
+  "security_gate": "PASS: current-user Windows DPAPI, masked API, ignored local settings",
+  "launcher_gate": "PASS: exact backend PID, duplicate prevention, readiness, graceful stop",
   "blockers": [],
-  "next_action": "Operational use via start_spider.bat launcher. Future milestones: Graph layout auto-clustering and multi-target batch imports.",
+  "next_action": "Operational use; no new feature work authorized",
   "web_ui": {
-    "status": "READY",
     "host": "127.0.0.1",
     "port": 8765,
-    "launcher": "start_spider.bat",
+    "launcher": "run_spider.bat",
     "shutdown": "stop_spider.bat"
-  }
+  },
+  "handoff": "docs/RELEASE_V2_0_0.md"
 }

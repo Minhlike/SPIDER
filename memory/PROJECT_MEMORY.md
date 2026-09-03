@@ -20,3 +20,11 @@ SPIDER is an Evidence-First, deterministic, capability-driven OSINT orchestratio
 - Typer & Rich for high-clarity CLI
 - PyYAML for capability registry & policy configuration
 - pytest + pytest-asyncio for multi-layer testing
+
+## 4. v2.0.0 release hardening (2026-09-03)
+
+Baseline `96ebba7`; release reference `v2.0.0`. Completed V2 Core/Product work is preserved. Current handoff: `docs/RELEASE_V2_0_0.md`; operation: `run_spider.bat` / `stop_spider.bat` at `127.0.0.1:8765`.
+
+Security gate: current-user Windows DPAPI in `data/api-keys.dpapi`; non-secret `data/settings.json` separate. Both are ignored. Never write credential values into Git, logs, API responses, memory or handoffs. Tests isolate settings and use synthetic key values only.
+
+Final gates: 81 pytest passed; separate Chromium E2E 2 passed. Browser tests use real API/DB/core with a fixed external DNS boundary. PID/creation-time identity, duplicate-launch prevention and graceful stop verified on Windows. No new providers/frameworks/features. Remaining limits are recorded in the release notes; do not interpret stored Settings keys as automatically configured provider credentials.

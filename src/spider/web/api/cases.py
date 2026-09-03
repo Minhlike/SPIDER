@@ -138,3 +138,31 @@ async def get_case_insights(case_id: str, service: SpiderService = Depends(get_s
         if not case_rec:
             raise HTTPException(status_code=404, detail="Case not found")
         return await CaseInsightsBuilder.build_insights(session, case_id, case_rec)
+
+
+@router.get("/{case_id}/entities")
+async def get_entities(case_id: str, service: SpiderService = Depends(get_srv)):
+    return await service.get_case_entities(case_id)
+
+
+@router.get("/{case_id}/assertions")
+async def get_assertions(case_id: str, service: SpiderService = Depends(get_srv)):
+    return await service.get_case_assertions(case_id)
+
+
+@router.get("/{case_id}/observations")
+async def get_observations(case_id: str, service: SpiderService = Depends(get_srv)):
+    async with service.db_manager.session_factory() as session:
+        if await session.get(CaseRecord, case_id) is None:
+            raise HTTPException(status_code=404, detail="Case not found")
+        observations = (await session.execute(select(ObservationRecord).where(
+            ObservationRecord.case_id == case_id
+        ).order_by(ObservationRecord.created_at))).scalars().all()
+        return [{
+            "id": obs.id, "case_id": obs.case_id, "run_id": obs.run_id, "task_id": obs.task_id,
+            "observable_type": obs.observable_type, "observable_value": obs.observable_value,
+            "canonical_value": obs.canonical_value, "provider_id": obs.provider_id,
+            "upstream_source": obs.upstream_source, "upstream_family": obs.upstream_family,
+            "confidence": obs.confidence, "raw_data": obs.raw_data_json,
+            "raw_artifact_id": obs.raw_artifact_id, "created_at": obs.created_at.isoformat(),
+        } for obs in observations]

@@ -5,6 +5,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from spider.core.factory import create_spider_service
@@ -16,6 +18,8 @@ from spider.web.api.graph import router as graph_router
 from spider.web.api.explain import router as explain_router
 from spider.web.api.providers import router as providers_router
 from spider.web.api.settings import router as settings_router
+from spider.web.api.settings import load_settings
+from spider.storage.key_store import KeyStoreError
 from spider.models.classifier import TargetClassifier
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -43,6 +47,8 @@ def get_service(request: Request) -> SpiderService:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Migrate legacy keys before the web service can accept requests; fail closed.
+    load_settings()
     # Initialize single long-lived production service instance
     service = create_spider_service(mode="production")
     await service.start()
@@ -63,6 +69,17 @@ def create_app() -> FastAPI:
     )
 
     # Security & CORS
+    @app.exception_handler(KeyStoreError)
+    async def protected_settings_error(request, exc):
+        return JSONResponse(status_code=503, content={"detail": str(KeyStoreError())})
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request, exc):
+        if request.url.path.rstrip("/") == "/api/settings":
+            # FastAPI's default validation response includes the rejected input.
+            return JSONResponse(status_code=422, content={"detail": "Invalid settings request"})
+        return await request_validation_exception_handler(request, exc)
+
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(
         CORSMiddleware,
@@ -103,8 +120,16 @@ def create_app() -> FastAPI:
 
     # Health Check
     @app.get("/api/health")
-    async def health_check(request: Request):
+    async def health_check(request: Request, ready: bool = False):
         srv = get_service(request)
+        if ready:
+            # Launcher readiness must not wait on optional provider subprocesses/network.
+            from sqlalchemy import text
+            if not srv.is_running:
+                return JSONResponse(status_code=503, content={"status": "STARTING"})
+            async with srv.db_manager.session_factory() as session:
+                await session.execute(text("SELECT 1"))
+            return {"status": "HEALTHY", "database_connected": True, "pid": os.getpid()}
         is_temp = False
         if not srv.is_running:
             await srv.start()

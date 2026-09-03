@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spider-osint"
-version = "0.1.0"
+version = "2.0.0"
 description = "Evidence-First OSINT Orchestration Engine for Windows"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,6 +22,9 @@ dependencies = [
 
 [project.scripts]
 spider = "spider.cli.main:app"
+
+[project.optional-dependencies]
+e2e = ["playwright==1.58.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

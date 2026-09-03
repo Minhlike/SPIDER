@@ -52,6 +52,7 @@ class SpiderService:
             resolution_engine=self.resolution_engine
         )
         self._started = False
+        self.background_tasks: set[asyncio.Task] = set()
 
     async def start(self) -> None:
         if self._started:
@@ -64,6 +65,23 @@ class SpiderService:
     async def stop(self) -> None:
         if not self._started:
             return
+        tasks = list(self.background_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+            # A task cancelled before its first instruction cannot run its own cleanup.
+            from sqlalchemy import update
+            from spider.storage.schema import ProviderRunRecord
+            from spider.models.base import utc_now
+            run_ids = [task.get_name().removeprefix("spider-run:") for task in tasks
+                       if task.get_name().startswith("spider-run:")]
+            async def cancel_unfinished(session):
+                await session.execute(update(ProviderRunRecord).where(
+                    ProviderRunRecord.id.in_(run_ids),
+                    ProviderRunRecord.status.in_(["QUEUED", "RUNNING"]),
+                ).values(status="CANCELLED", completed_at=utc_now()))
+            await self.db_writer.submit(cancel_unfinished)
         await self.db_writer.stop()
         self.is_running = False
         await self.db_manager.close()

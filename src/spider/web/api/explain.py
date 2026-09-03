@@ -9,6 +9,30 @@ def get_srv(request: Request) -> SpiderService:
     from spider.web.app import get_service
     return get_service(request)
 
+
+@router.get("")
+async def explain_entity(case_id: str, entity_id: str, service: SpiderService = Depends(get_srv)):
+    from sqlalchemy import select
+    from spider.storage.schema import EntityRecord, ObservationRecord
+    async with service.db_manager.session_factory() as session:
+        entity = await session.get(EntityRecord, entity_id)
+        if not entity or entity.case_id != case_id:
+            raise HTTPException(status_code=404, detail="Entity not found in case")
+        observations = (await session.execute(select(ObservationRecord).where(
+            ObservationRecord.case_id == case_id,
+            ObservationRecord.canonical_value == entity.canonical_name,
+            ObservationRecord.observable_type == entity.observable_type,
+        ).order_by(ObservationRecord.created_at).limit(300))).scalars().all()
+        return {
+            "entity": {"id": entity.id, "type": entity.observable_type,
+                       "canonical_name": entity.canonical_name, "observation_count": entity.observation_count,
+                       "first_seen": entity.first_seen.isoformat()},
+            "provenance_chain": [{"provider_id": obs.provider_id, "upstream_source": obs.upstream_source,
+                                  "upstream_family": obs.upstream_family, "task_id": obs.task_id,
+                                  "confidence": obs.confidence, "raw_artifact_id": obs.raw_artifact_id}
+                                 for obs in observations],
+        }
+
 @router.get("/{assertion_id}", response_model=Dict[str, Any])
 async def explain_assertion(assertion_id: str, service: SpiderService = Depends(get_srv)):
     is_temp = False

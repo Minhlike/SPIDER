@@ -75,3 +75,12 @@ tools/spiderfoot/
 data/*.db*
 data/*.pid
 reports/
+
+# All local settings, encrypted keys, launcher state and E2E output
+data/settings.json
+data/*.dpapi
+data/launcher*
+data/*.log
+test-results/
+work/
+data/**

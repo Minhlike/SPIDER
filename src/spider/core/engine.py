@@ -75,7 +75,9 @@ class SpiderEngine:
             status=ExecutionStatus.RUNNING
         )
         async def _init_run(session):
-            await ExecutionRepository.create_provider_run(session, provider_run)
+            existing = await ExecutionRepository.update_provider_run(session, provider_run)
+            if existing is None:
+                await ExecutionRepository.create_provider_run(session, provider_run)
         await self.db_writer.submit(_init_run)
 
         # 3. Initialize Work Frontier from targets

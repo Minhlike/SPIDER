@@ -6,6 +6,11 @@ from spider.service.service import SpiderService
 from spider.models.classifier import TargetClassifier
 from spider.models.budget import ExecutionBudget
 from spider.web.events import event_broker
+from spider.models.execution import ProviderRun
+from spider.models.enums import ExecutionStatus
+from spider.storage.repositories.execution_repo import ExecutionRepository
+from spider.storage.schema import ProviderRunRecord
+from spider.models.base import utc_now
 
 router = APIRouter(tags=["Investigation"])
 
@@ -44,11 +49,24 @@ async def _run_investigation_background(service: SpiderService, case_id: str, ru
             "entities_count": len(entities),
             "assertions_count": len(assertions)
         })
-    except Exception as e:
+    except asyncio.CancelledError:
+        await _finish_interrupted_run(service, run_id, "CANCELLED")
+        raise
+    except Exception:
+        await _finish_interrupted_run(service, run_id, "FAILED")
         await event_broker.broadcast("RUN_FAILED", {
             "case_id": case_id,
-            "error": str(e)
+            "error": "Investigation failed"
         })
+
+
+async def _finish_interrupted_run(service, run_id, status):
+    async def update(session):
+        run = await session.get(ProviderRunRecord, run_id)
+        if run:
+            run.status = status
+            run.completed_at = utc_now()
+    await service.db_writer.submit(update)
 
 @router.post("/investigate", response_model=Dict[str, Any])
 async def start_investigation(
@@ -82,8 +100,14 @@ async def start_investigation(
         import uuid
         run_id = str(uuid.uuid4())
 
+        async def queue_run(session):
+            await ExecutionRepository.create_provider_run(session, ProviderRun(
+                id=run_id, case_id=case_id, status=ExecutionStatus.QUEUED
+            ))
+        await service.db_writer.submit(queue_run)
+
         # Dispatch true background task on event loop
-        asyncio.create_task(
+        task = asyncio.create_task(
             _run_investigation_background(
                 service,
                 case_id,
@@ -92,8 +116,11 @@ async def start_investigation(
                 obs_type.value,
                 budget,
                 req.policy_profile
-            )
+            ),
+            name=f"spider-run:{run_id}",
         )
+        service.background_tasks.add(task)
+        task.add_done_callback(service.background_tasks.discard)
 
         return {
             "case_id": case_id,

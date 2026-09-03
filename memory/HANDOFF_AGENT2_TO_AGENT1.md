@@ -1,4 +1,6 @@
 # HANDOFF A2â†’A1
+
+> Historical V2 Product handoff. Release-hardening status and current operating instructions are in `docs/RELEASE_V2_0_0.md`, `memory/NEXT.md`, and `docs/RUNBOOK.md`. The plaintext-key storage and PID-only launcher described below have been replaced. Do not redo the completed V2 Core/Product work.
 HEAD: c731ce9
 REMOTE_SYNC: synced (origin/main matches local HEAD)
 WORKTREE: clean

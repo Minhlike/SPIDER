@@ -1,8 +1,7 @@
-# SPIDER V1.1.0 (WITH LOCAL WEB UI) — COMPLETED & READY
+# SPIDER v2.0.0 — release hardening complete
 
-All 20 Definition of Done criteria for SPIDER Local Web UI have been fulfilled with 100% test pass rate across 37 automated tests.
+Do not redo V2 Core/Product work or create a new roadmap. Current release handoff: `docs/RELEASE_V2_0_0.md`; baseline `96ebba7`; release reference `v2.0.0`.
 
-## Recommended Next Milestones
-1. Multi-target batch import from file / CSV via Web UI.
-2. Advanced Cytoscape graph clustering (community detection / Louvain layouts).
-3. PDF intelligence report generation from Knowledge Graph.
+Security PASS (Windows DPAPI); pytest 81 passed; separate E2E 2 passed; Windows duplicate-launch/PID/clean-stop verification PASS. Start with `run_spider.bat`, stop with `stop_spider.bat`, web `http://127.0.0.1:8765`.
+
+For future authorized work, read release limitations first. Settings credential-to-provider wiring, portable runtime packaging and interrupted-run recovery remain outside this release. No additional feature work is authorized by this handoff.

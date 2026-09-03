@@ -445,6 +445,7 @@ async function startInvestigation() {
 
     const data = await res.json();
     currentCaseId = data.case_id;
+    document.getElementById("case-status-badge").textContent = data.status;
 
     // Switch directly to Case Detail View on Live Progress Tab
     switchView("case_detail");
@@ -484,6 +485,7 @@ function switchCaseTab(tabName) {
 }
 
 function openCase(caseId) {
+  currentView = "case_detail";
   currentCaseId = caseId;
   document.querySelectorAll(".view-panel").forEach(el => el.classList.remove("active"));
   document.querySelectorAll(".nav-item").forEach(el => el.classList.remove("active"));
@@ -514,7 +516,7 @@ async function loadCaseDetail(caseId) {
     const created = caseRes.created_at ? new Date(caseRes.created_at).toLocaleString() : "-";
     document.getElementById("case-meta").innerHTML = `
       <strong>ID:</strong> <code>${caseId}</code> | 
-      <strong>Mục tiêu gốc:</strong> <code>${escapeHtml(insightsRes.target_value || "-")}</code> (${escapeHtml(insightsRes.target_type || "UNKNOWN")}) | 
+      <strong>Mục tiêu gốc:</strong> <code>${escapeHtml(insightsRes.target || "-")}</code> (${escapeHtml(insightsRes.target_type || "UNKNOWN")}) |
       <strong>Tạo lúc:</strong> ${escapeHtml(created)}
     `;
 
@@ -522,7 +524,7 @@ async function loadCaseDetail(caseId) {
     document.getElementById("sum-kpi-entities").textContent = insightsRes.entities_count || 0;
     document.getElementById("sum-kpi-assertions").textContent = insightsRes.assertions_count || 0;
     document.getElementById("sum-kpi-observations").textContent = insightsRes.observations_count || 0;
-    document.getElementById("sum-kpi-sources").textContent = insightsRes.tasks_count || 0;
+    document.getElementById("sum-kpi-sources").textContent = (insightsRes.provider_contributions || []).filter(p => p.tasks_count > 0).length;
     document.getElementById("findings-tab-count").textContent = insightsRes.entities_count || 0;
     document.getElementById("evidence-tab-count").textContent = insightsRes.observations_count || 0;
 
@@ -535,7 +537,7 @@ async function loadCaseDetail(caseId) {
       if (!casePollingInterval) {
         casePollingInterval = setInterval(() => {
           if (currentCaseId === caseId && currentView === "case_detail") {
-            loadCaseProgress(caseId);
+            loadCaseDetail(caseId);
           } else {
             clearInterval(casePollingInterval);
             casePollingInterval = null;
@@ -567,8 +569,12 @@ function renderTypeSpecificInsights(insights) {
   const entitiesCount = insights.entities_count || 0;
 
   // If 0 findings and empty reason exists:
-  if (entitiesCount <= 1 && insights.empty_reason) {
-    const r = insights.empty_reason;
+  if (entitiesCount <= 1 && insights.empty_reason?.is_empty && !["QUEUED", "RUNNING", "PENDING"].includes(insights.status)) {
+    const sources = insights.provider_contributions || [];
+    const r = {
+      empty_sources: sources.filter(p => p.tasks_count > 0 && p.status === "NO_FINDINGS").map(p => p.provider_id),
+      missing_credentials: sources.filter(p => p.credential_state === "MISSING_CREDENTIAL").map(p => p.provider_id)
+    };
     emptyContainer.style.display = "block";
     emptyContainer.className = "empty-reason-card";
     emptyContainer.innerHTML = `
@@ -787,7 +793,7 @@ async function loadCaseProgress(caseId) {
       tr.innerHTML = `
         <td><strong>${escapeHtml(t.provider_id)}</strong></td>
         <td><code>BROAD_RECON</code></td>
-        <td><code>${escapeHtml(insightsRes.target_value || "-")}</code></td>
+        <td><code>${escapeHtml(insightsRes.target || "-")}</code></td>
         <td><span class="badge badge-${(t.status || "ready").toLowerCase()}">${escapeHtml(t.status || "READY")}</span></td>
         <td>${escapeHtml(duration)}</td>
         <td><strong>${escapeHtml(String(t.observations_count || 0))}</strong></td>
@@ -932,8 +938,8 @@ async function loadKnowledgeGraph(caseId) {
 
   try {
     const data = await fetch(`/api/cases/${caseId}/graph`).then(r => r.json());
-    let nodes = data.nodes || [];
-    let edges = data.edges || [];
+    let nodes = (data.elements || []).filter(element => element.group === "nodes");
+    let edges = (data.elements || []).filter(element => element.group === "edges");
 
     // Filter nodes
     if (filterType) nodes = nodes.filter(n => n.data.type === filterType);
@@ -1186,7 +1192,7 @@ async function saveSettings() {
   if (fofaKey) apiKeys["FOFA"] = fofaKey;
 
   try {
-    await fetch("/api/settings", {
+    const response = await fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1199,6 +1205,7 @@ async function saveSettings() {
       })
     });
 
+    if (!response.ok) throw new Error("Không thể lưu cài đặt bảo mật");
     currentLanguage = lang;
     currentTheme = theme;
     localStorage.setItem("spider_lang", lang);
@@ -1208,6 +1215,10 @@ async function saveSettings() {
     showNotification(currentLanguage === "vi" ? "Đã lưu cài đặt thành công!" : "Settings saved successfully!");
   } catch (e) {
     alert("Error saving settings: " + e.message);
+  } finally {
+    ["shodan", "censys", "fofa"].forEach(key => {
+      document.getElementById(`setting-key-${key}`).value = "";
+    });
   }
 }
 
