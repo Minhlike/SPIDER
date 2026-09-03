@@ -66,7 +66,12 @@ class SubfinderAdapter(BaseProviderAdapter):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await proc.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+            except asyncio.TimeoutError:
+                try: proc.kill()
+                except Exception: pass
+                stdout, stderr = b"", b"Subfinder timeout"
             if proc.returncode == 0 or b"v2.16.0" in stdout or b"v2.16.0" in stderr:
                 return ProviderHealth(state=ProviderState.READY, message="Subfinder v2.16.0 operational")
             return ProviderHealth(state=ProviderState.DEGRADED, message=f"Unexpected version check output: {stderr.decode()}")
@@ -77,8 +82,10 @@ class SubfinderAdapter(BaseProviderAdapter):
         return [
             str(self.binary_path.resolve()),
             "-d", target.canonical_value,
+            "-s", "hackertarget,alienvault",
             "-oJ",
-            "-silent"
+            "-silent",
+            "-timeout", "4"
         ]
 
     async def execute(self, target: NormalizedObservable, lineage: SourceLineage, **kwargs) -> ProviderExecutionResult:
@@ -89,7 +96,12 @@ class SubfinderAdapter(BaseProviderAdapter):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await proc.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+            except asyncio.TimeoutError:
+                try: proc.kill()
+                except Exception: pass
+                stdout, stderr = b"", b"Subfinder timeout"
             
             if proc.returncode != 0:
                 logger.warning(f"Subfinder exited with code {proc.returncode}: {stderr.decode(errors='ignore')}")

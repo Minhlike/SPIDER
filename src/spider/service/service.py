@@ -35,6 +35,7 @@ class SpiderService:
     ):
         self.db_manager = DatabaseManager(db_path=db_path)
         self.db_writer = SingleDBWriter(self.db_manager)
+        self.is_running: bool = False
         self.artifact_repo = ArtifactRepository(artifacts_dir=artifacts_dir)
         self.ingest_queue = IngestQueue(self.db_writer)
         self.provider_manager = ProviderManager(self.artifact_repo, self.ingest_queue, self.db_writer)
@@ -57,12 +58,14 @@ class SpiderService:
             return
         await self.db_manager.initialize()
         await self.db_writer.start()
+        self.is_running = True
         self._started = True
 
     async def stop(self) -> None:
         if not self._started:
             return
         await self.db_writer.stop()
+        self.is_running = False
         await self.db_manager.close()
         self._started = False
 
@@ -90,8 +93,8 @@ class SpiderService:
             return {"id": rec.id, "case_id": rec.case_id, "canonical_value": rec.canonical_value, "type": rec.observable_type}
         return await self.db_writer.submit(_add)
 
-    async def investigate(self, case_id: str, budget: Optional[ExecutionBudget] = None, policy_profile: Optional[str] = None) -> Dict[str, Any]:
-        return await self.engine.run_investigation(case_id, budget=budget, policy_profile=policy_profile)
+    async def investigate(self, case_id: str, budget: Optional[ExecutionBudget] = None, policy_profile: Optional[str] = None, run_id: Optional[str] = None) -> Dict[str, Any]:
+        return await self.engine.run_investigation(case_id, budget=budget, policy_profile=policy_profile, run_id=run_id)
 
     async def get_case_entities(self, case_id: str) -> List[Dict[str, Any]]:
         async with self.db_manager.session_factory() as session:

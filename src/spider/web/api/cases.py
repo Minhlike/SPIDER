@@ -19,7 +19,7 @@ class CreateCaseRequest(BaseModel):
 @router.get("", response_model=List[Dict[str, Any]])
 async def list_cases(service: SpiderService = Depends(get_srv)):
     is_temp = False
-    if not service.db_manager:
+    if not service.is_running:
         await service.start()
         is_temp = True
     try:
@@ -32,7 +32,7 @@ async def list_cases(service: SpiderService = Depends(get_srv)):
 @router.post("", response_model=Dict[str, Any])
 async def create_case(req: CreateCaseRequest, service: SpiderService = Depends(get_srv)):
     is_temp = False
-    if not service.db_manager:
+    if not service.is_running:
         await service.start()
         is_temp = True
     try:
@@ -45,7 +45,7 @@ async def create_case(req: CreateCaseRequest, service: SpiderService = Depends(g
 @router.get("/{case_id}", response_model=Dict[str, Any])
 async def get_case(case_id: str, service: SpiderService = Depends(get_srv)):
     is_temp = False
-    if not service.db_manager:
+    if not service.is_running:
         await service.start()
         is_temp = True
     try:
@@ -80,7 +80,7 @@ async def get_case(case_id: str, service: SpiderService = Depends(get_srv)):
 @router.delete("/{case_id}")
 async def delete_case(case_id: str, service: SpiderService = Depends(get_srv)):
     is_temp = False
-    if not service.db_manager:
+    if not service.is_running:
         await service.start()
         is_temp = True
     try:
@@ -110,7 +110,7 @@ async def delete_case(case_id: str, service: SpiderService = Depends(get_srv)):
 @router.get("/{case_id}/export")
 async def export_case(case_id: str, service: SpiderService = Depends(get_srv)):
     is_temp = False
-    if not service.db_manager:
+    if not service.is_running:
         await service.start()
         is_temp = True
     try:
@@ -126,3 +126,15 @@ async def export_case(case_id: str, service: SpiderService = Depends(get_srv)):
     finally:
         if is_temp:
             await service.stop()
+
+
+@router.get("/{case_id}/insights", response_model=Dict[str, Any])
+async def get_case_insights(case_id: str, service: SpiderService = Depends(get_srv)):
+    from spider.service.insights import CaseInsightsBuilder
+    if not service.is_running:
+        await service.start()
+    async with service.db_manager.session_factory() as session:
+        case_rec = await session.get(CaseRecord, case_id)
+        if not case_rec:
+            raise HTTPException(status_code=404, detail="Case not found")
+        return await CaseInsightsBuilder.build_insights(session, case_id, case_rec)

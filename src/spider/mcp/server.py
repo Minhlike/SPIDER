@@ -1,3 +1,4 @@
+from spider.models.budget import ExecutionBudget
 import asyncio
 import json
 import logging
@@ -32,7 +33,8 @@ class SpiderMCPServer:
                 classification = TargetClassifier.classify(target)
                 obs_type = classification.detected_type
                 await self.service.add_target(case_id, target, obs_type, scope_authorized=authorized)
-                run_res = await self.service.investigate(case_id, policy_profile=profile)
+                budget = ExecutionBudget(max_depth=arguments.get("max_depth", 1), max_entities=arguments.get("max_entities", 20))
+                run_res = await self.service.investigate(case_id, budget=budget, policy_profile=profile)
                 entities = await self.service.get_case_entities(case_id)
                 assertions = await self.service.get_case_assertions(case_id)
                 

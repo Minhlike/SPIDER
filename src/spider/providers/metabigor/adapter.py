@@ -53,7 +53,12 @@ class MetabigorAdapter(BaseProviderAdapter):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await proc.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=4.0)
+            except asyncio.TimeoutError:
+                try: proc.kill()
+                except Exception: pass
+                stdout, stderr = b"", b"Metabigor timeout"
             if proc.returncode == 0 or b"v2.2.0" in stdout:
                 return ProviderHealth(state=ProviderState.READY, message="Metabigor v2.2.0 operational")
             return ProviderHealth(state=ProviderState.DEGRADED, message=f"Version check returned {proc.returncode}")
@@ -67,7 +72,8 @@ class MetabigorAdapter(BaseProviderAdapter):
             "net",
             val,
             "-f", "json",
-            "-q"
+            "-q",
+            "-t", "3"
         ]
 
     async def execute(self, target: NormalizedObservable, lineage: SourceLineage, **kwargs) -> ProviderExecutionResult:
@@ -75,10 +81,16 @@ class MetabigorAdapter(BaseProviderAdapter):
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await proc.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=4.0)
+            except asyncio.TimeoutError:
+                try: proc.kill()
+                except Exception: pass
+                stdout, stderr = b"", b"Metabigor timeout"
             observations = self.parse(stdout, lineage)
             return ProviderExecutionResult(
                 raw_content=stdout,
@@ -120,6 +132,8 @@ class MetabigorAdapter(BaseProviderAdapter):
                     entries.append({"cidr": line})
 
         for entry in entries:
+            if len(results) >= 50:
+                break
             asn = entry.get("asn") or entry.get("ASN")
             org = entry.get("org") or entry.get("Org") or entry.get("organization")
             cidr = entry.get("cidr") or entry.get("CIDR") or entry.get("range")

@@ -15,6 +15,7 @@ from spider.web.api.investigate import router as investigate_router
 from spider.web.api.graph import router as graph_router
 from spider.web.api.explain import router as explain_router
 from spider.web.api.providers import router as providers_router
+from spider.web.api.settings import router as settings_router
 from spider.models.classifier import TargetClassifier
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -35,9 +36,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 def get_service(request: Request) -> SpiderService:
     if hasattr(request.app.state, "service") and request.app.state.service:
         return request.app.state.service
-    # Fallback for direct unit test calls outside lifespan
-    service = create_spider_service(mode="production")
-    return service
+    if not hasattr(request.app.state, "_fallback_service"):
+        srv = create_spider_service(mode="production")
+        request.app.state._fallback_service = srv
+    return request.app.state._fallback_service
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -70,13 +72,21 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Target Classifier Endpoint
-    @app.post("/api/classify")
-    async def classify_target(payload: dict):
-        raw = payload.get("target", "")
+    # Target Classifier Endpoint (supports both GET and POST)
+    @app.api_route("/api/classify", methods=["GET", "POST"])
+    async def classify_target(request: Request):
+        if request.method == "POST":
+            try:
+                payload = await request.json()
+                raw = payload.get("target", "")
+            except Exception:
+                raw = ""
+        else:
+            raw = request.query_params.get("target", "")
         res = TargetClassifier.classify(raw)
         return {
             "target": raw,
+            "type": res.detected_type.value,
             "detected_type": res.detected_type.value,
             "confidence": res.confidence,
             "canonical_value": res.canonical_value,
@@ -89,13 +99,14 @@ def create_app() -> FastAPI:
     app.include_router(graph_router, prefix="/api")
     app.include_router(explain_router, prefix="/api")
     app.include_router(providers_router, prefix="/api")
+    app.include_router(settings_router, prefix="/api")
 
     # Health Check
     @app.get("/api/health")
     async def health_check(request: Request):
         srv = get_service(request)
         is_temp = False
-        if not srv.db_manager:
+        if not srv.is_running:
             await srv.start()
             is_temp = True
         try:

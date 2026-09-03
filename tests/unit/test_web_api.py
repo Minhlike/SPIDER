@@ -2,16 +2,19 @@ import pytest
 from fastapi.testclient import TestClient
 from spider.web.app import create_app
 
-client = TestClient(create_app())
+@pytest.fixture
+def client():
+    with TestClient(create_app()) as c:
+        yield c
 
-def test_api_health():
+def test_api_health(client):
     res = client.get("/api/health")
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "HEALTHY"
     assert "providers" in data
 
-def test_api_providers_list():
+def test_api_providers_list(client):
     res = client.get("/api/providers")
     assert res.status_code == 200
     providers = res.json()
@@ -23,7 +26,7 @@ def test_api_providers_list():
     assert "maigret" in ids
     assert "uncover" in ids
 
-def test_api_case_lifecycle():
+def test_api_case_lifecycle(client):
     # 1. Create Case
     create_res = client.post("/api/cases", json={
         "name": "Web Test Case",

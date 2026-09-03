@@ -12,7 +12,7 @@ def get_srv(request: Request) -> SpiderService:
 @router.get("/{assertion_id}", response_model=Dict[str, Any])
 async def explain_assertion(assertion_id: str, service: SpiderService = Depends(get_srv)):
     is_temp = False
-    if not service.db_manager:
+    if not service.is_running:
         await service.start()
         is_temp = True
     try:

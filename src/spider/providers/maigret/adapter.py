@@ -80,9 +80,9 @@ class MaigretAdapter(BaseProviderAdapter):
             target.canonical_value,
             "--dns-resolver", "threaded",
             "--no-color",
-            "--top-sites", "50",
+            "--top-sites", "15",
             "-J", "ndjson",
-            "--timeout", "10"
+            "--timeout", "4"
         ]
 
     async def execute(self, target: NormalizedObservable, lineage: SourceLineage, **kwargs) -> ProviderExecutionResult:

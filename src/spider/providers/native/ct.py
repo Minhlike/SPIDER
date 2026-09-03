@@ -48,16 +48,19 @@ class NativeCertificateTransparencyAdapter(BaseProviderAdapter):
         loop = asyncio.get_running_loop()
 
         def _fetch_ct_sync() -> List[Dict[str, Any]]:
-            url = f"https://crt.sh/?q=%25.{urllib.parse.quote(domain)}&output=json"
+            url = f"https://crt.sh/?q={urllib.parse.quote(domain)}&output=json"
             req = urllib.request.Request(url, headers={"User-Agent": "SPIDER-OSINT/2.0"})
             try:
-                with urllib.request.urlopen(req, timeout=10) as resp:
+                with urllib.request.urlopen(req, timeout=3) as resp:
                     return json.loads(resp.read().decode("utf-8", errors="ignore"))
             except Exception:
                 return []
 
         try:
-            data = await loop.run_in_executor(None, _fetch_ct_sync)
+            try:
+                data = await asyncio.wait_for(loop.run_in_executor(None, _fetch_ct_sync), timeout=3.5)
+            except asyncio.TimeoutError:
+                data = []
             raw_bytes = json.dumps(data, indent=2).encode("utf-8")
             observations = self.parse(raw_bytes, lineage)
             return ProviderExecutionResult(
@@ -85,6 +88,8 @@ class NativeCertificateTransparencyAdapter(BaseProviderAdapter):
 
         seen_hosts = set()
         for item in entries:
+            if len(results) >= 50:
+                break
             name_value = item.get("name_value", "")
             for raw_host in name_value.splitlines():
                 host = raw_host.strip().lower()

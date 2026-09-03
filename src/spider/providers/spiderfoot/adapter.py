@@ -45,11 +45,11 @@ SF_TYPE_MAP: Dict[str, ObservableType] = {
 }
 
 SF_MODULE_PROFILES: Dict[str, List[str]] = {
-    "SF_DOMAIN_PUBLIC": ["sfp_dnsresolve", "sfp_whois", "sfp_threatcrowd", "sfp_crt", "sfp_hackertarget", "sfp_securitytrails_passive"],
-    "SF_IP_PUBLIC": ["sfp_dnsresolve", "sfp_whois", "sfp_bgpview", "sfp_cymru"],
-    "SF_EMAIL_PUBLIC": ["sfp_dnsresolve", "sfp_whois", "sfp_mailgun", "sfp_hunter_free"],
-    "SF_USERNAME_PUBLIC": ["sfp_accounts", "sfp_github", "sfp_pastebin"],
-    "SF_PHONE_PUBLIC": ["sfp_phonenumbers", "sfp_numverify_free"]
+    "SF_DOMAIN_PUBLIC": ["sfp_dnsresolve", "sfp_whois"],
+    "SF_IP_PUBLIC": ["sfp_dnsresolve", "sfp_whois"],
+    "SF_EMAIL_PUBLIC": ["sfp_dnsresolve"],
+    "SF_USERNAME_PUBLIC": ["sfp_accounts"],
+    "SF_PHONE_PUBLIC": ["sfp_phonenumbers"]
 }
 
 class SpiderFootAdapter(BaseProviderAdapter):
@@ -77,7 +77,6 @@ class SpiderFootAdapter(BaseProviderAdapter):
             ObservableType.DOMAIN,
             ObservableType.HOSTNAME,
             ObservableType.IP_ADDRESS,
-            ObservableType.EMAIL,
             ObservableType.USERNAME,
             ObservableType.PHONE
         ]
@@ -87,7 +86,6 @@ class SpiderFootAdapter(BaseProviderAdapter):
             ObservableType.HOSTNAME,
             ObservableType.IP_ADDRESS,
             ObservableType.IPV6_ADDRESS,
-            ObservableType.EMAIL,
             ObservableType.ORGANIZATION,
             ObservableType.ASN,
             ObservableType.CIDR,
@@ -158,7 +156,7 @@ class SpiderFootAdapter(BaseProviderAdapter):
             str(self.sf_script.resolve()),
             "-s", target.canonical_value,
             "-m", modules,
-            "-u", "passive",
+            
             "-o", "json",
             "-q"
         ]
@@ -187,7 +185,7 @@ class SpiderFootAdapter(BaseProviderAdapter):
                 env=env
             )
             try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=25.0)
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
             except asyncio.TimeoutError:
                 try:
                     proc.kill()
@@ -228,18 +226,28 @@ class SpiderFootAdapter(BaseProviderAdapter):
         if not text:
             return results
 
-        # Process lines (SpiderFoot outputs stream of json objects)
-        for raw_line in text.splitlines():
-            line = raw_line.strip().rstrip(",")
-            if line.endswith("[]"):
-                line = line[:-2].strip().rstrip(",")
-            if not line or line in ("[]", "[", "]"):
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+        entries = []
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                entries = parsed
+            elif isinstance(parsed, dict):
+                entries = [parsed]
+        except json.JSONDecodeError:
+            for raw_line in text.splitlines():
+                line = raw_line.strip().rstrip(",")
+                if line.endswith("[]"):
+                    line = line[:-2].strip().rstrip(",")
+                if not line or line in ("[]", "[", "]"):
+                    continue
+                try:
+                    e = json.loads(line)
+                    if isinstance(e, dict):
+                        entries.append(e)
+                except json.JSONDecodeError:
+                    continue
 
+        for entry in entries:
             if not isinstance(entry, dict):
                 continue
 
@@ -249,15 +257,25 @@ class SpiderFootAdapter(BaseProviderAdapter):
             parent_src = entry.get("source") if entry.get("module") else lineage.parent_observable_value
 
             obs_type = SF_TYPE_MAP.get(sf_type)
+            if sf_type in ("BGP_AS_OWNER", "BGP AS Owner") and str(raw_val).upper().startswith("AS") and any(c.isdigit() for c in str(raw_val)):
+                obs_type = ObservableType.ASN
             if not obs_type or not raw_val:
                 continue
 
             # Family classification based on real module name
-            family = "DNS" if "dns" in module_name.lower() else (
-                "ROUTING_REGISTRY" if ("whois" in module_name.lower() or "bgp" in module_name.lower()) else (
-                    "CERTIFICATE_TRANSPARENCY" if "crt" in module_name.lower() else "SECURITY_INTELLIGENCE"
-                )
-            )
+            if obs_type == ObservableType.EMAIL:
+                family = "EMAIL_INTELLIGENCE"
+            elif "dns" in module_name.lower():
+                family = "DNS"
+            elif "whois" in module_name.lower() or "bgp" in module_name.lower():
+                family = "ROUTING_REGISTRY"
+            elif "crt" in module_name.lower():
+                family = "CERTIFICATE_TRANSPARENCY"
+            else:
+                family = "SECURITY_INTELLIGENCE"
+
+            raw_conf = entry.get("confidence")
+            conf = float(raw_conf) / 100.0 if raw_conf is not None else 0.85
 
             norm_obs = self.normalize({"type": obs_type, "value": str(raw_val)})
             item_lineage = lineage.model_copy(update={
@@ -269,7 +287,7 @@ class SpiderFootAdapter(BaseProviderAdapter):
             results.append(Observation(
                 observable=norm_obs,
                 lineage=item_lineage,
-                confidence=0.85,
+                confidence=conf,
                 raw_data=entry
             ))
 

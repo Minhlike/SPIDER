@@ -63,7 +63,12 @@ class UncoverAdapter(BaseProviderAdapter):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await proc.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=8.0)
+            except asyncio.TimeoutError:
+                try: proc.kill()
+                except Exception: pass
+                stdout, stderr = b"", b"Uncover timeout"
             if proc.returncode == 0 or b"v1.2.1" in stdout or b"v1.2.1" in stderr:
                 if has_keys:
                     return ProviderHealth(state=ProviderState.READY, message="Uncover v1.2.1 operational with API keys")
@@ -85,7 +90,21 @@ class UncoverAdapter(BaseProviderAdapter):
             "-silent"
         ]
 
+    def _has_keys(self) -> bool:
+        return any(
+            os.environ.get(f"{eng.upper()}_API_KEY") or os.environ.get(f"{eng.upper()}_KEY")
+            for eng in UNCOVER_ENGINES
+        )
+
     async def execute(self, target: NormalizedObservable, lineage: SourceLineage, **kwargs) -> ProviderExecutionResult:
+        if not self._has_keys():
+            return ProviderExecutionResult(
+                raw_content=b"[]",
+                observations=[],
+                exit_code=0,
+                error_message="No search engine API keys configured (MISSING_CREDENTIAL)",
+                mime_type="application/json"
+            )
         cmd = self.build_command(target)
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -93,7 +112,12 @@ class UncoverAdapter(BaseProviderAdapter):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await proc.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=8.0)
+            except asyncio.TimeoutError:
+                try: proc.kill()
+                except Exception: pass
+                stdout, stderr = b"", b"Uncover timeout"
             observations = self.parse(stdout, lineage)
             return ProviderExecutionResult(
                 raw_content=stdout,

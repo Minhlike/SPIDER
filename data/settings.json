@@ -1,0 +1,27 @@
+{
+  "language": "en",
+  "theme": "dark",
+  "default_profile": "passive_standard",
+  "max_depth": 2,
+  "max_entities": 250,
+  "timeout_seconds": 90,
+  "concurrency": 4,
+  "enabled_providers": {
+    "native_dns": true,
+    "native_rdap": true,
+    "native_ct": true,
+    "subfinder": true,
+    "metabigor": true,
+    "spiderfoot": true,
+    "maigret": true,
+    "uncover": true
+  },
+  "api_keys": {
+    "shodan": "",
+    "censys_id": "",
+    "censys_secret": "",
+    "securitytrails": "",
+    "virustotal": "",
+    "SHODAN": "test_shodan_key_123"
+  }
+}

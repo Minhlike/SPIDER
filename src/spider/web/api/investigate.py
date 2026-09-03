@@ -21,9 +21,10 @@ class StartInvestigationRequest(BaseModel):
     max_depth: int = 2
     policy_profile: Optional[str] = "passive_standard"
 
-async def _run_investigation_background(service: SpiderService, case_id: str, target: str, obs_type_val: str, budget: ExecutionBudget, profile: Optional[str]):
+async def _run_investigation_background(service: SpiderService, case_id: str, run_id: str, target: str, obs_type_val: str, budget: ExecutionBudget, profile: Optional[str]):
     await event_broker.broadcast("RUN_STARTED", {
         "case_id": case_id,
+        "run_id": run_id,
         "target": target,
         "type": obs_type_val,
         "policy_profile": profile
@@ -32,7 +33,8 @@ async def _run_investigation_background(service: SpiderService, case_id: str, ta
         run_res = await service.investigate(
             case_id=case_id,
             budget=budget,
-            policy_profile=profile
+            policy_profile=profile,
+            run_id=run_id
         )
         entities = await service.get_case_entities(case_id)
         assertions = await service.get_case_assertions(case_id)
@@ -55,7 +57,7 @@ async def start_investigation(
     service: SpiderService = Depends(get_srv)
 ):
     is_temp = False
-    if not service.db_manager:
+    if not service.is_running:
         await service.start()
         is_temp = True
 
@@ -77,19 +79,25 @@ async def start_investigation(
 
         budget = ExecutionBudget(max_depth=req.max_depth)
 
-        # Dispatch background investigation non-blockingly
-        background_tasks.add_task(
-            _run_investigation_background,
-            service,
-            case_id,
-            req.target,
-            obs_type.value,
-            budget,
-            req.policy_profile
+        import uuid
+        run_id = str(uuid.uuid4())
+
+        # Dispatch true background task on event loop
+        asyncio.create_task(
+            _run_investigation_background(
+                service,
+                case_id,
+                run_id,
+                req.target,
+                obs_type.value,
+                budget,
+                req.policy_profile
+            )
         )
 
         return {
             "case_id": case_id,
+            "run_id": run_id,
             "target": req.target,
             "type": obs_type.value,
             "status": "QUEUED",

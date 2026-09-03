@@ -21,7 +21,7 @@ async def get_case_graph(
     service: SpiderService = Depends(get_srv)
 ):
     is_temp = False
-    if not service.db_manager:
+    if not service.is_running:
         await service.start()
         is_temp = True
     try:

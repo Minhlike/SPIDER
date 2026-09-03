@@ -77,4 +77,11 @@ class DeterministicScheduler:
 
         # Deterministic sorting
         candidates.sort(key=lambda t: (-t.priority_score, t.capability, t.provider_id))
-        return candidates
+        # Deduplicate by provider_id so a single provider is only invoked once per observable
+        seen_providers: Set[str] = set()
+        deduped: List[ScheduledTask] = []
+        for cand in candidates:
+            if cand.provider_id not in seen_providers:
+                seen_providers.add(cand.provider_id)
+                deduped.append(cand)
+        return deduped

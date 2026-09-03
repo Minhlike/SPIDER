@@ -1,3 +1,4 @@
+from spider.providers.base import ProviderExecutionResult
 import asyncio
 import logging
 import uuid
@@ -48,14 +49,15 @@ class SpiderEngine:
         self,
         case_id: str,
         budget: Optional[ExecutionBudget] = None,
-        policy_profile: Optional[str] = None
+        policy_profile: Optional[str] = None,
+        run_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Executes a deterministic capability-driven investigation loop for the given case.
         """
         budget = budget or ExecutionBudget()
         scheduler = DeterministicScheduler(self.capability_registry, budget)
-        run_id = str(uuid.uuid4())
+        run_id = run_id or str(uuid.uuid4())
 
         # 1. Fetch case & targets
         async with self.db_manager.session_factory() as session:

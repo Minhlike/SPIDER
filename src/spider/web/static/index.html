@@ -1,39 +1,61 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SPIDER — Evidence-First OSINT Orchestration Engine</title>
+  <title>SPIDER — Nền tảng Điều tra & Thu thập OSINT Đa nguồn</title>
   <link rel="stylesheet" href="/static/css/style.css">
   <script src="/static/vendor/cytoscape.min.js"></script>
 </head>
 <body>
+  <!-- Sidebar Navigation -->
   <div id="sidebar">
     <div class="logo-container">
       <div class="logo-icon">&#x1F577;</div>
-      <div class="logo-text">SPIDER</div>
+      <div>
+        <div class="logo-text">SPIDER</div>
+        <div style="font-size:10px; color:var(--text-muted); font-weight:700; letter-spacing:0.5px;">OSINT V2.0</div>
+      </div>
     </div>
     <ul class="nav-links">
       <li class="nav-item active" id="nav-dashboard" onclick="switchView('dashboard')">
-        <span>&#x1F4CA;</span> Dashboard
+        <span>&#x1F4CA;</span> <span data-i18n="nav_dashboard">Bảng điều khiển</span>
       </li>
       <li class="nav-item" id="nav-investigate" onclick="switchView('investigate')">
-        <span>&#x1F50D;</span> New Investigation
+        <span>&#x1F50D;</span> <span data-i18n="nav_investigate">Cuộc điều tra mới</span>
       </li>
       <li class="nav-item" id="nav-providers" onclick="switchView('providers')">
-        <span>&#x2699;</span> Provider Health
+        <span>&#x2699;</span> <span data-i18n="nav_providers">Trạng thái nguồn dữ liệu</span>
       </li>
     </ul>
     <div class="sidebar-footer">
-      <span>Backend: 127.0.0.1:8765</span>
+      <div>
+        <div style="font-weight:600; color:var(--text-secondary);">127.0.0.1:8765</div>
+        <div style="font-size:11px; color:var(--text-muted);" data-i18n="status_connected">Trực tuyến</div>
+      </div>
       <span class="ws-status-indicator" id="ws-indicator" title="WebSocket Live Connected"></span>
     </div>
   </div>
 
+  <!-- Main Content Wrapper -->
   <div id="main-wrapper">
     <header>
-      <div class="header-title" id="header-breadcrumb">SPIDER Engine Console</div>
-      <div id="notification-bar" style="display:none; color:var(--accent-cyan); font-size:13px; font-weight:600;"></div>
+      <div class="header-title" id="header-breadcrumb">Bảng điều khiển</div>
+      <div id="notification-bar"></div>
+      <div class="header-actions">
+        <!-- Language Switcher -->
+        <button class="header-btn" id="btn-lang-toggle" onclick="toggleLanguage()" title="Chuyển ngôn ngữ / Switch Language">
+          <span>&#x1F310;</span> <span id="lang-label">VI</span>
+        </button>
+        <!-- Theme Toggle -->
+        <button class="header-btn" id="btn-theme-toggle" onclick="toggleTheme()" title="Đổi giao diện / Toggle Theme">
+          <span id="theme-icon">&#x2600;</span> <span id="theme-label" data-i18n="theme_light">Sáng</span>
+        </button>
+        <!-- Settings Modal Trigger -->
+        <button class="header-btn" onclick="openSettingsModal()" title="Cài đặt hệ thống / Settings">
+          <span>&#x2699;</span> <span data-i18n="settings_title">Cài đặt</span>
+        </button>
+      </div>
     </header>
 
     <div id="content-container">
@@ -41,28 +63,38 @@
       <div id="view-dashboard" class="view-panel active">
         <div class="kpi-grid">
           <div class="kpi-card">
-            <div class="kpi-label">Investigation Cases</div>
+            <div class="kpi-label" data-i18n="kpi_cases">Tổng số vụ điều tra</div>
             <div class="kpi-value" id="kpi-cases">-</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-label">Active Providers</div>
+            <div class="kpi-label" data-i18n="kpi_providers">Nguồn dữ liệu sẵn sàng</div>
             <div class="kpi-value" id="kpi-providers">-</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label" data-i18n="kpi_entities">Thực thể đã lưu trữ</div>
+            <div class="kpi-value" id="kpi-entities">-</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label" data-i18n="kpi_observations">Bằng chứng quan sát</div>
+            <div class="kpi-value" id="kpi-observations">-</div>
           </div>
         </div>
 
         <div class="table-container">
           <div class="table-header">
-            <span>Recent Investigations</span>
-            <button class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="switchView('investigate')">+ New Investigation</button>
+            <span data-i18n="recent_investigations">Các cuộc điều tra gần đây</span>
+            <button class="btn btn-primary" style="padding:6px 14px; font-size:12.5px;" onclick="switchView('investigate')">
+              + <span data-i18n="btn_new_case">Tạo điều tra mới</span>
+            </button>
           </div>
           <table>
             <thead>
               <tr>
-                <th>Case Name</th>
-                <th>ID</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Actions</th>
+                <th data-i18n="col_case_name">Tên vụ án</th>
+                <th data-i18n="col_case_id">Mã vụ án</th>
+                <th data-i18n="col_status">Trạng thái</th>
+                <th data-i18n="col_created">Thời gian tạo</th>
+                <th data-i18n="col_actions">Thao tác</th>
               </tr>
             </thead>
             <tbody id="recent-cases-tbody">
@@ -74,113 +106,290 @@
 
       <!-- 2. NEW INVESTIGATION VIEW -->
       <div id="view-investigate" class="view-panel">
-        <div class="table-container" style="max-width: 700px; padding: 24px;">
-          <h2 style="font-size:18px; font-weight:700; margin-bottom:20px;">Start Evidence-First OSINT Investigation</h2>
+        <div class="table-container" style="max-width: 760px; padding: 24px; margin: 0 auto;">
+          <h2 style="font-size:18px; font-weight:700; margin-bottom:6px;" data-i18n="new_inv_heading">Bắt đầu điều tra OSINT đa nguồn</h2>
+          <p style="font-size:13px; color:var(--text-muted); margin-bottom:20px;" data-i18n="new_inv_subheading">Hệ thống sẽ tự động phân loại mục tiêu, áp dụng chính sách thụ động an toàn và thu thập thông tin có chứng cứ.</p>
           
           <div class="form-group">
-            <label class="form-label">Target Value (Domain, IP, Username, Email, etc.)</label>
-            <input type="text" id="target-input" class="form-input" placeholder="e.g. example.com, AS15133, user1998, admin@corp.com" autocomplete="off">
-            <small style="color:var(--text-muted); margin-top:4px; display:block;">Detected Type: <strong id="type-preview" style="color:var(--accent-cyan);">UNKNOWN</strong></small>
+            <label class="form-label" data-i18n="lbl_target">Mục tiêu điều tra (Tên miền, Email, IP, Tên người dùng, Số điện thoại...)</label>
+            <input type="text" id="target-input" class="form-input" placeholder="ví dụ: example.com, admin@corp.com, 93.184.216.34, octocat, +84901234567" autocomplete="off" oninput="onTargetInputDebounced()">
+            <div style="margin-top:6px; display:flex; align-items:center; gap:8px;">
+              <span style="font-size:12.5px; color:var(--text-muted);" data-i18n="lbl_detected_type">Loại nhận diện:</span>
+              <span class="badge badge-running" id="type-preview" style="font-size:11px;">CHƯA XÁC ĐỊNH</span>
+            </div>
           </div>
 
           <div class="form-group">
-            <label class="form-label">Network Safety Policy Profile</label>
+            <label class="form-label" data-i18n="lbl_policy">Hồ sơ an toàn mạng (Policy Profile)</label>
             <select id="profile-select" class="form-select">
-              <option value="passive_standard">passive_standard (Default Safe: 3rd-Party Passive OSINT Registries Only)</option>
-              <option value="local_only">local_only (Strict Offline Processing)</option>
-              <option value="active_authorized">active_authorized (Target Direct Active Discovery - Requires Scope Auth)</option>
+              <option value="passive_standard" selected>passive_standard (Mặc định an toàn: Chỉ dùng Registry thụ động bên thứ ba, không chạm mục tiêu)</option>
+              <option value="local_only">local_only (Chỉ xử lý ngoại tuyến / Phân giải nội bộ)</option>
+              <option value="active_authorized">active_authorized (Quét chủ động trực tiếp - Bắt buộc có thẩm quyền)</option>
             </select>
           </div>
 
-          <div class="form-group">
-            <label class="form-label">Max Recursion Depth</label>
-            <select id="depth-select" class="form-select">
-              <option value="1">1 (Single Hop Discovery)</option>
-              <option value="2" selected>2 (Fan-Out: Target &rarr; Hosts &rarr; Infrastructure)</option>
-              <option value="3">3 (Deep Multi-Hop Expansion)</option>
-            </select>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+            <div class="form-group">
+              <label class="form-label" data-i18n="lbl_depth">Độ sâu thu thập (Max Depth)</label>
+              <select id="depth-select" class="form-select">
+                <option value="0">0 (Chỉ phân tích mục tiêu gốc - Tối ưu tốc độ)</option>
+                <option value="1" selected>1 (Khám phá thực thể liên kết cấp 1: Tên miền, Máy chủ, IP)</option>
+                <option value="2">2 (Mở rộng đa tầng hạ tầng mạng)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" data-i18n="lbl_timeout">Thời gian tối đa (Timeout)</label>
+              <select id="timeout-select" class="form-select">
+                <option value="30">30 giây</option>
+                <option value="60" selected>60 giây</option>
+                <option value="120">120 giây</option>
+              </select>
+            </div>
           </div>
 
-          <div class="form-group" style="display:flex; align-items:center; gap:8px; margin-top:20px;">
-            <input type="checkbox" id="authorized-checkbox">
-            <label for="authorized-checkbox" style="font-size:13px; color:var(--text-secondary); cursor:pointer;">Target is within authorized investigation scope</label>
+          <div class="form-group" style="display:flex; align-items:center; gap:8px; margin-top:14px;">
+            <input type="checkbox" id="authorized-checkbox" checked>
+            <label for="authorized-checkbox" style="font-size:13px; color:var(--text-secondary); cursor:pointer;" data-i18n="lbl_scope_confirm">Mục tiêu nằm trong phạm vi được phép điều tra an toàn</label>
           </div>
 
           <div style="margin-top:24px; display:flex; gap:12px;">
-            <button class="btn btn-primary" id="btn-start-investigate" onclick="startInvestigation()">Start Investigation</button>
-            <button class="btn btn-secondary" onclick="switchView('dashboard')">Cancel</button>
+            <button class="btn btn-primary" id="btn-start-investigate" onclick="startInvestigation()">
+              <span>&#x25B6;</span> <span data-i18n="btn_start">Bắt đầu điều tra</span>
+            </button>
+            <button class="btn btn-secondary" onclick="switchView('dashboard')" data-i18n="btn_cancel">Hủy bỏ</button>
           </div>
         </div>
       </div>
 
-      <!-- 3. CASE DETAIL & KNOWLEDGE GRAPH VIEW -->
+      <!-- 3. CASE DETAIL VIEW (INTELLIGENCE-FIRST 6-TAB WORKFLOW) -->
       <div id="view-case_detail" class="view-panel">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
           <div>
-            <h2 id="case-title" style="font-size:20px; font-weight:700;">Case Name</h2>
-            <p id="case-meta" style="font-size:12px; color:var(--text-muted); margin-top:4px;"></p>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <h2 id="case-title" style="font-size:20px; font-weight:800;">Tên vụ án</h2>
+              <span class="badge badge-running" id="case-status-badge">PENDING</span>
+            </div>
+            <p id="case-meta" style="font-size:12.5px; color:var(--text-muted); margin-top:4px;"></p>
           </div>
           <div style="display:flex; gap:8px;">
-            <button class="btn btn-secondary" onclick="triggerRebuild()">Rebuild Graph</button>
-            <button class="btn btn-secondary" onclick="exportCaseData()">Export JSON</button>
-            <button class="btn btn-danger" onclick="deleteCurrentCase()">Delete</button>
+            <button class="btn btn-secondary" onclick="refreshCurrentCase()" data-i18n="btn_refresh">&#x21BB; Cập nhật</button>
+            <button class="btn btn-secondary" onclick="exportCaseData()">&#x1F4BE; <span data-i18n="btn_export">Xuất JSON</span></button>
+            <button class="btn btn-danger" onclick="deleteCurrentCase()">&#x1F5D1; <span data-i18n="btn_delete">Xóa</span></button>
           </div>
         </div>
 
-        <div class="kpi-grid">
-          <div class="kpi-card" style="padding:10px 14px;">
-            <div class="kpi-label">Discovered Entities</div>
-            <div class="kpi-value" id="case-kpi-entities">-</div>
+        <!-- 6 Tabs Header -->
+        <div class="case-tabs">
+          <button class="case-tab-btn active" id="tab-btn-summary" onclick="switchCaseTab('summary')">
+            <span>&#x1F4CA;</span> <span data-i18n="tab_summary">Tổng quan</span>
+          </button>
+          <button class="case-tab-btn" id="tab-btn-live" onclick="switchCaseTab('live')">
+            <span>&#x26A1;</span> <span data-i18n="tab_live">Tiến trình</span>
+            <span id="tab-live-badge" class="badge badge-running" style="display:none; font-size:10px; margin-left:4px;">RUNNING</span>
+          </button>
+          <button class="case-tab-btn" id="tab-btn-findings" onclick="switchCaseTab('findings')">
+            <span>&#x1F3AF;</span> <span data-i18n="tab_findings">Phát hiện</span> (<span id="findings-tab-count">0</span>)
+          </button>
+          <button class="case-tab-btn" id="tab-btn-sources" onclick="switchCaseTab('sources')">
+            <span>&#x1F4E1;</span> <span data-i18n="tab_sources">Nguồn dữ liệu</span>
+          </button>
+          <button class="case-tab-btn" id="tab-btn-evidence" onclick="switchCaseTab('evidence')">
+            <span>&#x1F4DC;</span> <span data-i18n="tab_evidence">Bằng chứng</span> (<span id="evidence-tab-count">0</span>)
+          </button>
+          <button class="case-tab-btn" id="tab-btn-graph" onclick="switchCaseTab('graph')">
+            <span>&#x1F578;</span> <span data-i18n="tab_graph">Mạng liên kết</span>
+          </button>
+        </div>
+
+        <!-- TAB 1: SUMMARY (TỔNG QUAN) -->
+        <div id="case-tab-content-summary" class="case-tab-content active">
+          <!-- Summary Metrics -->
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-label" data-i18n="kpi_entities_found">Thực thể phát hiện</div>
+              <div class="kpi-value" id="sum-kpi-entities">-</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label" data-i18n="kpi_assertions">Mối quan hệ xác thực</div>
+              <div class="kpi-value" id="sum-kpi-assertions">-</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label" data-i18n="kpi_observations">Bằng chứng quan sát</div>
+              <div class="kpi-value" id="sum-kpi-observations">-</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label" data-i18n="kpi_sources_run">Nguồn dữ liệu đã chạy</div>
+              <div class="kpi-value" id="sum-kpi-sources">-</div>
+            </div>
           </div>
-          <div class="kpi-card" style="padding:10px 14px;">
-            <div class="kpi-label">Materialized Assertions</div>
-            <div class="kpi-value" id="case-kpi-assertions">-</div>
+
+          <!-- Explainable Empty Reason Banner (Rendered when findings == 0) -->
+          <div id="empty-reason-container" style="display:none;"></div>
+
+          <!-- Type-Specific Intelligence Cards -->
+          <div id="type-specific-container"></div>
+        </div>
+
+        <!-- TAB 2: LIVE PROGRESS (TIẾN TRÌNH TRỰC TIẾP) -->
+        <div id="case-tab-content-live" class="case-tab-content">
+          <div class="table-container">
+            <div class="table-header">
+              <span data-i18n="task_execution_progress">Chi tiết thực thi tác vụ & Tiến trình thời gian thực</span>
+              <span id="live-run-status" class="badge badge-running">PENDING</span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th data-i18n="col_provider">Nguồn (Provider)</th>
+                  <th data-i18n="col_capability">Khả năng OSINT</th>
+                  <th data-i18n="col_target">Mục tiêu</th>
+                  <th data-i18n="col_status">Trạng thái</th>
+                  <th data-i18n="col_duration">Thời gian</th>
+                  <th data-i18n="col_yield">Quan sát thu được</th>
+                  <th data-i18n="col_details">Chi tiết</th>
+                </tr>
+              </thead>
+              <tbody id="live-tasks-tbody">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
           </div>
         </div>
 
-        <!-- Graph Controls -->
-        <div class="graph-toolbar">
-          <select id="filter-entity-type" class="form-select" style="width:160px; padding:6px 10px;" onchange="loadKnowledgeGraph(currentCaseId)">
-            <option value="">All Entity Types</option>
-            <option value="DOMAIN">Domains</option>
-            <option value="HOSTNAME">Hostnames</option>
-            <option value="IP_ADDRESS">IP Addresses</option>
-            <option value="ASN">ASNs</option>
-            <option value="CIDR">CIDRs</option>
-            <option value="ORGANIZATION">Organizations</option>
-            <option value="ACCOUNT">Accounts</option>
-          </select>
-
-          <select id="filter-min-conf" class="form-select" style="width:150px; padding:6px 10px;" onchange="loadKnowledgeGraph(currentCaseId)">
-            <option value="0.0">All Confidence</option>
-            <option value="0.8">&gt;= 80% Confidence</option>
-            <option value="0.9">&gt;= 90% Confidence</option>
-          </select>
-
-          <input type="text" id="filter-search" class="form-input" placeholder="Search nodes..." style="width:180px; padding:6px 10px;" oninput="loadKnowledgeGraph(currentCaseId)">
-
-          <span class="badge badge-running" id="graph-node-count-badge">Loading...</span>
+        <!-- TAB 3: FINDINGS (PHÁT HIỆN) -->
+        <div id="case-tab-content-findings" class="case-tab-content">
+          <div class="table-container">
+            <div class="table-header">
+              <div style="display:flex; gap:10px; align-items:center;">
+                <span data-i18n="tab_findings">Thực thể đã phát hiện</span>
+                <select id="findings-filter-type" class="form-select" style="width:160px; padding:4px 8px; font-size:12px;" onchange="renderFilteredFindings()">
+                  <option value="">Tất cả loại thực thể</option>
+                  <option value="DOMAIN">Tên miền (DOMAIN)</option>
+                  <option value="HOSTNAME">Máy chủ (HOSTNAME)</option>
+                  <option value="IP_ADDRESS">Địa chỉ IP</option>
+                  <option value="ASN">Hệ thống mạng (ASN)</option>
+                  <option value="ORGANIZATION">Tổ chức</option>
+                  <option value="ACCOUNT">Tài khoản mạng xã hội</option>
+                  <option value="EMAIL">Địa chỉ Email</option>
+                  <option value="PHONE">Số điện thoại</option>
+                </select>
+                <input type="text" id="findings-search" class="form-input" placeholder="Tìm kiếm giá trị..." style="width:180px; padding:4px 8px; font-size:12px;" oninput="renderFilteredFindings()">
+              </div>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th data-i18n="col_canonical_val">Giá trị chuẩn hóa</th>
+                  <th data-i18n="col_type">Loại</th>
+                  <th data-i18n="col_obs_count">Số quan sát</th>
+                  <th data-i18n="col_first_seen">Lần đầu thấy</th>
+                  <th data-i18n="col_actions">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="findings-tbody">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
         </div>
 
-        <div id="cy-container"></div>
+        <!-- TAB 4: SOURCES (NGUỒN DỮ LIỆU) -->
+        <div id="case-tab-content-sources" class="case-tab-content">
+          <div class="table-container">
+            <div class="table-header">
+              <span data-i18n="provider_contributions_title">Đóng góp của các nguồn thu thập trong vụ án</span>
+              <button class="btn btn-secondary" style="padding:4px 10px; font-size:12px;" onclick="loadCaseSources()">&#x21BB; Làm mới</button>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th data-i18n="col_provider_id">Mã nguồn</th>
+                  <th data-i18n="col_status">Trạng thái</th>
+                  <th data-i18n="col_duration_ms">Thời gian (ms)</th>
+                  <th data-i18n="col_obs_yield">Đóng góp (Bằng chứng)</th>
+                  <th data-i18n="col_health_msg">Chẩn đoán & Ghi chú</th>
+                  <th data-i18n="col_test">Thử nghiệm trực tiếp</th>
+                </tr>
+              </thead>
+              <tbody id="sources-tbody">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- TAB 5: EVIDENCE (BẰNG CHỨNG) -->
+        <div id="case-tab-content-evidence" class="case-tab-content">
+          <div class="table-container">
+            <div class="table-header">
+              <span data-i18n="evidence_provenance_title">Bằng chứng quan sát & Dấu vết nguồn gốc (Provenance)</span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th data-i18n="col_canonical_val">Giá trị quan sát</th>
+                  <th data-i18n="col_type">Loại</th>
+                  <th data-i18n="col_source">Nguồn cụ thể</th>
+                  <th data-i18n="col_family">Nhóm nguồn</th>
+                  <th data-i18n="col_confidence">Độ tin cậy</th>
+                  <th data-i18n="col_created">Thời gian</th>
+                  <th data-i18n="col_actions">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="evidence-tbody">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- TAB 6: GRAPH (MẠNG LIÊN KẾT) -->
+        <div id="case-tab-content-graph" class="case-tab-content">
+          <div class="graph-toolbar">
+            <select id="filter-entity-type" class="form-select" style="width:160px; padding:6px 10px;" onchange="loadKnowledgeGraph(currentCaseId)">
+              <option value="">Tất cả loại thực thể</option>
+              <option value="DOMAIN">Tên miền</option>
+              <option value="HOSTNAME">Máy chủ</option>
+              <option value="IP_ADDRESS">Địa chỉ IP</option>
+              <option value="ASN">ASN</option>
+              <option value="CIDR">CIDR</option>
+              <option value="ORGANIZATION">Tổ chức</option>
+              <option value="ACCOUNT">Tài khoản</option>
+            </select>
+
+            <select id="filter-min-conf" class="form-select" style="width:150px; padding:6px 10px;" onchange="loadKnowledgeGraph(currentCaseId)">
+              <option value="0.0">Tất cả độ tin cậy</option>
+              <option value="0.8">&gt;= 80% Tin cậy</option>
+              <option value="0.9">&gt;= 90% Tin cậy</option>
+            </select>
+
+            <input type="text" id="filter-search" class="form-input" placeholder="Tìm kiếm thực thể..." style="width:180px; padding:6px 10px;" oninput="loadKnowledgeGraph(currentCaseId)">
+
+            <button class="btn btn-secondary" style="padding:6px 12px; font-size:12px;" onclick="redoGraphLayout()">&#x21BB; Sắp xếp lại</button>
+            <span class="badge badge-running" id="graph-node-count-badge">Đang tải...</span>
+          </div>
+
+          <div id="cy-container"></div>
+        </div>
       </div>
 
       <!-- 4. PROVIDER HEALTH VIEW -->
       <div id="view-providers" class="view-panel">
         <div class="table-container">
           <div class="table-header">
-            <span>Provider Diagnostics & Capabilities Matrix</span>
-            <button class="btn btn-secondary" style="padding:6px 12px; font-size:12px;" onclick="loadProviders()">Refresh Diagnostics</button>
+            <span data-i18n="providers_matrix_title">Bảng chẩn đoán sức khỏe & Khả năng nguồn OSINT</span>
+            <button class="btn btn-secondary" style="padding:6px 12px; font-size:12px;" onclick="loadProviders()">&#x21BB; <span data-i18n="btn_refresh">Làm mới chẩn đoán</span></button>
           </div>
           <table>
             <thead>
               <tr>
-                <th>Provider ID</th>
-                <th>Version</th>
-                <th>Status</th>
-                <th>Capabilities</th>
-                <th>Network Class</th>
-                <th>Health Diagnostic</th>
+                <th data-i18n="col_provider_id">Mã nguồn</th>
+                <th data-i18n="col_version">Phiên bản</th>
+                <th data-i18n="col_status">Trạng thái</th>
+                <th data-i18n="col_capabilities">Khả năng OSINT</th>
+                <th data-i18n="col_net_class">Cấp độ mạng</th>
+                <th data-i18n="col_health_diagnostic">Chẩn đoán sức khỏe</th>
+                <th data-i18n="col_live_test">Thử nghiệm</th>
               </tr>
             </thead>
             <tbody id="providers-tbody">
@@ -196,10 +405,77 @@
   <!-- Evidence / Node Inspector Drawer -->
   <div id="side-drawer" class="drawer">
     <div class="drawer-header">
-      <span id="drawer-title" style="font-weight:700; font-size:15px;">Inspector</span>
+      <span id="drawer-title" style="font-weight:700; font-size:15px;" data-i18n="drawer_inspector_title">Chi tiết nguồn gốc & Bằng chứng</span>
       <button class="drawer-close" onclick="closeDrawer()">&times;</button>
     </div>
     <div class="drawer-body" id="drawer-content"></div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settings-modal" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 style="font-size:16px; font-weight:700;" data-i18n="settings_title">Cài đặt hệ thống SPIDER</h3>
+        <button class="drawer-close" onclick="closeSettingsModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" data-i18n="setting_lang">Ngôn ngữ giao diện</label>
+          <select id="setting-language" class="form-select">
+            <option value="vi">Tiếng Việt (Mặc định)</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" data-i18n="setting_theme">Giao diện (Theme)</label>
+          <select id="setting-theme" class="form-select">
+            <option value="light">Sáng chuyên nghiệp (Light Theme - Mặc định)</option>
+            <option value="dark">Tối kỹ thuật (Dark Theme)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" data-i18n="setting_default_profile">Hồ sơ chính sách mạng mặc định</label>
+          <select id="setting-profile" class="form-select">
+            <option value="passive_standard">passive_standard (An toàn: Không chạm mục tiêu)</option>
+            <option value="local_only">local_only (Chỉ cục bộ/nội bộ)</option>
+            <option value="active_authorized">active_authorized (Chủ động - Yêu cầu xác thực)</option>
+          </select>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px;">
+          <div class="form-group">
+            <label class="form-label" data-i18n="setting_max_depth">Độ sâu mặc định (Max Depth)</label>
+            <input type="number" id="setting-depth" class="form-input" min="0" max="3" value="1">
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="setting_timeout">Thời gian chờ mặc định (giây)</label>
+            <input type="number" id="setting-timeout" class="form-input" min="5" max="180" value="60">
+          </div>
+        </div>
+
+        <hr style="border:none; border-top:1px solid var(--border-color); margin:18px 0;">
+        <h4 style="font-size:14px; font-weight:700; margin-bottom:12px;" data-i18n="setting_api_keys">Quản lý Khóa API (Tùy chọn - Lưu trữ cục bộ bảo mật)</h4>
+        
+        <div class="form-group">
+          <label class="form-label">Shodan API Key</label>
+          <input type="password" id="setting-key-shodan" class="form-input" placeholder="Nhập khóa API Shodan...">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Censys API Key</label>
+          <input type="password" id="setting-key-censys" class="form-input" placeholder="Nhập khóa API Censys...">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Fofa API Key</label>
+          <input type="password" id="setting-key-fofa" class="form-input" placeholder="Nhập khóa API Fofa...">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeSettingsModal()" data-i18n="btn_cancel">Hủy</button>
+        <button class="btn btn-primary" onclick="saveSettings()" data-i18n="btn_save">Lưu cài đặt</button>
+      </div>
+    </div>
   </div>
 
   <script src="/static/js/app.js"></script>
