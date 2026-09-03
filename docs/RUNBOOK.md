@@ -21,8 +21,8 @@ Implementation references: [Microsoft DPAPI](https://learn.microsoft.com/en-us/w
 
 ```powershell
 # Passive domain investigation
-runtime\venv\Scripts\python.exe -m spider.cli.main investigate example.com
+runtime\venv\Scripts\python.exe -m spider.cli.main investigate example.com --type DOMAIN
 
 # Authorized active investigation
-runtime\venv\Scripts\python.exe -m spider.cli.main investigate example.com --authorized --profile active_authorized
+runtime\venv\Scripts\python.exe -m spider.cli.main investigate example.com --type DOMAIN --authorized --profile active_authorized
 ```

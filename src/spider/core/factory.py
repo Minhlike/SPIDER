@@ -6,6 +6,7 @@ from spider.service.service import SpiderService
 from spider.providers.native.dns import NativeDnsAdapter
 from spider.providers.native.rdap import NativeRdapAdapter
 from spider.providers.native.ct import NativeCertificateTransparencyAdapter
+from spider.providers.native.public_profiles import PublicProfilesAdapter
 from spider.providers.subfinder.adapter import SubfinderAdapter
 from spider.providers.metabigor.adapter import MetabigorAdapter
 from spider.providers.spiderfoot.adapter import SpiderFootAdapter
@@ -38,8 +39,9 @@ def create_spider_service(
         service.provider_manager.register_adapter(MetabigorAdapter())
         service.provider_manager.register_adapter(SpiderFootAdapter())
         service.provider_manager.register_adapter(MaigretAdapter())
+        service.provider_manager.register_adapter(PublicProfilesAdapter())
         service.provider_manager.register_adapter(UncoverAdapter())
-        logger.info("SPIDER Service initialized in PRODUCTION mode with 8 real OSINT adapters.")
+        logger.info("SPIDER Service initialized in PRODUCTION mode.")
     elif mode == "test":
         # Test mode allows fake providers
         service.provider_manager.register_adapter(FakeProviderA())

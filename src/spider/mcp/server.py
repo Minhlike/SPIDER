@@ -5,7 +5,7 @@ import logging
 from typing import Dict, Any, Optional
 from spider.service.service import SpiderService
 from spider.core.factory import create_spider_service
-from spider.models.classifier import TargetClassifier
+from spider.models.classifier import TargetClassifier, ClassificationError
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,11 @@ class SpiderMCPServer:
         self.service = service or create_spider_service(mode="production")
 
     async def handle_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        if tool_name == "collect":
+            try:
+                classification = TargetClassifier.resolve(arguments.get("target", ""), arguments.get("target_type"))
+            except ClassificationError as exc:
+                return {"error": exc.detail()}
         await self.service.start()
         try:
             if tool_name == "collect":
@@ -30,9 +35,10 @@ class SpiderMCPServer:
                     case_res = await self.service.create_case(name=f"MCP Investigation: {target}")
                     case_id = case_res["id"]
                 
-                classification = TargetClassifier.classify(target)
                 obs_type = classification.detected_type
-                await self.service.add_target(case_id, target, obs_type, scope_authorized=authorized)
+                await self.service.add_target(case_id, target, obs_type, scope_authorized=authorized,
+                    canonical_value=classification.canonical_value,
+                    metadata={"classification": classification.model_dump(mode="json")})
                 budget = ExecutionBudget(max_depth=arguments.get("max_depth", 1), max_entities=arguments.get("max_entities", 20))
                 run_res = await self.service.investigate(case_id, budget=budget, policy_profile=profile)
                 entities = await self.service.get_case_entities(case_id)

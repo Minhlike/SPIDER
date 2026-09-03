@@ -1,4 +1,8 @@
 import pytest
+import json
+from spider.service.service import SpiderService
+from spider.providers.native.dns import NativeDnsAdapter
+from spider.providers.base import ProviderExecutionResult
 from typer.testing import CliRunner
 from spider.cli.main import app, infer_observable_type
 from spider.models.enums import ObservableType
@@ -30,11 +34,20 @@ def test_cli_provider_list_json():
     assert "uncover" in result.stdout
 
 @pytest.mark.asyncio
-async def test_mcp_server_collect_and_explain(tmp_path):
-    server = create_mcp_server()
+async def test_mcp_server_collect_and_explain(tmp_path, monkeypatch):
+    service = SpiderService(db_path=str(tmp_path / "mcp.db"), artifacts_dir=str(tmp_path / "runs"))
+    adapter = NativeDnsAdapter()
+    async def execute(target, lineage, **kwargs):
+        raw = json.dumps({"target": target.canonical_value, "records": [{"type": "A", "value": "192.0.2.10"}]}).encode()
+        return ProviderExecutionResult(raw_content=raw, observations=adapter.parse(raw, lineage))
+    monkeypatch.setattr(adapter, "execute", execute)
+    service.provider_manager.register_adapter(adapter)
+    server = create_mcp_server(service)
     res = await server.handle_tool_call("collect", {
         "target": "example.com",
-        "authorized_scope": True
+        "target_type": "DOMAIN",
+        "authorized_scope": True,
+        "max_depth": 0
     })
     assert res["status"] == "COMPLETED"
     assert "case_id" in res

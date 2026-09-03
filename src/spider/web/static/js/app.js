@@ -9,6 +9,8 @@ let currentTheme = localStorage.getItem("spider_theme") || "light";
 let cyInstance = null;
 let socket = null;
 let classifyTimeout = null;
+let classificationSequence = 0;
+let classificationController = null;
 let currentCaseEntities = [];
 let currentCaseObservations = [];
 let casePollingInterval = null;
@@ -16,6 +18,9 @@ let casePollingInterval = null;
 // --- 1. i18n Translation Dictionary ---
 const i18n = {
   vi: {
+    target_type_label: "Bạn muốn tìm theo",
+    target_type_auto: "Tự nhận diện",
+    target_type_phone: "Số điện thoại (+mã quốc gia)",
     nav_dashboard: "Bảng điều khiển",
     nav_investigate: "Cuộc điều tra mới",
     nav_providers: "Trạng thái nguồn dữ liệu",
@@ -55,7 +60,7 @@ const i18n = {
     tab_evidence: "Bằng chứng",
     tab_graph: "Mạng liên kết",
     kpi_entities_found: "Thực thể phát hiện",
-    kpi_assertions: "Mối quan hệ xác thực",
+    kpi_assertions: "Liên kết có bằng chứng",
     kpi_sources_run: "Nguồn dữ liệu đã chạy",
     task_execution_progress: "Chi tiết thực thi tác vụ & Tiến trình thời gian thực",
     col_provider: "Nguồn (Provider)",
@@ -96,6 +101,9 @@ const i18n = {
     confirm_delete: "Bạn có chắc chắn muốn xóa cuộc điều tra này không?"
   },
   en: {
+    target_type_label: "Search as",
+    target_type_auto: "Detect automatically",
+    target_type_phone: "Phone (+country code)",
     nav_dashboard: "Dashboard",
     nav_investigate: "New Investigation",
     nav_providers: "Provider Health",
@@ -135,7 +143,7 @@ const i18n = {
     tab_evidence: "Evidence",
     tab_graph: "Graph",
     kpi_entities_found: "Entities Discovered",
-    kpi_assertions: "Materialized Assertions",
+    kpi_assertions: "Evidence-backed links",
     kpi_sources_run: "Sources Executed",
     task_execution_progress: "Task Execution & Realtime Progress",
     col_provider: "Provider",
@@ -286,14 +294,15 @@ function handleRealtimeEvent(eventType, payload) {
       loadCaseProgress(currentCaseId);
     }
   } else if (eventType === "RUN_COMPLETED") {
-    showNotification(`Điều tra hoàn tất!`);
+    const finalStatus = payload.run_result?.status || "COMPLETED";
+    showNotification(finalStatus === "COMPLETED" ? "Điều tra hoàn tất" : `Điều tra kết thúc: ${finalStatus}`);
     if (currentView === "dashboard") loadDashboard();
     if (currentCaseId === payload.case_id) {
       document.getElementById("tab-live-badge").style.display = "none";
       const statusBadge = document.getElementById("case-status-badge");
       if (statusBadge) {
-        statusBadge.className = "badge badge-completed";
-        statusBadge.textContent = "COMPLETED";
+        statusBadge.className = `badge badge-${finalStatus.toLowerCase()}`;
+        statusBadge.textContent = finalStatus;
       }
       loadCaseDetail(currentCaseId);
     }
@@ -321,6 +330,7 @@ function switchView(viewName) {
     document.getElementById("target-input").value = "";
     document.getElementById("type-preview").textContent = "CHƯA XÁC ĐỊNH";
     document.getElementById("type-preview").className = "badge badge-running";
+    onTargetInputDebounced();
   } else if (viewName === "providers") {
     breadcrumb.textContent = t("nav_providers");
     loadProviders();
@@ -378,32 +388,67 @@ async function loadDashboard() {
 }
 
 // --- 5. New Investigation Classifier & Start ---
-function onTargetInputDebounced() {
-  clearTimeout(classifyTimeout);
-  const targetVal = document.getElementById("target-input").value.trim();
-  const previewEl = document.getElementById("type-preview");
-
-  if (!targetVal) {
-    previewEl.textContent = "CHƯA XÁC ĐỊNH";
-    previewEl.className = "badge badge-running";
-    return;
+function classificationExplanation(data) {
+  const vi = currentLanguage === "vi";
+  if (data.needs_confirmation) {
+    return data.reason === "numeric_identifier"
+      ? (vi ? "Chuỗi số có thể là username hoặc số điện thoại. Hãy chọn loại; số điện thoại cần + và mã quốc gia." : "Digits may identify a username or a phone. Choose a type; phones require + and a country code.")
+      : (vi ? "Chuỗi này có thể là tên miền hoặc username. Hãy chọn loại trước khi điều tra." : "This could be a domain or a username. Choose a type before investigating.");
   }
+  if (data.reason === "unknown_suffix") return vi
+    ? "Gợi ý username: dấu chấm không đủ để xác định tên miền. Hậu tố này không có trong danh sách công khai ngoại tuyến; nếu là máy chủ nội bộ, hãy chọn Hostname."
+    : "Username suggested: a dot alone does not identify a domain. This suffix is absent from the offline public list; choose Hostname for an internal host.";
+  if (data.decision_source === "explicit") return vi ? "Sẽ dùng loại bạn đã chỉ định. Điều này chưa xác minh chủ sở hữu." : "Your selected type will be used. This does not verify ownership.";
+  return vi ? "Nhận diện dựa trên định dạng, chưa xác minh tài khoản hoặc chủ sở hữu. Có thể chọn lại loại ở trên." : "Detected from syntax; account existence and ownership are unverified. You can change the type above.";
+}
 
-  classifyTimeout = setTimeout(async () => {
-    try {
-      const res = await fetch(`/api/classify?target=${encodeURIComponent(targetVal)}`);
-      if (res.ok) {
-        const data = await res.json();
-        previewEl.textContent = data.type || "UNKNOWN";
-        previewEl.className = "badge badge-success";
-      } else {
-        previewEl.textContent = "UNKNOWN";
-        previewEl.className = "badge badge-missing";
-      }
-    } catch (e) {
-      previewEl.textContent = "UNKNOWN";
-    }
-  }, 250);
+function onTargetInputDebounced(resetType = true) {
+  clearTimeout(classifyTimeout);
+  classificationSequence++;
+  if (classificationController) classificationController.abort();
+  if (resetType) document.getElementById("target-type-select").value = "";
+  document.getElementById("type-preview").textContent = currentLanguage === "vi" ? "CHƯA XÁC ĐỊNH" : "UNCLASSIFIED";
+  document.getElementById("type-preview").className = "badge badge-running";
+  document.getElementById("classification-explanation").textContent = "";
+  if (document.getElementById("target-input").value.trim()) {
+    classifyTimeout = setTimeout(classifyCurrentTarget, 250);
+  }
+}
+
+function onTargetTypeChanged() {
+  onTargetInputDebounced(false);
+}
+
+async function classifyCurrentTarget() {
+  clearTimeout(classifyTimeout);
+  const sequence = ++classificationSequence;
+  if (classificationController) classificationController.abort();
+  classificationController = new AbortController();
+  const preview = document.getElementById("type-preview");
+  const explanation = document.getElementById("classification-explanation");
+  try {
+    const res = await fetch("/api/classify", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      signal: classificationController.signal,
+      body: JSON.stringify({target: document.getElementById("target-input").value.trim(),
+        target_type: document.getElementById("target-type-select").value || null})
+    });
+    const data = await res.json();
+    if (sequence !== classificationSequence) return null;
+    if (!res.ok) throw new Error("invalid_target");
+    preview.textContent = data.type;
+    preview.className = data.needs_confirmation ? "badge badge-running" : "badge badge-success";
+    explanation.textContent = classificationExplanation(data);
+    return data;
+  } catch (error) {
+    if (sequence !== classificationSequence || error.name === "AbortError") return null;
+    preview.textContent = currentLanguage === "vi" ? "CẦN KIỂM TRA" : "CHECK INPUT";
+    preview.className = "badge badge-missing";
+    explanation.textContent = currentLanguage === "vi"
+      ? "Không xác định được loại. Kiểm tra đầu vào và lựa chọn; số điện thoại cần +mã quốc gia."
+      : "Cannot classify this input. Check the value and selected type; phones need +country code.";
+    return null;
+  }
 }
 
 async function startInvestigation() {
@@ -423,16 +468,24 @@ async function startInvestigation() {
   btn.innerHTML = `<span>&#x21BB;</span> ${currentLanguage === "vi" ? "Đang khởi tạo..." : "Initializing..."}`;
 
   try {
+    const classification = await classifyCurrentTarget();
+    if (!classification || targetVal !== document.getElementById("target-input").value.trim()) return;
+    if (classification.needs_confirmation) {
+      document.getElementById("target-type-select").focus();
+      return;
+    }
     const res = await fetch("/api/investigate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         target: targetVal,
+        target_type: document.getElementById("target-type-select").value || null,
         policy_profile: profile,
         budget: {
           max_depth: depth,
-          max_entities: 50,
-          timeout_seconds: timeout
+          max_entities: 500,
+          timeout_seconds: timeout,
+          username_site_limit: parseInt(document.getElementById("username-sites-select").value, 10)
         },
         scope_authorized: isAuthorized
       })
@@ -440,7 +493,7 @@ async function startInvestigation() {
 
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || "Investigation dispatch failed");
+      throw new Error(err.detail?.message || err.detail || "Investigation dispatch failed");
     }
 
     const data = await res.json();
@@ -559,6 +612,12 @@ async function loadCaseDetail(caseId) {
 }
 
 // Render Type Specific Intelligence Cards
+function coverageDescription(source) {
+  const c = source.coverage;
+  if (!c) return source.error_message || (source.status === "NO_FINDINGS" ? "Đã kiểm tra; không có kết quả" : source.status || "");
+  return `${c.checked}/${c.selected} website đã xử lý · ${c.found} ứng viên tài khoản · ${c.not_found} không thấy · ${c.unknown} chưa xác định · ${c.invalid} username không hợp lệ · ${c.unprocessed} chưa xử lý · ${c.non_unique_detections || 0} kết quả không phân biệt được với đối chứng · ${(c.controls_pending || 0) + (c.controls_unknown || 0)} đối chứng chưa kết luận`;
+}
+
 function renderTypeSpecificInsights(insights) {
   const container = document.getElementById("type-specific-container");
   const emptyContainer = document.getElementById("empty-reason-container");
@@ -567,6 +626,33 @@ function renderTypeSpecificInsights(insights) {
 
   const targetType = insights.target_type;
   const entitiesCount = insights.entities_count || 0;
+
+  if (["EMAIL", "USERNAME"].includes(targetType)) {
+    const card = document.createElement("div");
+    card.className = "intelligence-card";
+    card.id = "public-profile-card";
+    const profiles = insights.public_profiles || [];
+    card.innerHTML = `<div class="intelligence-card-header"><strong>${currentLanguage === "vi" ? "Hồ sơ công khai & căn cứ liên hệ" : "Public profiles & linkage evidence"}</strong><span class="badge badge-ready">${profiles.length}</span></div>
+      <p>${escapeHtml(insights.profile_evidence?.[currentLanguage === "vi" ? "message_vi" : "message_en"] || "")}</p>
+      <p>${currentLanguage === "vi" ? "Trùng email công khai chứng minh hồ sơ có đăng email đó; trùng username chỉ là ứng viên cần đối chiếu." : "A public email match shows that a profile lists that email. A username match is a candidate requiring corroboration."}</p>
+      <p>${currentLanguage === "vi" ? "Nguồn tìm hồ sơ đã chạy" : "Profile sources executed"}: ${escapeHtml((insights.profile_evidence?.checked_sources || []).join(", ") || "—")}</p>`;
+    profiles.forEach(profile => {
+      const entry = document.createElement("div");
+      entry.className = "detail-row";
+      const basis = profile.match_basis === "exact_public_email" ? (currentLanguage === "vi" ? "Email công khai trùng khớp" : "Exact public email") : (currentLanguage === "vi" ? "Trùng username — chưa xác minh chủ sở hữu" : "Shared username — owner unverified");
+      entry.innerHTML = `<div><small>${escapeHtml(profile.platform)} · ${currentLanguage === "vi" ? "Tên/tiêu đề công khai" : "Public name/title"}</small><br><strong>${escapeHtml(profile.display_name || profile.platform)}</strong><p>${escapeHtml(basis)}</p><p>${escapeHtml(profile.bio || "")}</p>${profile.website ? `<p>Website: ${escapeHtml(profile.website)}</p>` : ""}<small>${escapeHtml(profile.provider_id)} · ${escapeHtml(profile.observed_at || "")}</small></div>`;
+      const link = document.createElement("a");
+      try {
+        const url = new URL(profile.profile_url);
+        if (["https:", "http:"].includes(url.protocol) && !url.username && !url.password) {
+          link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer";
+          link.textContent = profile.profile_url; entry.appendChild(link);
+        }
+      } catch (_) { /* Invalid source URLs are not made clickable. */ }
+      card.appendChild(entry);
+    });
+    container.appendChild(card);
+  }
 
   // If 0 findings and empty reason exists:
   if (entitiesCount <= 1 && insights.empty_reason?.is_empty && !["QUEUED", "RUNNING", "PENDING"].includes(insights.status)) {
@@ -797,7 +883,7 @@ async function loadCaseProgress(caseId) {
         <td><span class="badge badge-${(t.status || "ready").toLowerCase()}">${escapeHtml(t.status || "READY")}</span></td>
         <td>${escapeHtml(duration)}</td>
         <td><strong>${escapeHtml(String(t.observations_count || 0))}</strong></td>
-        <td><small style="color:var(--text-muted);">${escapeHtml(t.health_message || t.error || "Thực thi bình thường")}</small></td>
+        <td><small style="color:var(--text-muted);">${escapeHtml(coverageDescription(t))}</small></td>
       `;
       tbody.appendChild(tr);
     });
@@ -872,7 +958,7 @@ async function loadCaseSources() {
         <td><span class="badge badge-${(p.status || "ready").toLowerCase()}">${escapeHtml(p.status || "READY")}</span></td>
         <td>${p.duration_ms ? p.duration_ms.toFixed(1) : "-"}</td>
         <td><strong>${escapeHtml(String(p.observations_count || 0))}</strong></td>
-        <td><small style="color:var(--text-muted);">${escapeHtml(p.health_message || "Sẵn sàng")}</small></td>
+        <td><small style="color:var(--text-muted);">${escapeHtml(coverageDescription(p))}</small></td>
         <td>
           <button class="btn btn-secondary" style="padding:4px 8px; font-size:11.5px;" onclick="testProviderLive('${escapeHtml(p.provider_id)}')">
             &#x25B6; Thử nghiệm
@@ -1155,71 +1241,148 @@ Chẩn đoán: ${data.message}`);
 }
 
 // --- 14. Settings Modal Engine ---
+const apiFields = {
+  shodan: {SHODAN_API_KEY: "setting-key-shodan"},
+  censys: {CENSYS_API_TOKEN: "setting-key-censys", CENSYS_ORGANIZATION_ID: "setting-censys-org"},
+  fofa: {FOFA_EMAIL: "setting-fofa-email", FOFA_KEY: "setting-key-fofa"}
+};
+let settingsBusy = false;
+let settingsEpoch = 0;
+function clearApiInputs(engine) {
+  const groups = engine ? [apiFields[engine]] : Object.values(apiFields);
+  groups.forEach(group => Object.values(group).forEach(id => { document.getElementById(id).value = ""; }));
+}
+function setSettingsBusy(busy) {
+  settingsBusy = busy;
+  document.querySelectorAll('#settings-modal input, #settings-modal select, #settings-modal button').forEach(el => { el.disabled = busy; });
+}
+function apiStateText(test) {
+  const vi = currentLanguage === 'vi';
+  const labels = {
+    VALID: vi ? 'Khóa hợp lệ. Chưa kiểm thử quyền tìm kiếm.' : 'Account verified. Search permission not tested.',
+    VALID_FREE_PLAN: vi ? 'Token hợp lệ trên Free Plan. Chưa kiểm thử quyền Search API.' : 'Token valid on Free Plan. Search entitlement not tested.',
+    INVALID_TOKEN: vi ? 'Token Censys không hợp lệ.' : 'Invalid Censys token.',
+    NO_SEARCH_ENTITLEMENT: vi ? 'Token hợp lệ nhưng không có quyền Search API.' : 'Token is valid but has no Search API entitlement.',
+    QUOTA_LIMIT: vi ? 'Đã chạm quota.' : 'Quota limit reached.',
+    RATE_LIMIT: vi ? 'Bị giới hạn tốc độ; thử lại sau.' : 'Rate limited; retry later.',
+    KEY_VALID: vi ? 'FOFA key hợp lệ. Chưa kiểm thử quyền truy vấn.' : 'FOFA key valid. Query entitlement not tested.',
+    NO_QUERY_ENTITLEMENT: vi ? 'FOFA key hợp lệ nhưng không có quyền truy vấn.' : 'FOFA key is valid but has no query entitlement.',
+    INVALID_KEY: vi ? 'FOFA key không hợp lệ.' : 'Invalid FOFA key.',
+    MISSING_CREDENTIAL: vi ? 'Thiếu thông tin xác thực.' : 'Missing credentials.',
+    INVALID_CREDENTIAL: vi ? 'Thông tin xác thực không hợp lệ hoặc không khớp tài khoản.' : 'Invalid credentials or account mismatch.',
+    'PLAN/QUOTA_LIMIT': vi ? 'Bị giới hạn quyền, gói hoặc quota.' : 'Permission, plan or quota limit.',
+    NETWORK_ERROR: vi ? 'Không xác minh được kết nối. Kiểm tra mạng hoặc runtime.' : 'Connection could not be verified. Check network or runtime.'
+  };
+  const warning = test.warning === 'ACCOUNT_EMAIL_MISMATCH' ? (vi ? ' Cảnh báo: email lưu khác email tài khoản; key vẫn hợp lệ.' : ' Warning: saved email differs; key remains valid.') : '';
+  return `${test.state}: ${labels[test.state] || ''}${warning}${test.cached ? (vi ? ' (Kết quả gần đây)' : ' (Recent result)') : ''}`;
+}
+function renderApiSettings(s) {
+  Object.entries(apiFields).forEach(([engine, fields]) => {
+    Object.entries(fields).forEach(([name, id]) => {
+      document.getElementById(id).placeholder = s.api_keys?.[name] ?
+        (currentLanguage === 'vi' ? 'Đã lưu bảo mật; nhập để thay đổi' : 'Securely saved; enter to replace') :
+        (currentLanguage === 'vi' ? 'Chưa lưu' : 'Not saved');
+    });
+    const state = s.credential_status?.[engine];
+    const text = state?.test ? apiStateText(state.test) : state?.configured ?
+      (currentLanguage === 'vi' ? 'Đã lưu đủ thông tin. Chưa kiểm thử kết nối.' : 'Credentials saved. Connection not tested.') :
+      (currentLanguage === 'vi' ? 'Thiếu trường: ' : 'Missing fields: ') + (state?.missing_fields || []).join(', ');
+    document.getElementById(`key-state-${engine}`).textContent = text;
+  });
+  document.querySelectorAll('[data-key-test]').forEach(el => { el.textContent = currentLanguage === 'vi' ? 'Lưu và thử kết nối' : 'Save and test connection'; });
+  document.querySelectorAll('[data-key-delete]').forEach(el => { el.textContent = currentLanguage === 'vi' ? 'Xóa khóa đã lưu' : 'Delete saved credentials'; });
+  document.getElementById('api-key-help').textContent = currentLanguage === 'vi' ?
+    'Để trống để giữ giá trị đã lưu. Lưu khóa chưa có nghĩa là kết nối thành công.' :
+    'Leave blank to retain saved values. Saving credentials does not verify the connection.';
+}
 async function openSettingsModal() {
-  const modal = document.getElementById("settings-modal");
-  modal.classList.add("open");
-
+  const epoch = ++settingsEpoch;
+  clearApiInputs();
+  document.getElementById('settings-modal').classList.add('open');
   try {
-    const s = await fetch("/api/settings").then(r => r.json());
-    document.getElementById("setting-language").value = s.language || currentLanguage;
-    document.getElementById("setting-theme").value = s.theme || currentTheme;
-    document.getElementById("setting-profile").value = s.default_policy_profile || "passive_standard";
-    document.getElementById("setting-depth").value = s.max_depth !== undefined ? s.max_depth : 1;
-    document.getElementById("setting-timeout").value = s.timeout_seconds || 60;
-  } catch (e) {
-    console.error("Failed to load settings", e);
+    const response = await fetch('/api/settings', {cache: 'no-store'});
+    if (!response.ok) throw new Error('Settings unavailable');
+    const s = await response.json();
+    if (epoch !== settingsEpoch) return;
+    document.getElementById('setting-language').value = s.language || currentLanguage;
+    document.getElementById('setting-theme').value = s.theme || currentTheme;
+    document.getElementById('setting-profile').value = s.default_policy_profile || 'passive_standard';
+    document.getElementById('setting-depth').value = s.max_depth ?? 1;
+    document.getElementById('setting-timeout').value = s.timeout_seconds || 60;
+    renderApiSettings(s);
+  } catch (_) {
+    showNotification(currentLanguage === 'vi' ? 'Không đọc được cài đặt bảo mật.' : 'Protected settings unavailable.');
   }
 }
-
 function closeSettingsModal() {
-  document.getElementById("settings-modal").classList.remove("open");
+  settingsEpoch++;
+  clearApiInputs();
+  document.getElementById('settings-modal').classList.remove('open');
 }
-
+function collectApiInputs(engine) {
+  const result = {};
+  const groups = engine ? [apiFields[engine]] : Object.values(apiFields);
+  groups.forEach(group => Object.entries(group).forEach(([name, id]) => {
+    const value = document.getElementById(id).value.trim();
+    if (value) result[name] = value;
+  }));
+  return result;
+}
+async function postSettings(payload) {
+  const response = await fetch('/api/settings', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+  });
+  if (!response.ok) throw new Error('Save failed');
+  const data = await response.json();
+  renderApiSettings(data);
+  return data;
+}
 async function saveSettings() {
-  const lang = document.getElementById("setting-language").value;
-  const theme = document.getElementById("setting-theme").value;
-  const profile = document.getElementById("setting-profile").value;
-  const depth = parseInt(document.getElementById("setting-depth").value, 10);
-  const timeout = parseInt(document.getElementById("setting-timeout").value, 10);
-
-  const shodanKey = document.getElementById("setting-key-shodan").value.trim();
-  const censysKey = document.getElementById("setting-key-censys").value.trim();
-  const fofaKey = document.getElementById("setting-key-fofa").value.trim();
-
-  const apiKeys = {};
-  if (shodanKey) apiKeys["SHODAN"] = shodanKey;
-  if (censysKey) apiKeys["CENSYS"] = censysKey;
-  if (fofaKey) apiKeys["FOFA"] = fofaKey;
-
+  if (settingsBusy) return;
+  setSettingsBusy(true);
   try {
-    const response = await fetch("/api/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        language: lang,
-        theme: theme,
-        default_policy_profile: profile,
-        max_depth: depth,
-        timeout_seconds: timeout,
-        api_keys: apiKeys
-      })
-    });
-
-    if (!response.ok) throw new Error("Không thể lưu cài đặt bảo mật");
+    const lang = document.getElementById('setting-language').value;
+    const theme = document.getElementById('setting-theme').value;
+    await postSettings({language: lang, theme,
+      default_policy_profile: document.getElementById('setting-profile').value,
+      max_depth: Number(document.getElementById('setting-depth').value),
+      timeout_seconds: Number(document.getElementById('setting-timeout').value), api_keys: collectApiInputs()});
     currentLanguage = lang;
     currentTheme = theme;
-    localStorage.setItem("spider_lang", lang);
-    localStorage.setItem("spider_theme", theme);
+    localStorage.setItem('spider_lang', lang);
+    localStorage.setItem('spider_theme', theme);
     applyTheme();
+    applyTranslations();
     closeSettingsModal();
-    showNotification(currentLanguage === "vi" ? "Đã lưu cài đặt thành công!" : "Settings saved successfully!");
-  } catch (e) {
-    alert("Error saving settings: " + e.message);
-  } finally {
-    ["shodan", "censys", "fofa"].forEach(key => {
-      document.getElementById(`setting-key-${key}`).value = "";
-    });
-  }
+    showNotification(currentLanguage === 'vi' ? 'Đã lưu cài đặt. Khóa mới chưa được kiểm thử.' : 'Settings saved. New credentials have not been tested.');
+  } catch (_) {
+    showNotification(currentLanguage === 'vi' ? 'Lưu thất bại. Không xác nhận khóa đã được lưu.' : 'Save failed. Credentials were not confirmed saved.');
+  } finally { clearApiInputs(); setSettingsBusy(false); }
+}
+async function testApiEngine(engine) {
+  if (settingsBusy) return;
+  setSettingsBusy(true);
+  const label = document.getElementById(`key-state-${engine}`);
+  try {
+    await postSettings({api_keys: collectApiInputs(engine)});
+    clearApiInputs(engine);
+    label.textContent = currentLanguage === 'vi' ? 'Đang kiểm thử tài khoản...' : 'Checking account...';
+    const response = await fetch(`/api/settings/test/${engine}`, {method: 'POST'});
+    if (!response.ok) throw new Error('Check unavailable');
+    label.textContent = apiStateText(await response.json());
+  } catch (_) {
+    label.textContent = currentLanguage === 'vi' ? 'Không hoàn tất lưu/kiểm thử. Chưa xác minh thành công.' : 'Save/check did not complete. Success has not been verified.';
+  } finally { clearApiInputs(engine); setSettingsBusy(false); }
+}
+async function deleteApiEngine(engine) {
+  if (settingsBusy) return;
+  setSettingsBusy(true);
+  try {
+    await postSettings({api_keys: Object.fromEntries(Object.keys(apiFields[engine]).map(name => [name, '']))});
+    clearApiInputs(engine);
+  } catch (_) {
+    document.getElementById(`key-state-${engine}`).textContent = currentLanguage === 'vi' ? 'Xóa khóa thất bại.' : 'Could not delete credentials.';
+  } finally { clearApiInputs(engine); setSettingsBusy(false); }
 }
 
 // --- 15. Export & Delete Actions ---

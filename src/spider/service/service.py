@@ -99,12 +99,14 @@ class SpiderService:
             records = await CaseRepository.list_cases(session)
             return [{"id": r.id, "name": r.name, "status": r.status, "created_at": r.created_at.isoformat()} for r in records]
 
-    async def add_target(self, case_id: str, raw_input: str, observable_type: ObservableType, scope_authorized: bool = False) -> Dict[str, Any]:
+    async def add_target(self, case_id: str, raw_input: str, observable_type: ObservableType, scope_authorized: bool = False, *, canonical_value: str = "", metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         target = Target(
             case_id=case_id,
             observable_type=observable_type,
             raw_input=raw_input,
-            scope_authorized=scope_authorized
+            scope_authorized=scope_authorized,
+            canonical_value=canonical_value,
+            metadata=metadata or {}
         )
         async def _add(session):
             rec = await CaseRepository.add_target(session, target)

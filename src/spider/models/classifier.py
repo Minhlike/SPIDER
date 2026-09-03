@@ -1,131 +1,165 @@
-import re
+"""Offline syntax classification. A plausible shape is not proof of user intent."""
 import ipaddress
-from typing import List, Optional
+import re
+from typing import List, Literal
+from urllib.parse import urlsplit
+
+import idna
+import tldextract
 from pydantic import BaseModel
-from spider.models.enums import ObservableType
+from spider.models.enums import ObservableType as T
+
+# Use the pinned package snapshot: never fetch a suffix list or create a user cache.
+_SUFFIXES = tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None,
+                                include_psl_private_domains=False)
+
 
 class ClassificationResult(BaseModel):
-    detected_type: ObservableType
+    detected_type: T
     confidence: float
+    confidence_kind: str = "heuristic_not_probability"
     canonical_value: str
-    candidate_types: List[ObservableType]
+    candidate_types: List[T]
     raw_input: str
+    needs_confirmation: bool = False
+    reason: str
+    decision_source: Literal["syntax", "heuristic", "explicit"] = "syntax"
+
+
+class ClassificationError(ValueError):
+    def __init__(self, message, classification=None):
+        super().__init__(message)
+        self.classification = classification
+
+    def detail(self):
+        return {"code": "ambiguous_target" if self.classification else "invalid_target",
+                "message": str(self),
+                "classification": self.classification.model_dump(mode="json") if self.classification else None}
+
 
 class TargetClassifier:
-    EMAIL_REGEX = re.compile(
-        r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+$"
-    )
-    ASN_REGEX = re.compile(r"^AS(\d+)$", re.IGNORECASE)
-    PHONE_REGEX = re.compile(r"^\+?[1-9]\d{7,14}$")
-    URL_REGEX = re.compile(r"^https?://[^\s/$.?#].[^\s]*$", re.IGNORECASE)
-    ACCOUNT_REGEX = re.compile(r"^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_-]+$")
+    USERNAME_REGEX = re.compile(r"[\w.-]{1,64}\Z")
+    EMAIL_REGEX = re.compile(r"[a-zA-Z0-9_.+-]+@[^@\s]+\Z")
+    ACCOUNT_REGEX = re.compile(r"[a-zA-Z0-9_.-]+@[a-zA-Z0-9_-]+\Z")
+    PHONE_REGEX = re.compile(r"\+[1-9]\d{7,14}\Z", re.ASCII)
+    ASN_REGEX = re.compile(r"AS([0-9]+)\Z", re.IGNORECASE)
 
     @classmethod
-    def classify(cls, raw_input: str) -> ClassificationResult:
-        cleaned = raw_input.strip()
-        val_lower = cleaned.lower()
+    def _username(cls, value):
+        return bool(cls.USERNAME_REGEX.fullmatch(value) and
+                    any(c.isalnum() or c == "_" for c in value))
 
-        # 1. URL
-        if cls.URL_REGEX.match(cleaned):
-            return ClassificationResult(
-                detected_type=ObservableType.URL,
-                confidence=0.99,
-                canonical_value=cleaned,
-                candidate_types=[ObservableType.URL, ObservableType.DOMAIN],
-                raw_input=cleaned
-            )
+    @staticmethod
+    def _host(value):
+        try:
+            host = idna.encode(value.removesuffix("."), uts46=True, std3_rules=True).decode("ascii").lower()
+            if len(host) > 253:
+                return None
+            return host
+        except (idna.IDNAError, UnicodeError):
+            return None
 
-        # 2. EMAIL (Checks full RFC domain extension, e.g. .vn, .io, .com)
-        if cls.EMAIL_REGEX.match(cleaned):
-            return ClassificationResult(
-                detected_type=ObservableType.EMAIL,
-                confidence=0.98,
-                canonical_value=val_lower,
-                candidate_types=[ObservableType.EMAIL],
-                raw_input=cleaned
-            )
-
-        # 3. ACCOUNT (e.g. user@github, admin@reddit - distinct from email without TLD)
-        if "@" in cleaned and cls.ACCOUNT_REGEX.match(cleaned) and "." not in cleaned.split("@")[1]:
-            return ClassificationResult(
-                detected_type=ObservableType.ACCOUNT,
-                confidence=0.95,
-                canonical_value=val_lower,
-                candidate_types=[ObservableType.ACCOUNT, ObservableType.USERNAME],
-                raw_input=cleaned
-            )
-
-        # 4. CIDR
-        if "/" in cleaned:
+    @classmethod
+    def _canonical_for_type(cls, value, kind):
+        if kind == T.USERNAME:
+            value = value.removeprefix("@")
+            if cls._username(value):
+                return value
+        elif kind in (T.DOMAIN, T.HOSTNAME):
+            host = cls._host(value)
+            if host and (kind == T.HOSTNAME or "." in host):
+                # Explicit intent may refer to an internal/unknown suffix.
+                return host
+        elif kind == T.EMAIL and cls.EMAIL_REGEX.fullmatch(value):
+            local, host = value.rsplit("@", 1)
+            host = cls._host(host)
+            if host and "." in host:
+                return local.lower() + "@" + host
+        elif kind == T.ACCOUNT and cls.ACCOUNT_REGEX.fullmatch(value):
+            return value.lower()
+        elif kind == T.URL:
             try:
-                net = ipaddress.ip_network(cleaned, strict=False)
-                return ClassificationResult(
-                    detected_type=ObservableType.CIDR,
-                    confidence=0.99,
-                    canonical_value=str(net),
-                    candidate_types=[ObservableType.CIDR],
-                    raw_input=cleaned
-                )
+                parts = urlsplit(value)
+                if (parts.scheme.lower() in ("http", "https") and parts.hostname and
+                        not parts.username and not parts.password and
+                        not any(c.isspace() for c in value) and "\\" not in value):
+                    parts.port  # Validate malformed/out-of-range ports.
+                    host = parts.hostname
+                    if cls._host(host) or ipaddress.ip_address(host):
+                        return value
             except ValueError:
                 pass
+        elif kind in (T.IP_ADDRESS, T.IPV6_ADDRESS, T.CIDR):
+            try:
+                item = ipaddress.ip_network(value, strict=False) if kind == T.CIDR else ipaddress.ip_address(value)
+                if kind == T.CIDR or item.version == (6 if kind == T.IPV6_ADDRESS else 4):
+                    return str(item)
+            except ValueError:
+                pass
+        elif kind == T.ASN:
+            match = cls.ASN_REGEX.fullmatch(value)
+            if match and 0 <= int(match[1]) <= 4294967295:
+                return "AS" + str(int(match[1]))
+        elif kind == T.PHONE:
+            phone = re.sub(r"[ ()-]", "", value)
+            if cls.PHONE_REGEX.fullmatch(phone):
+                return phone
+        return None
 
-        # 5. IP Address (IPv4 & IPv6)
-        try:
-            ip = ipaddress.ip_address(cleaned)
-            obs_type = ObservableType.IPV6_ADDRESS if ip.version == 6 else ObservableType.IP_ADDRESS
-            return ClassificationResult(
-                detected_type=obs_type,
-                confidence=0.99,
-                canonical_value=str(ip),
-                candidate_types=[obs_type],
-                raw_input=cleaned
-            )
-        except ValueError:
-            pass
+    @classmethod
+    def classify(cls, raw_input: str, target_type: T | str | None = None) -> ClassificationResult:
+        if not isinstance(raw_input, str) or not raw_input.strip() or len(raw_input) > 2048:
+            raise ClassificationError("Enter a target between 1 and 2048 characters.")
+        value = raw_input.strip()
+        if any(ord(c) < 32 or ord(c) == 127 for c in value):
+            raise ClassificationError("Control characters are not allowed in a target.")
 
-        # 6. ASN (AS15133, AS45899)
-        asn_match = cls.ASN_REGEX.match(cleaned)
-        if asn_match:
-            asn_canonical = f"AS{asn_match.group(1)}"
-            return ClassificationResult(
-                detected_type=ObservableType.ASN,
-                confidence=0.99,
-                canonical_value=asn_canonical,
-                candidate_types=[ObservableType.ASN],
-                raw_input=cleaned
-            )
+        def result(kind, canonical, reason, candidates=None, confirm=False, source="syntax", score=0.99):
+            return ClassificationResult(detected_type=kind, canonical_value=canonical,
+                raw_input=raw_input, candidate_types=candidates or [kind], confidence=score,
+                reason=reason, needs_confirmation=confirm, decision_source=source)
 
-        # 7. Phone Number (E.164, e.g. +84901234567, +14155552671)
-        phone_cleaned = re.sub(r"[\s\-\(\)]", "", cleaned)
-        if cls.PHONE_REGEX.match(phone_cleaned):
-            norm_phone = phone_cleaned if phone_cleaned.startswith("+") else f"+{phone_cleaned}"
-            return ClassificationResult(
-                detected_type=ObservableType.PHONE,
-                confidence=0.90,
-                canonical_value=norm_phone,
-                candidate_types=[ObservableType.PHONE],
-                raw_input=cleaned
-            )
+        if target_type is not None:
+            try:
+                kind = T(target_type)
+            except ValueError:
+                raise ClassificationError("Unsupported target type.") from None
+            canonical = cls._canonical_for_type(value, kind)
+            if canonical is None:
+                raise ClassificationError("The value does not match the selected type. Phone numbers require + and a country code.")
+            return result(kind, canonical, "explicit_type", source="explicit")
 
-        # 8. Domain / Hostname
-        if "." in cleaned and not cleaned.startswith(".") and not cleaned.endswith("."):
-            parts = cleaned.split(".")
-            if len(parts) >= 2 and all(len(p) > 0 for p in parts) and not any(c in cleaned for c in " /\:"):
-                # If it has more than 2 labels, consider HOSTNAME candidate
-                det_type = ObservableType.DOMAIN if len(parts) == 2 else ObservableType.HOSTNAME
-                return ClassificationResult(
-                    detected_type=det_type,
-                    confidence=0.95,
-                    canonical_value=val_lower,
-                    candidate_types=[ObservableType.DOMAIN, ObservableType.HOSTNAME],
-                    raw_input=cleaned
-                )
+        if value.startswith("@") and cls._username(value[1:]):
+            return result(T.USERNAME, value[1:], "username_marker", source="explicit")
+        for kind in (T.URL, T.EMAIL, T.ACCOUNT, T.CIDR, T.IP_ADDRESS, T.IPV6_ADDRESS, T.ASN, T.PHONE):
+            # Avoid interpreting a plain IP as a /32 or /128 network.
+            if kind == T.CIDR and "/" not in value:
+                continue
+            canonical = cls._canonical_for_type(value, kind)
+            if canonical is not None:
+                return result(kind, canonical, "explicit_syntax")
 
-        # 9. Username default fallback
-        return ClassificationResult(
-            detected_type=ObservableType.USERNAME,
-            confidence=0.80,
-            canonical_value=cleaned,
-            candidate_types=[ObservableType.USERNAME, ObservableType.ORGANIZATION],
-            raw_input=cleaned
-        )
+        host = cls._host(value)
+        suffix = _SUFFIXES(host) if host and "." in host else None
+        if suffix and suffix.suffix and suffix.domain:
+            kind = T.HOSTNAME if suffix.subdomain else T.DOMAIN
+            ambiguous = cls._username(value) and not value.endswith(".")
+            return result(kind, host, "domain_or_username" if ambiguous else "public_suffix",
+                          [kind, T.USERNAME] if ambiguous else [kind], ambiguous,
+                          "heuristic", 0.6 if ambiguous else 0.9)
+        if cls._username(value):
+            numeric = bool(re.fullmatch(r"[0-9]{8,15}", value))
+            candidates = [T.USERNAME, T.PHONE] if numeric else [T.USERNAME]
+            if host and "." in host:
+                candidates.append(T.HOSTNAME)
+            return result(T.USERNAME, value,
+                          "numeric_identifier" if numeric else "unknown_suffix" if "." in value else "username_shape",
+                          candidates, numeric, "heuristic", 0.6 if numeric else 0.8)
+        raise ClassificationError("Unrecognized target. Enter an email, username, valid host, IP, URL or international phone number.")
+
+    @classmethod
+    def resolve(cls, raw_input: str, target_type: T | str | None = None) -> ClassificationResult:
+        result = cls.classify(raw_input, target_type)
+        if result.needs_confirmation:
+            raise ClassificationError("Choose the target type before starting the investigation.", result)
+        return result

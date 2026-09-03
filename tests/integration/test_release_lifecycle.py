@@ -22,7 +22,7 @@ async def test_queued_run_persisted_and_shutdown_cancels_cleanly(tmp_path, monke
     monkeypatch.setattr(service, "investigate", blocked)
     await service.start()
     try:
-        result = await start_investigation(StartInvestigationRequest(target="example.com"), BackgroundTasks(), service)
+        result = await start_investigation(StartInvestigationRequest(target="example.com", target_type="DOMAIN"), BackgroundTasks(), service)
         assert result["status"] == "QUEUED"
         await asyncio.wait_for(started.wait(), 3)
         async with service.db_manager.session_factory() as session:
@@ -44,7 +44,7 @@ async def test_background_failure_persists_terminal_status(tmp_path, monkeypatch
     monkeypatch.setattr(service, "investigate", fail)
     await service.start()
     try:
-        result = await start_investigation(StartInvestigationRequest(target="example.com"), BackgroundTasks(), service)
+        result = await start_investigation(StartInvestigationRequest(target="example.com", target_type="DOMAIN"), BackgroundTasks(), service)
         await asyncio.gather(*list(service.background_tasks))
         async with service.db_manager.session_factory() as session:
             run = await session.get(ProviderRunRecord, result["run_id"])

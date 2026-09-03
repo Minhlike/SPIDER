@@ -2,17 +2,39 @@ import json
 from copy import deepcopy
 from threading import RLock
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel, Field, SecretStr
 from typing import Dict, Any, Optional, Literal
 from spider.storage.key_store import LocalKeyStore, KeyStoreError, atomic_write
+from spider.providers.uncover.api_access import canonical_keys, engine_presence, REQUIREMENTS, OPTIONAL_FIELDS
+from urllib.parse import urlsplit
+from datetime import datetime, timezone
+import hashlib
+import hmac
+import secrets
+import time
+from threading import Lock
 
-router = APIRouter(prefix="/settings", tags=["Settings"])
+ALLOWED_SETTINGS_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+async def local_settings_request(request: Request):
+    # CORS alone cannot prevent forged writes or DNS rebinding against localhost.
+    if request.url.hostname not in ALLOWED_SETTINGS_HOSTS:
+        raise HTTPException(403, "Local settings access required")
+    origin = request.headers.get("origin")
+    if origin and origin != str(request.base_url).rstrip("/"):
+        raise HTTPException(403, "Same-origin settings access required")
+    if request.headers.get("sec-fetch-site") == "cross-site":
+        raise HTTPException(403, "Same-origin settings access required")
+
+router = APIRouter(prefix="/settings", tags=["Settings"], dependencies=[Depends(local_settings_request)])
 
 SETTINGS_FILE = Path("data/settings.json")
 SETTINGS_LOCK = RLock()
 KeyName = Literal["shodan", "censys_id", "censys_secret", "securitytrails", "virustotal",
-                  "SHODAN", "CENSYS", "FOFA"]
+                  "SHODAN", "CENSYS", "FOFA", "SHODAN_API_KEY", "CENSYS_API_TOKEN",
+                  "CENSYS_ORGANIZATION_ID", "FOFA_EMAIL", "FOFA_KEY"]
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "language": "vi",
@@ -55,7 +77,10 @@ def load_settings() -> Dict[str, Any]:
                 keys.update({k: v for k, v in legacy.items() if v and v != "********"})
                 if keys:
                     store.save(keys)
-            merged["api_keys"].update(keys)
+            normalized = canonical_keys(keys)
+            if normalized != keys:
+                store.save(normalized)
+            merged["api_keys"].update(normalized)
             if "api_keys" in data or not SETTINGS_FILE.exists():
                 _save_public(merged)
             return merged
@@ -87,21 +112,50 @@ class UpdateSettingsRequest(BaseModel):
     enabled_providers: Optional[Dict[str, bool]] = None
     api_keys: Optional[Dict[KeyName, SecretStr]] = Field(default=None, repr=False)
 
+
+class CheckCache:
+    """Bounded, private cache; changing either field invalidates prior authentication."""
+    def __init__(self):
+        self.salt = secrets.token_bytes(32)
+        self.entries = {}
+        self.locks = {engine: Lock() for engine in REQUIREMENTS}
+
+    def fingerprint(self, engine, keys):
+        fields = REQUIREMENTS[engine] + tuple(OPTIONAL_FIELDS.get(engine, ()))
+        value = json.dumps([str(SETTINGS_FILE.resolve()), *[keys.get(k, "") for k in fields]])
+        return hmac.new(self.salt, value.encode(), hashlib.sha256).digest()
+
+    def recent(self, engine, keys, max_age=120):
+        entry = self.entries.get(engine)
+        if entry and entry[0] == self.fingerprint(engine, keys) and time.monotonic() - entry[1] < max_age:
+            return {**entry[2], "cached": True}
+        return None
+
+
+CHECK_CACHE = CheckCache()
+
+
+def public_settings(curr):
+    result = curr.copy()
+    result["api_keys"] = {k: "********" if v and v.strip() else "" for k, v in curr["api_keys"].items()}
+    keys = canonical_keys(curr["api_keys"])
+    result["credential_status"] = engine_presence(keys)
+    for engine, status in result["credential_status"].items():
+        status["test"] = CHECK_CACHE.recent(engine, keys)
+    result["default_policy_profile"] = curr.get("default_profile", "passive_standard")
+    return result
+
 @router.get("", response_model=Dict[str, Any])
 async def get_settings():
-    curr = load_settings()
-    # Mask API keys before sending to client
-    masked_keys = {}
-    for k, v in curr.get("api_keys", {}).items():
-        masked_keys[k] = "********" if v and v.strip() else ""
-    
-    res = curr.copy()
-    res["api_keys"] = masked_keys
-    res["default_policy_profile"] = curr.get("default_profile", "passive_standard")
-    return res
+    return public_settings(load_settings())
 
 @router.post("", response_model=Dict[str, Any])
-async def update_settings(req: UpdateSettingsRequest):
+def update_settings(req: UpdateSettingsRequest):
+    with SETTINGS_LOCK:
+        return _update_settings(req)
+
+
+def _update_settings(req: UpdateSettingsRequest):
     curr = load_settings()
     if req.language:
         curr["language"] = "vi" if req.language.lower() == "vi" else "en"
@@ -129,15 +183,46 @@ async def update_settings(req: UpdateSettingsRequest):
                 curr["api_keys"][k] = v.strip()
             elif v == "":
                 curr["api_keys"][k] = ""
+            if v != "********":
+                if k in ("SHODAN", "shodan"):
+                    curr["api_keys"]["SHODAN_API_KEY"] = v.strip()
+                if k in ("CENSYS", "FOFA"):
+                    normalized = canonical_keys({k: v})
+                    for field in REQUIREMENTS[k.lower()] + tuple(OPTIONAL_FIELDS.get(k.lower(), ())):
+                        curr["api_keys"][field] = normalized.get(field, "")
+                # Retire superseded aliases so deleted/rotated values cannot reappear.
+                aliases = {"SHODAN_API_KEY": ("SHODAN", "shodan"),
+                           "CENSYS_API_TOKEN": ("CENSYS", "censys_id", "censys_secret"),
+                           "CENSYS_ORGANIZATION_ID": ("CENSYS",), "FOFA_EMAIL": ("FOFA",), "FOFA_KEY": ("FOFA",)}
+                for alias in aliases.get(k, ()):
+                    curr["api_keys"].pop(alias, None)
 
     save_settings(curr)
     
-    # Return masked
-    masked_keys = {}
-    for k, v in curr.get("api_keys", {}).items():
-        masked_keys[k] = "********" if v and v.strip() else ""
-    res = curr.copy()
-    res["api_keys"] = masked_keys
-    res["default_policy_profile"] = curr.get("default_profile", "passive_standard")
+    res = public_settings(curr)
     res["status"] = "SAVED"
     return res
+
+
+@router.post("/test/{engine}")
+async def test_engine_access(engine: Literal["shodan", "censys", "fofa"]):
+    from spider.providers.uncover.api_access import run_engine
+    keys = canonical_keys(load_settings()["api_keys"])
+    cached = CHECK_CACHE.recent(engine, keys, max_age=30)
+    if cached:
+        return cached
+    lock = CHECK_CACHE.locks[engine]
+    if not lock.acquire(blocking=False):
+        raise HTTPException(409, "A check is already running for this engine")
+    try:
+        result = await run_engine(engine, keys)
+        result.pop("results", None)
+        result.update(checked_at=datetime.now(timezone.utc).isoformat(), cached=False)
+        # Saving another key while the request is in flight must not show old success.
+        if CHECK_CACHE.fingerprint(engine, keys) != CHECK_CACHE.fingerprint(engine, canonical_keys(load_settings()["api_keys"])):
+            raise HTTPException(409, "Credentials changed; test the saved values again")
+        CHECK_CACHE.entries[engine] = (CHECK_CACHE.fingerprint(engine, keys), time.monotonic(), result)
+        return result
+    finally:
+        lock.release()
+        keys.clear()

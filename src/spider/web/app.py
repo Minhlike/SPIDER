@@ -28,6 +28,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
+        if request.url.path.startswith("/api/settings"):
+            response.headers["Cache-Control"] = "no-store"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
             "script-src 'self' 'unsafe-inline'; "
@@ -75,7 +77,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, exc):
-        if request.url.path.rstrip("/") == "/api/settings":
+        if request.url.path.startswith("/api/settings"):
             # FastAPI's default validation response includes the rejected input.
             return JSONResponse(status_code=422, content={"detail": "Invalid settings request"})
         return await request_validation_exception_handler(request, exc)
@@ -92,23 +94,19 @@ def create_app() -> FastAPI:
     # Target Classifier Endpoint (supports both GET and POST)
     @app.api_route("/api/classify", methods=["GET", "POST"])
     async def classify_target(request: Request):
-        if request.method == "POST":
-            try:
-                payload = await request.json()
-                raw = payload.get("target", "")
-            except Exception:
-                raw = ""
-        else:
-            raw = request.query_params.get("target", "")
-        res = TargetClassifier.classify(raw)
-        return {
-            "target": raw,
-            "type": res.detected_type.value,
-            "detected_type": res.detected_type.value,
-            "confidence": res.confidence,
-            "canonical_value": res.canonical_value,
-            "candidate_types": [t.value for t in res.candidate_types]
-        }
+        from spider.models.classifier import ClassificationError
+        from fastapi import HTTPException
+        try:
+            payload = await request.json() if request.method == "POST" else request.query_params
+            if not hasattr(payload, "get"):
+                raise ValueError("Expected an object.")
+            raw = payload.get("target", "")
+            res = TargetClassifier.classify(raw, payload.get("target_type"))
+        except ClassificationError as exc:
+            raise HTTPException(status_code=422, detail=exc.detail()) from None
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=422, detail={"code": "invalid_target", "message": "Invalid classification request."}) from None
+        return {**res.model_dump(mode="json"), "target": raw, "type": res.detected_type.value}
 
     # API Routers
     app.include_router(cases_router, prefix="/api")
@@ -149,8 +147,10 @@ def create_app() -> FastAPI:
             while True:
                 await websocket.receive_text()
         except WebSocketDisconnect:
-            event_broker.disconnect(websocket)
+            pass
         except Exception:
+            pass
+        finally:
             event_broker.disconnect(websocket)
 
     # Static Assets & SPA Root

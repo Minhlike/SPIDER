@@ -21,3 +21,10 @@ AI Agent / LLM Client (Analyst)
 - `explain_assertion`: Explains knowledge graph assertion evidence trail.
 - `query_case`: Queries case intelligence summary.
 - `rebuild_case`: Rebuilds case from observation log.
+
+## Explicit target intent
+
+`collect` accepts `target_type` (for example `USERNAME` or `DOMAIN`). A bare
+value such as `alice.dev` returns an `ambiguous_target` error with candidate
+types before starting a service or creating a case. Retry with the intended
+type. `@alice.dev` explicitly selects USERNAME.

@@ -111,12 +111,28 @@
           <p style="font-size:13px; color:var(--text-muted); margin-bottom:20px;" data-i18n="new_inv_subheading">Hệ thống sẽ tự động phân loại mục tiêu, áp dụng chính sách thụ động an toàn và thu thập thông tin có chứng cứ.</p>
           
           <div class="form-group">
-            <label class="form-label" data-i18n="lbl_target">Mục tiêu điều tra (Tên miền, Email, IP, Tên người dùng, Số điện thoại...)</label>
+            <label class="form-label" for="target-input" data-i18n="lbl_target">Mục tiêu điều tra (Tên miền, Email, IP, Tên người dùng, Số điện thoại...)</label>
             <input type="text" id="target-input" class="form-input" placeholder="ví dụ: example.com, admin@corp.com, 93.184.216.34, octocat, +84901234567" autocomplete="off" oninput="onTargetInputDebounced()">
             <div style="margin-top:6px; display:flex; align-items:center; gap:8px;">
               <span style="font-size:12.5px; color:var(--text-muted);" data-i18n="lbl_detected_type">Loại nhận diện:</span>
               <span class="badge badge-running" id="type-preview" style="font-size:11px;">CHƯA XÁC ĐỊNH</span>
             </div>
+            <label class="form-label" for="target-type-select" style="margin-top:12px;" data-i18n="target_type_label">Bạn muốn tìm theo</label>
+            <select id="target-type-select" class="form-select" onchange="onTargetTypeChanged()">
+              <option value="" data-i18n="target_type_auto">Tự nhận diện</option>
+              <option value="USERNAME">Username</option>
+              <option value="EMAIL">Email</option>
+              <option value="DOMAIN">Domain</option>
+              <option value="HOSTNAME">Hostname</option>
+              <option value="URL">URL</option>
+              <option value="IP_ADDRESS">IPv4</option>
+              <option value="IPV6_ADDRESS">IPv6</option>
+              <option value="CIDR">CIDR</option>
+              <option value="ASN">ASN</option>
+              <option value="PHONE" data-i18n="target_type_phone">Số điện thoại (+mã quốc gia)</option>
+              <option value="ACCOUNT">Username@platform</option>
+            </select>
+            <p id="classification-explanation" role="status" aria-live="polite" style="font-size:13px; margin-top:8px; color:var(--text-secondary);"></p>
           </div>
 
           <div class="form-group">
@@ -133,18 +149,30 @@
               <label class="form-label" data-i18n="lbl_depth">Độ sâu thu thập (Max Depth)</label>
               <select id="depth-select" class="form-select">
                 <option value="0">0 (Chỉ phân tích mục tiêu gốc - Tối ưu tốc độ)</option>
-                <option value="1" selected>1 (Khám phá thực thể liên kết cấp 1: Tên miền, Máy chủ, IP)</option>
-                <option value="2">2 (Mở rộng đa tầng hạ tầng mạng)</option>
+                <option value="1" selected>1 (Mở rộng từ hồ sơ hoặc thực thể đã có bằng chứng)</option>
+                <option value="2">2 (Mở rộng thêm một cấp liên kết)</option>
               </select>
             </div>
             <div class="form-group">
               <label class="form-label" data-i18n="lbl_timeout">Thời gian tối đa (Timeout)</label>
               <select id="timeout-select" class="form-select">
                 <option value="30">30 giây</option>
-                <option value="60" selected>60 giây</option>
+                <option value="60">60 giây</option>
                 <option value="120">120 giây</option>
+                <option value="180" selected>180 giây</option>
+                <option value="600">600 giây</option>
               </select>
             </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="username-sites-select">Phạm vi tìm username</label>
+            <select id="username-sites-select" class="form-select">
+              <option value="50">Nhanh — 50 website</option>
+              <option value="500" selected>Tiêu chuẩn — 500 website</option>
+              <option value="0">Tất cả website đang bật trong danh mục Maigret</option>
+            </select>
+            <p class="form-hint">Dừng khi hết thời gian; giữ kết quả đã kiểm tra. Phạm vi phụ thuộc danh mục và khả năng truy cập từng website.</p>
           </div>
 
           <div class="form-group" style="display:flex; align-items:center; gap:8px; margin-top:14px;">
@@ -210,7 +238,7 @@
               <div class="kpi-value" id="sum-kpi-entities">-</div>
             </div>
             <div class="kpi-card">
-              <div class="kpi-label" data-i18n="kpi_assertions">Mối quan hệ xác thực</div>
+              <div class="kpi-label" data-i18n="kpi_assertions">Liên kết có bằng chứng</div>
               <div class="kpi-value" id="sum-kpi-assertions">-</div>
             </div>
             <div class="kpi-card">
@@ -458,18 +486,35 @@
         <hr style="border:none; border-top:1px solid var(--border-color); margin:18px 0;">
         <h4 style="font-size:14px; font-weight:700; margin-bottom:12px;" data-i18n="setting_api_keys">Quản lý Khóa API (Tùy chọn - Lưu trữ cục bộ bảo mật)</h4>
         
-        <div class="form-group">
-          <label class="form-label">Shodan API Key</label>
-          <input type="password" id="setting-key-shodan" class="form-input" placeholder="Nhập khóa API Shodan...">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Censys API Key</label>
-          <input type="password" id="setting-key-censys" class="form-input" placeholder="Nhập khóa API Censys...">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Fofa API Key</label>
-          <input type="password" id="setting-key-fofa" class="form-input" placeholder="Nhập khóa API Fofa...">
-        </div>
+        <p id="api-key-help" class="form-label">Để trống để giữ giá trị đã lưu. Lưu khóa chưa có nghĩa là kết nối thành công.</p>
+        <fieldset class="form-group" data-api-engine="shodan">
+          <legend>Shodan</legend>
+          <label class="form-label" for="setting-key-shodan">API Key</label>
+          <input type="password" id="setting-key-shodan" class="form-input" autocomplete="new-password" spellcheck="false">
+          <p id="key-state-shodan" role="status" aria-live="polite"></p>
+          <button type="button" class="btn btn-secondary" onclick="testApiEngine('shodan')" data-key-test> Lưu và thử kết nối</button>
+          <button type="button" class="btn btn-secondary" onclick="deleteApiEngine('shodan')" data-key-delete>Xóa khóa đã lưu</button>
+        </fieldset>
+        <fieldset class="form-group" data-api-engine="censys">
+          <legend>Censys Platform</legend>
+          <label class="form-label" for="setting-key-censys">Personal Access Token</label>
+          <input type="password" id="setting-key-censys" class="form-input" autocomplete="new-password" spellcheck="false">
+          <label class="form-label" for="setting-censys-org">Organization ID (tùy chọn; Free Plan có thể để trống)</label>
+          <input type="password" id="setting-censys-org" class="form-input" autocomplete="new-password" spellcheck="false">
+          <p id="key-state-censys" role="status" aria-live="polite"></p>
+          <button type="button" class="btn btn-secondary" onclick="testApiEngine('censys')" data-key-test>Lưu và thử kết nối</button>
+          <button type="button" class="btn btn-secondary" onclick="deleteApiEngine('censys')" data-key-delete>Xóa khóa đã lưu</button>
+        </fieldset>
+        <fieldset class="form-group" data-api-engine="fofa">
+          <legend>FOFA</legend>
+          <label class="form-label" for="setting-fofa-email">Email tài khoản (tùy chọn; chỉ để tương thích Uncover cũ)</label>
+          <input type="password" id="setting-fofa-email" class="form-input" autocomplete="new-password" spellcheck="false">
+          <label class="form-label" for="setting-key-fofa">API Key</label>
+          <input type="password" id="setting-key-fofa" class="form-input" autocomplete="new-password" spellcheck="false">
+          <p id="key-state-fofa" role="status" aria-live="polite"></p>
+          <button type="button" class="btn btn-secondary" onclick="testApiEngine('fofa')" data-key-test>Lưu và thử kết nối</button>
+          <button type="button" class="btn btn-secondary" onclick="deleteApiEngine('fofa')" data-key-delete>Xóa khóa đã lưu</button>
+        </fieldset>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeSettingsModal()" data-i18n="btn_cancel">Hủy</button>

@@ -2,6 +2,7 @@ from spider.providers.base import ProviderExecutionResult
 import asyncio
 import logging
 import uuid
+import time
 from datetime import datetime, timezone
 from typing import List, Dict, Set, Optional, Any, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,6 +57,7 @@ class SpiderEngine:
         Executes a deterministic capability-driven investigation loop for the given case.
         """
         budget = budget or ExecutionBudget()
+        deadline = time.monotonic() + budget.max_runtime_seconds
         scheduler = DeterministicScheduler(self.capability_registry, budget)
         run_id = run_id or str(uuid.uuid4())
 
@@ -116,9 +118,12 @@ class SpiderEngine:
         # 4. Investigation Event Loop
         total_tasks_run = 0
         total_observations = 0
+        incomplete_tasks = 0
+        successful_tasks = 0
+        failed_tasks = 0
         available_providers = set(self.provider_manager.adapters.keys())
 
-        while frontier and not scheduler.ledger.is_exhausted(budget):
+        while frontier and not scheduler.ledger.is_exhausted(budget) and time.monotonic() < deadline:
             current_obs, parent_val, depth = frontier.pop(0)
 
             # Get entity ID
@@ -144,7 +149,7 @@ class SpiderEngine:
             )
 
             for cand in candidates:
-                if scheduler.ledger.is_exhausted(budget, current_depth=depth):
+                if scheduler.ledger.is_exhausted(budget, current_depth=depth) or time.monotonic() >= deadline:
                     break
 
                 task = TaskRun(
@@ -162,26 +167,22 @@ class SpiderEngine:
                     run_id=run_id,
                     task_id=task.id,
                     provider_id=cand.provider_id,
-                    provider_version="1.0.0",
-                    adapter_version="1.0.0",
+                    provider_version=self.provider_manager.adapters[cand.provider_id].version(),
+                    adapter_version=self.provider_manager.adapters[cand.provider_id].adapter_version(),
                     parent_observable_value=current_obs.canonical_value,
                     configuration_hash=cand.execution_key.configuration_hash
                 )
 
-                # Execute task via ProviderManager with bounded safety timeout
-                try:
-                    exec_result = await asyncio.wait_for(
-                        self.provider_manager.execute_task(task, current_obs, lineage),
-                        timeout=30.0
-                    )
-                except asyncio.TimeoutError:
-                    exec_result = ProviderExecutionResult(
-                        raw_content=b"Task timeout",
-                        observations=[],
-                        exit_code=124,
-                        error_message="Task execution exceeded 30s timeout",
-                        mime_type="text/plain"
-                    )
+                exec_result = await self.provider_manager.execute_task(
+                    task, current_obs, lineage,
+                    timeout_seconds=max(0.1, deadline-time.monotonic()),
+                    username_site_limit=budget.username_site_limit)
+                if exec_result.exit_code != 0 or exec_result.outcome in ("PARTIAL", "FAILED"):
+                    incomplete_tasks += 1
+                    if exec_result.outcome == "FAILED" or (not exec_result.outcome and exec_result.exit_code != 0):
+                        failed_tasks += 1
+                else:
+                    successful_tasks += 1
                 executed_key_hashes.add(cand.execution_key.key_string)
                 total_tasks_run += 1
                 scheduler.ledger.provider_calls_count += 1
@@ -201,9 +202,14 @@ class SpiderEngine:
                             if obs.observable.canonical_value != current_obs.canonical_value:
                                 frontier.append((obs.observable, current_obs.canonical_value, depth + 1))
 
+        # Partial coverage must not be presented as a fully completed search.
+        budget_exhausted = time.monotonic() >= deadline or scheduler.ledger.is_exhausted(budget)
+        final_status = (ExecutionStatus.PARTIAL if budget_exhausted or incomplete_tasks else ExecutionStatus.COMPLETED)
+        if failed_tasks == total_tasks_run and total_tasks_run and not total_observations:
+            final_status = ExecutionStatus.FAILED
         # 5. Complete ProviderRun
         async def _finish_run(session):
-            provider_run.status = ExecutionStatus.COMPLETED
+            provider_run.status = final_status
             provider_run.completed_at = datetime.now(timezone.utc)
             provider_run.tasks_count = total_tasks_run
             provider_run.observations_count = total_observations
@@ -217,10 +223,10 @@ class SpiderEngine:
 
         return {
             "run_id": run_id,
-            "status": "COMPLETED",
+            "status": final_status.value,
             "tasks_executed": total_tasks_run,
             "observations_collected": total_observations,
             "entities_count": len(entities),
             "assertions_count": len(assertions),
-            "budget_exhausted": scheduler.ledger.is_exhausted(budget)
+            "budget_exhausted": budget_exhausted
         }

@@ -16,8 +16,8 @@ def test_maigret_build_command():
     obs = NormalizedObservable(type=ObservableType.USERNAME, value="johndoe1998")
     cmd = adapter.build_command(obs)
     assert "-m" in cmd
-    assert "maigret" in cmd
-    assert "johndoe1998" in cmd
+    assert "spider.providers.maigret.worker" in cmd
+    assert "johndoe1998" not in cmd  # private target travels on stdin
 
 def test_maigret_parse_frozen_fixture():
     adapter = MaigretAdapter()

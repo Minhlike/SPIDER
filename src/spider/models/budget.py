@@ -1,4 +1,5 @@
 from pydantic import Field
+from typing import Literal
 from spider.models.base import SpiderBaseModel
 
 class ExecutionBudget(SpiderBaseModel):
@@ -6,6 +7,7 @@ class ExecutionBudget(SpiderBaseModel):
     max_depth: int = 3
     max_requests: int = 100
     max_runtime_seconds: int = 300
+    username_site_limit: Literal[0, 50, 500] = 500
     max_parallel_tasks: int = 4
     max_provider_calls: int = 50
     max_branch_work: int = 20

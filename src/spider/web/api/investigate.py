@@ -1,13 +1,13 @@
 import asyncio
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
-from pydantic import BaseModel
-from typing import Dict, Any, Optional
+from pydantic import BaseModel, Field, AliasChoices
+from typing import Dict, Any, Optional, Literal
 from spider.service.service import SpiderService
-from spider.models.classifier import TargetClassifier
+from spider.models.classifier import TargetClassifier, ClassificationError
 from spider.models.budget import ExecutionBudget
 from spider.web.events import event_broker
 from spider.models.execution import ProviderRun
-from spider.models.enums import ExecutionStatus
+from spider.models.enums import ExecutionStatus, ObservableType
 from spider.storage.repositories.execution_repo import ExecutionRepository
 from spider.storage.schema import ProviderRunRecord
 from spider.models.base import utc_now
@@ -18,12 +18,20 @@ def get_srv(request: Request) -> SpiderService:
     from spider.web.app import get_service
     return get_service(request)
 
+class InvestigationBudgetRequest(BaseModel):
+    max_depth: int = Field(default=1, ge=0, le=3)
+    max_entities: int = Field(default=500, ge=1, le=5000)
+    timeout_seconds: int = Field(default=180, ge=10, le=600)
+    username_site_limit: Literal[0, 50, 500] = 500
+
 class StartInvestigationRequest(BaseModel):
-    target: str
+    target: str = Field(min_length=1, max_length=2048)
+    target_type: Optional[ObservableType] = None
     case_id: Optional[str] = None
     case_name: Optional[str] = None
-    authorized_scope: bool = False
-    max_depth: int = 2
+    authorized_scope: bool = Field(default=False, validation_alias=AliasChoices("authorized_scope", "scope_authorized"))
+    max_depth: int = Field(default=2, ge=0, le=3)
+    budget: Optional[InvestigationBudgetRequest] = None
     policy_profile: Optional[str] = "passive_standard"
 
 async def _run_investigation_background(service: SpiderService, case_id: str, run_id: str, target: str, obs_type_val: str, budget: ExecutionBudget, profile: Optional[str]):
@@ -74,6 +82,10 @@ async def start_investigation(
     background_tasks: BackgroundTasks,
     service: SpiderService = Depends(get_srv)
 ):
+    try:
+        classification = TargetClassifier.resolve(req.target, req.target_type)
+    except ClassificationError as exc:
+        raise HTTPException(status_code=422, detail=exc.detail()) from None
     is_temp = False
     if not service.is_running:
         await service.start()
@@ -86,16 +98,21 @@ async def start_investigation(
             case_res = await service.create_case(name=name, tags=["web_ui"])
             case_id = case_res["id"]
 
-        classification = TargetClassifier.classify(req.target)
         obs_type = classification.detected_type
         await service.add_target(
             case_id=case_id,
             raw_input=req.target,
             observable_type=obs_type,
-            scope_authorized=req.authorized_scope
+            scope_authorized=req.authorized_scope,
+            canonical_value=classification.canonical_value,
+            metadata={"classification": classification.model_dump(mode="json")}
         )
 
-        budget = ExecutionBudget(max_depth=req.max_depth)
+        budget = (ExecutionBudget(max_depth=req.budget.max_depth,
+                    max_entities=req.budget.max_entities,
+                    max_runtime_seconds=req.budget.timeout_seconds,
+                    username_site_limit=req.budget.username_site_limit)
+                  if req.budget else ExecutionBudget(max_depth=req.max_depth))
 
         import uuid
         run_id = str(uuid.uuid4())

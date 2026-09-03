@@ -1,5 +1,11 @@
 version: "1.0"
 capabilities:
+  PUBLIC_PROFILE_LOOKUP:
+    description: "Public profile metadata; exact public email evidence or username candidates"
+    default_providers: ["github_public"]
+    input_types: ["EMAIL", "USERNAME"]
+    output_types: ["ACCOUNT", "URL", "USERNAME"]
+
   DNS_ENUMERATION:
     description: "Native forward and reverse DNS enumeration (A, AAAA, MX, NS, TXT, SOA, PTR)"
     default_providers: ["native_dns"]

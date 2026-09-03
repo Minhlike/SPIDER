@@ -7,6 +7,9 @@ from spider.models.enums import ObservableType, NetworkClass, ProviderState
 from spider.models.observable import NormalizedObservable
 from spider.models.observation import Observation
 from spider.models.provenance import SourceLineage
+from spider.models.budget import ExecutionBudget
+from spider.storage.schema import TaskRunRecord
+from sqlalchemy import select
 
 class SlowFailingProvider(BaseProviderAdapter):
     def provider_id(self) -> str:
@@ -36,7 +39,8 @@ class SlowFailingProvider(BaseProviderAdapter):
         return NormalizedObservable(type=raw_item["type"], value=raw_item["value"])
 
 @pytest.mark.asyncio
-async def test_provider_timeout_and_failure_isolation(tmp_path):
+@pytest.mark.parametrize("runtime", [1, 10])
+async def test_provider_timeout_and_failure_isolation(tmp_path, runtime):
     test_db = str(tmp_path / "test_resilience.db")
     test_runs = str(tmp_path / "runs")
 
@@ -61,7 +65,13 @@ async def test_provider_timeout_and_failure_isolation(tmp_path):
         await service.add_target(case_id, "timeout-test.com", ObservableType.DOMAIN)
 
         # Run investigation with small timeout
-        run_res = await service.investigate(case_id)
-        assert run_res["status"] == "COMPLETED"
+        run_res = await service.investigate(case_id, budget=ExecutionBudget(max_runtime_seconds=runtime))
+        assert run_res["status"] == "FAILED"
+        async with service.db_manager.session_factory() as session:
+            task = (await session.execute(select(TaskRunRecord))).scalar_one()
+            assert task.status == "FAILED"
+            assert task.started_at and task.completed_at and task.error_message
+            assert task.raw_artifact_id
+            assert task.metadata_json["duration_ms"] > 0
     finally:
         await service.stop()

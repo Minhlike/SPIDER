@@ -1,26 +1,23 @@
-import asyncio
 import json
-import logging
-import os
+import time
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, List, Optional
 
 from spider.providers.base import BaseProviderAdapter, ProviderHealth, ProviderExecutionResult
 from spider.models.enums import ObservableType, NetworkClass, ProviderState
 from spider.models.observable import NormalizedObservable
 from spider.models.observation import Observation
 from spider.models.provenance import SourceLineage
+from spider.storage.key_store import KeyStoreError
+from . import api_access as access
 
-logger = logging.getLogger(__name__)
+UNCOVER_ENGINES = list(access.REQUIREMENTS)
 
-UNCOVER_ENGINES = ["shodan", "censys", "fofa", "hunter", "zoomeye", "netlas", "criminalip"]
 
 class UncoverAdapter(BaseProviderAdapter):
-    def __init__(self, binary_path: Optional[str] = None):
-        if binary_path:
-            self.binary_path = Path(binary_path)
-        else:
-            self.binary_path = Path("tools/uncover/uncover.exe")
+    def __init__(self, binary_path: Optional[str] = None, key_loader=None):
+        self.binary_path = Path(binary_path) if binary_path else access.PRIVATE_BINARY
+        self.key_loader = key_loader or access.saved_keys
 
     def provider_id(self) -> str:
         return "uncover"
@@ -29,7 +26,7 @@ class UncoverAdapter(BaseProviderAdapter):
         return "v1.2.1"
 
     def adapter_version(self) -> str:
-        return "1.0.0"
+        return "1.1.0"
 
     def capabilities(self) -> List[str]:
         return ["INTERNET_INTELLIGENCE"]
@@ -41,166 +38,104 @@ class UncoverAdapter(BaseProviderAdapter):
         return [ObservableType.DOMAIN, ObservableType.IP_ADDRESS, ObservableType.ORGANIZATION]
 
     def produces(self) -> List[ObservableType]:
-        return [ObservableType.IP_ADDRESS, ObservableType.HOSTNAME, ObservableType.URL, ObservableType.CERTIFICATE]
+        return [ObservableType.IP_ADDRESS, ObservableType.HOSTNAME, ObservableType.URL]
+
+    def _keys(self):
+        return access.effective_keys(self.key_loader())
+
+    def _has_keys(self, engine: Optional[str] = None) -> bool:
+        presence = access.engine_presence(self._keys())
+        return presence[engine]["configured"] if engine else any(p["configured"] for p in presence.values())
 
     async def health(self) -> ProviderHealth:
-        if not self.binary_path.exists():
-            return ProviderHealth(
-                state=ProviderState.BROKEN,
-                message=f"Uncover binary not found at {self.binary_path}"
-            )
-        
-        # Check if any API keys are configured in environment
-        has_keys = any(
-            os.environ.get(f"{eng.upper()}_API_KEY") or os.environ.get(f"{eng.upper()}_KEY")
-            for eng in UNCOVER_ENGINES
-        )
-
         try:
-            proc = await asyncio.create_subprocess_exec(
-                str(self.binary_path.resolve()),
-                "-version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=8.0)
-            except asyncio.TimeoutError:
-                try: proc.kill()
-                except Exception: pass
-                stdout, stderr = b"", b"Uncover timeout"
-            if proc.returncode == 0 or b"v1.2.1" in stdout or b"v1.2.1" in stderr:
-                if has_keys:
-                    return ProviderHealth(state=ProviderState.READY, message="Uncover v1.2.1 operational with API keys")
-                else:
-                    return ProviderHealth(
-                        state=ProviderState.MISSING_CREDENTIAL,
-                        message="Uncover v1.2.1 operational (no search engine API keys configured)",
-                        details={"supported_engines": UNCOVER_ENGINES}
-                    )
-            return ProviderHealth(state=ProviderState.DEGRADED, message=f"Version check returned {proc.returncode}")
-        except Exception as e:
-            return ProviderHealth(state=ProviderState.BROKEN, message=f"Health check failed: {str(e)}")
+            engines = access.engine_presence(self._keys())
+        except KeyStoreError:
+            return ProviderHealth(state=ProviderState.BROKEN, message="Protected credential storage unavailable",
+                                  live_verified=False, credential_state="UNAVAILABLE")
+        configured = any(item["configured"] for item in engines.values())
+        runtime = access.verified_runtime(self.binary_path)
+        state = ProviderState.READY if configured else ProviderState.MISSING_CREDENTIAL
+        if not runtime:
+            state = ProviderState.MISSING_RUNTIME
+        return ProviderHealth(state=state, provider_version=self.version(), adapter_version=self.adapter_version(),
+            runtime_path=str(self.binary_path), runtime_exists=self.binary_path.exists(),
+            runtime_version_verified=runtime, live_verified=False, credential_state="UNTESTED" if configured else "MISSING_CREDENTIAL",
+            message="Uncover v1.2.1 private runner: credentials configured; connection not tested" if configured and runtime
+                    else "Uncover v1.2.1: missing complete credentials or verified private runtime",
+            details={"engines": engines, "connection_test": "/api/settings/test/{engine}"})
 
-    def build_command(self, target: NormalizedObservable) -> List[str]:
-        return [
-            str(self.binary_path.resolve()),
-            "-q", target.canonical_value,
-            "-oJ",
-            "-silent"
-        ]
+    @staticmethod
+    def query_for(target: NormalizedObservable, engine: str) -> str:
+        value = json.dumps(target.canonical_value, ensure_ascii=False)
+        if target.type == ObservableType.DOMAIN:
+            return {"shodan": f"hostname:{value}", "censys": f"web.hostname={value}", "fofa": f"domain={value}"}[engine]
+        if target.type == ObservableType.IP_ADDRESS:
+            return {"shodan": f"net:{value}", "censys": f"host.ip={value}", "fofa": f"ip={value}"}[engine]
+        return value
 
-    def _has_keys(self) -> bool:
-        return any(
-            os.environ.get(f"{eng.upper()}_API_KEY") or os.environ.get(f"{eng.upper()}_KEY")
-            for eng in UNCOVER_ENGINES
-        )
+    def build_command(self, target: NormalizedObservable, engine: str = "shodan") -> List[str]:
+        return [str(self.binary_path.resolve()), "-engine", engine, "-mode", "search", "-q", self.query_for(target, engine), "-limit", "10"]
 
     async def execute(self, target: NormalizedObservable, lineage: SourceLineage, **kwargs) -> ProviderExecutionResult:
-        if not self._has_keys():
-            return ProviderExecutionResult(
-                raw_content=b"[]",
-                observations=[],
-                exit_code=0,
-                error_message="No search engine API keys configured (MISSING_CREDENTIAL)",
-                mime_type="application/json"
-            )
-        cmd = self.build_command(target)
+        started = time.monotonic()
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=8.0)
-            except asyncio.TimeoutError:
-                try: proc.kill()
-                except Exception: pass
-                stdout, stderr = b"", b"Uncover timeout"
-            observations = self.parse(stdout, lineage)
-            return ProviderExecutionResult(
-                raw_content=stdout,
-                observations=observations,
-                exit_code=proc.returncode or 0,
-                error_message=stderr.decode(errors="ignore") if proc.returncode != 0 else None,
-                mime_type="application/x-ndjson"
-            )
-        except Exception as ex:
-            logger.error(f"Uncover execution error: {ex}")
-            return ProviderExecutionResult(
-                raw_content=str(ex).encode("utf-8"),
-                observations=[],
-                exit_code=1,
-                error_message=str(ex),
-                mime_type="text/plain"
-            )
+            keys = self._keys()
+        except KeyStoreError:
+            return ProviderExecutionResult(raw_content=b"[]", observations=[], exit_code=1, outcome="FAILED",
+                                           error_message="Protected credential storage unavailable")
+        presence = access.engine_presence(keys)
+        statuses, rows = {}, []
+        timeout = max(0.1, float(kwargs.get("timeout_seconds", 60)))
+        try:
+            for engine in UNCOVER_ENGINES:
+                remaining = timeout - (time.monotonic() - started)
+                if not presence[engine]["configured"]:
+                    result = access.result_state(engine, "MISSING_CREDENTIAL", "REQUIRED_FIELDS_MISSING", "search")
+                elif remaining <= 0:
+                    result = access.result_state(engine, "NETWORK_ERROR", "TIMEOUT", "search")
+                else:
+                    result = await access.run_engine(engine, keys, mode="search", query=self.query_for(target, engine),
+                        binary=self.binary_path, timeout=min(23, remaining))
+                rows.extend(result.pop("results"))
+                statuses[engine] = result
+            raw = "\n".join(json.dumps(row) for row in rows).encode()
+            observations = self.parse(raw, lineage)
+            attempted = [r for e, r in statuses.items() if presence[e]["configured"]]
+            successes = sum(r["state"] == "VALID" for r in attempted)
+            outcome = "COMPLETED" if attempted and successes == len(attempted) else "PARTIAL" if successes else "FAILED"
+            return ProviderExecutionResult(raw_content=raw, observations=observations,
+                exit_code=0 if outcome == "COMPLETED" else 1, outcome=outcome,
+                error_message=None if outcome == "COMPLETED" else "Uncover engines unavailable; see per-engine status",
+                metadata={"engines": statuses, "bounded_to_first_page": True},
+                raw_items_count=len(rows), accepted_count=len(observations), mime_type="application/x-ndjson",
+                duration_ms=(time.monotonic()-started)*1000)
+        finally:
+            keys.clear()
 
     def parse(self, raw_content: bytes, lineage: SourceLineage) -> List[Observation]:
-        results: List[Observation] = []
-        text = raw_content.decode("utf-8", errors="ignore")
-        
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
+        rows = []
+        for line in raw_content.decode("utf-8", errors="replace").splitlines():
             try:
-                data = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            ip = data.get("ip")
-            host = data.get("host")
-            url = data.get("url")
-            engine = data.get("engine", "uncover")
-            family = "INTERNET_SCANNER"
-
-            if ip:
-                obs_ip = self.normalize({"type": ObservableType.IP_ADDRESS, "value": ip})
-                item_lineage = lineage.model_copy(update={
-                    "upstream_source": f"uncover_{engine}",
-                    "upstream_family": family,
-                    "parent_observable_value": lineage.parent_observable_value
-                })
-                results.append(Observation(
-                    observable=obs_ip,
-                    lineage=item_lineage,
-                    confidence=0.9,
-                    raw_data=data
-                ))
-
-            if host and host != ip:
-                obs_host = self.normalize({"type": ObservableType.HOSTNAME, "value": host})
-                item_lineage = lineage.model_copy(update={
-                    "upstream_source": f"uncover_{engine}",
-                    "upstream_family": family,
-                    "parent_observable_value": ip or lineage.parent_observable_value
-                })
-                results.append(Observation(
-                    observable=obs_host,
-                    lineage=item_lineage,
-                    confidence=0.85,
-                    raw_data=data
-                ))
-
-            if url:
-                obs_url = self.normalize({"type": ObservableType.URL, "value": url})
-                item_lineage = lineage.model_copy(update={
-                    "upstream_source": f"uncover_{engine}",
-                    "upstream_family": family,
-                    "parent_observable_value": ip or lineage.parent_observable_value
-                })
-                results.append(Observation(
-                    observable=obs_url,
-                    lineage=item_lineage,
-                    confidence=0.85,
-                    raw_data=data
-                ))
-
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    row.setdefault("engine", row.get("source", "uncover"))
+                    rows.append(row)
+            except ValueError:
+                pass
+        results = []
+        for row in access.clean_rows(rows, {}):
+            for field, kind, confidence in (("ip", ObservableType.IP_ADDRESS, .9),
+                                            ("host", ObservableType.HOSTNAME, .85), ("url", ObservableType.URL, .85)):
+                value = row.get(field)
+                if not value or (field == "host" and value == row.get("ip")):
+                    continue
+                results.append(Observation(observable=self.normalize({"type": kind, "value": value}),
+                    lineage=lineage.model_copy(update={"upstream_source": f"uncover_{row['engine']}",
+                        "upstream_family": "INTERNET_SCANNER",
+                        "parent_observable_value": lineage.parent_observable_value if field == "ip" else row.get("ip") or lineage.parent_observable_value}),
+                    confidence=confidence, raw_data=row))
         return results
 
     def normalize(self, raw_item: Any) -> NormalizedObservable:
-        return NormalizedObservable(
-            type=raw_item["type"],
-            value=raw_item["value"]
-        )
+        return NormalizedObservable(type=raw_item["type"], value=raw_item["value"])

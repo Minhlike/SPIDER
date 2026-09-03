@@ -1,4 +1,7 @@
 import asyncio
+import time
+from spider.models.base import utc_now
+from spider.storage.schema import TaskRunRecord
 from typing import Dict, List, Optional
 from spider.providers.base import BaseProviderAdapter, ProviderHealth, ProviderExecutionResult
 from spider.models.enums import ObservableType, NetworkClass, ProviderState, ExecutionStatus
@@ -47,34 +50,43 @@ class ProviderManager:
         task: TaskRun,
         target: NormalizedObservable,
         lineage: SourceLineage,
-        timeout_seconds: float = 60.0
+        timeout_seconds: float = 60.0,
+        **options
     ) -> ProviderExecutionResult:
         adapter = self.get_adapter(task.provider_id)
         if not adapter:
             raise ValueError(f"Provider {task.provider_id} not registered")
 
-        # Execute with timeout
+        task.started_at = utc_now()
+        started = time.perf_counter()
+        await self.db_writer.submit(lambda session: ExecutionRepository.create_task_run(session, task))
+
+        async def on_progress(coverage):
+            async def record(session):
+                rec = await session.get(TaskRunRecord, task.id)
+                rec.metadata_json = {"coverage": coverage, "duration_ms": (time.perf_counter()-started)*1000}
+            await self.db_writer.submit(record)
+
+        # Give adapters the same budget; a small grace period allows worker cleanup.
         try:
             result = await asyncio.wait_for(
-                adapter.execute(target, lineage),
-                timeout=timeout_seconds
+                adapter.execute(target, lineage, timeout_seconds=timeout_seconds,
+                                on_progress=on_progress, **options),
+                timeout=timeout_seconds + 2
             )
         except asyncio.TimeoutError:
-            raw_bytes = b"Execution timed out"
-            artifact = self.artifact_repo.store_raw_bytes(
-                case_id=task.case_id,
-                run_id=task.run_id,
-                task_id=task.id,
-                provider_id=task.provider_id,
-                content=raw_bytes,
-                mime_type="text/plain"
-            )
-            return ProviderExecutionResult(
-                raw_content=raw_bytes,
-                observations=[],
-                exit_code=-1,
-                error_message="Task execution timed out"
-            )
+            result = ProviderExecutionResult(raw_content=b"Execution timed out", observations=[],
+                exit_code=124, error_message="Task execution timed out", outcome="FAILED")
+        except asyncio.CancelledError:
+            async def cancel(session):
+                rec = await session.get(TaskRunRecord, task.id)
+                rec.status = "CANCELLED"
+                rec.completed_at = utc_now()
+            await self.db_writer.submit(cancel)
+            raise
+        except Exception:
+            result = ProviderExecutionResult(raw_content=b"Provider execution failed", observations=[],
+                exit_code=1, error_message="Provider execution failed", outcome="FAILED")
 
         # Store raw artifact to disk with SHA-256
         artifact = self.artifact_repo.store_raw_bytes(
@@ -98,9 +110,16 @@ class ProviderManager:
         # Record ledger
         async def _record_task(session):
             task.observations_count = len(result.observations)
-            task.status = ExecutionStatus.COMPLETED if result.exit_code == 0 else ExecutionStatus.FAILED
-            await ExecutionRepository.create_task_run(session, task)
-            await ExecutionRepository.mark_executed(session, task.case_id, task.execution_key_hash)
+            task.status = ExecutionStatus(result.outcome) if result.outcome else (ExecutionStatus.COMPLETED if result.exit_code == 0 else ExecutionStatus.FAILED)
+            rec = await session.get(TaskRunRecord, task.id)
+            rec.status = task.status.value
+            rec.observations_count = task.observations_count
+            rec.raw_artifact_id = task.raw_artifact_id
+            rec.completed_at = utc_now()
+            rec.error_message = result.error_message
+            rec.metadata_json = dict(result.metadata, duration_ms=(time.perf_counter()-started)*1000)
+            if not await ExecutionRepository.has_executed(session, task.case_id, task.execution_key_hash):
+                await ExecutionRepository.mark_executed(session, task.case_id, task.execution_key_hash, task.status.value)
 
         await self.db_writer.submit(_record_task)
 

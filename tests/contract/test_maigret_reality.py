@@ -12,7 +12,7 @@ async def test_maigret_real_health():
     assert health.provider_version == "0.6.5"
     assert health.runtime_exists is True
 
-def test_maigret_parse_ndjson_real_output():
+def test_maigret_parse_legacy_flat_ndjson():
     adapter = MaigretAdapter()
     raw_ndjson = b'''
 {"site_name": "Reddit", "url_user": "https://reddit.com/user/testuser", "status": "Found", "http_status": 200}

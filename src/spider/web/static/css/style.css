@@ -352,6 +352,17 @@ header {
   border-bottom: none;
 }
 
+#public-profile-card .detail-row {
+  gap: 16px;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+
+#public-profile-card .detail-row > div {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
 .detail-key {
   color: var(--text-muted);
   font-weight: 500;

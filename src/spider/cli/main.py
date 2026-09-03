@@ -9,7 +9,7 @@ from rich.panel import Panel
 from spider.core.factory import create_spider_service
 from spider.models.enums import ObservableType, ProviderState
 from spider.models.budget import ExecutionBudget
-from spider.models.classifier import TargetClassifier
+from spider.models.classifier import TargetClassifier, ClassificationError
 
 app = typer.Typer(
     name="spider",
@@ -60,6 +60,7 @@ def doctor(json_output: bool = typer.Option(False, "--json", help="Output machin
 @app.command()
 def investigate(
     target: str = typer.Argument(..., help="Target value (domain, IP, username, email, etc.)"),
+    target_type: Optional[ObservableType] = typer.Option(None, "--type", help="Explicit target type for ambiguous input", case_sensitive=False),
     case_name: Optional[str] = typer.Option(None, "--name", "-n", help="Case name"),
     authorized: bool = typer.Option(False, "--authorized", "-a", help="Explicit authorized scope flag"),
     max_depth: int = typer.Option(2, "--max-depth", "-d", help="Maximum recursion depth"),
@@ -67,6 +68,10 @@ def investigate(
     json_output: bool = typer.Option(False, "--json", help="Output machine-readable JSON")
 ):
     """Execute an end-to-end evidence-first OSINT investigation on a target."""
+    try:
+        classification = TargetClassifier.resolve(target, target_type)
+    except ClassificationError as exc:
+        raise typer.BadParameter(str(exc) + " Use --type USERNAME or --type DOMAIN when appropriate.") from None
     async def _run():
         service = create_spider_service(mode="production")
         await service.start()
@@ -75,9 +80,10 @@ def investigate(
             case_res = await service.create_case(name=name, tags=["cli", "investigation"])
             case_id = case_res["id"]
 
-            classification = TargetClassifier.classify(target)
             obs_type = classification.detected_type
-            await service.add_target(case_id, target, obs_type, scope_authorized=authorized)
+            await service.add_target(case_id, target, obs_type, scope_authorized=authorized,
+                canonical_value=classification.canonical_value,
+                metadata={"classification": classification.model_dump(mode="json")})
 
             budget = ExecutionBudget(max_depth=max_depth)
             run_res = await service.investigate(case_id, budget=budget, policy_profile=profile)

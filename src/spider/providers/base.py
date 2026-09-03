@@ -36,6 +36,8 @@ class ProviderExecutionResult(BaseModel):
     raw_items_count: int = 0
     accepted_count: int = 0
     dropped_count: int = 0
+    outcome: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class BaseProviderAdapter(abc.ABC):
     @abc.abstractmethod

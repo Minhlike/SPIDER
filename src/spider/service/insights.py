@@ -51,8 +51,8 @@ class CaseInsightsBuilder:
         a_stmt = select(AssertionRecord).where(AssertionRecord.case_id == case_id)
         assertions = (await session.execute(a_stmt)).scalars().all()
 
-        # 4. Fetch Observations (limit to last 200)
-        o_stmt = select(ObservationRecord).where(ObservationRecord.case_id == case_id).order_by(ObservationRecord.created_at.asc()).limit(300)
+        # Counts and profile evidence must include the whole case, not the first 300 rows.
+        o_stmt = select(ObservationRecord).where(ObservationRecord.case_id == case_id).order_by(ObservationRecord.created_at.asc())
         observations = (await session.execute(o_stmt)).scalars().all()
 
         # 5. Fetch Task Runs
@@ -63,6 +63,28 @@ class CaseInsightsBuilder:
         pr_stmt = select(ProviderRunRecord).where(ProviderRunRecord.case_id == case_id).order_by(ProviderRunRecord.started_at.desc())
         provider_runs = (await session.execute(pr_stmt)).scalars().all()
         latest_run = provider_runs[0] if provider_runs else None
+        if latest_run:
+            task_runs = [task for task in task_runs if task.run_id == latest_run.id]
+
+        profiles = {}
+        for observation in observations:
+            raw = observation.raw_data_json or {}
+            if observation.observable_type != "ACCOUNT" or not isinstance(raw, dict):
+                continue
+            if raw.get("match_basis") not in ("exact_public_email", "username_only"):
+                continue
+            url = raw.get("profile_url")
+            if not isinstance(url, str) or not url.startswith(("https://", "http://")):
+                continue
+            existing = profiles.get(url)
+            if existing and existing["match_basis"] == "exact_public_email":
+                continue
+            profiles[url] = {"profile_url": url, "platform": raw.get("platform", "Web"),
+                "display_name": raw.get("display_name", ""), "bio": raw.get("bio", ""),
+                "website": raw.get("website", ""), "match_basis": raw["match_basis"],
+                "provider_id": observation.provider_id, "observation_id": observation.id,
+                "observed_at": observation.created_at.isoformat(), "identity_verified": False}
+        public_profiles = list(profiles.values())
 
         # --- A. Build Type-Specific Insights ---
         # Email Insights
@@ -173,10 +195,19 @@ class CaseInsightsBuilder:
                     "tasks_count": 0,
                     "status": "SUCCESS",
                     "duration_ms": 0.0,
-                    "error_message": None
+                    "error_message": None,
+                    "coverage": None
                 }
             provider_stats[pid]["tasks_count"] += 1
-            if tr.status != "SUCCESS":
+            metadata = tr.metadata_json or {}
+            provider_stats[pid]["duration_ms"] += metadata.get("duration_ms", 0)
+            if metadata.get("coverage"):
+                previous = provider_stats[pid]["coverage"] or {}
+                current = metadata["coverage"]
+                provider_stats[pid]["coverage"] = {key: previous.get(key, 0) + current.get(key, 0)
+                    for key in ("selected", "checked", "found", "not_found", "unknown", "invalid", "unprocessed", "non_unique_detections", "controls_pending", "controls_unknown")}
+            priority = {"RUNNING": 6, "PARTIAL": 5, "FAILED": 4, "CANCELLED": 3, "COMPLETED": 1, "SUCCESS": 0}
+            if priority.get(tr.status, 2) > priority.get(provider_stats[pid]["status"], 0):
                 provider_stats[pid]["status"] = tr.status
                 if tr.error_message:
                     provider_stats[pid]["error_message"] = tr.error_message
@@ -187,7 +218,7 @@ class CaseInsightsBuilder:
             pid = o.provider_id or "unknown"
             provider_obs_count[pid] = provider_obs_count.get(pid, 0) + 1
 
-        all_known_providers = ["native_dns", "native_rdap", "native_ct", "subfinder", "metabigor", "spiderfoot", "maigret", "uncover"]
+        all_known_providers = ["native_dns", "native_rdap", "native_ct", "subfinder", "metabigor", "spiderfoot", "maigret", "github_public", "uncover"]
         contributions = []
         for pid in all_known_providers:
             st = provider_stats.get(pid)
@@ -196,6 +227,8 @@ class CaseInsightsBuilder:
                 status_str = "SUCCESS" if obs_cnt > 0 else "NO_FINDINGS"
                 if st["status"] in ("FAILED", "ERROR"):
                     status_str = "ERROR"
+                elif st["status"] in ("PARTIAL", "RUNNING", "CANCELLED"):
+                    status_str = st["status"]
                 contributions.append({
                     "provider_id": pid,
                     "status": status_str,
@@ -203,6 +236,7 @@ class CaseInsightsBuilder:
                     "tasks_count": st["tasks_count"],
                     "duration_ms": round(st.get("duration_ms", 0), 1),
                     "error_message": st.get("error_message"),
+                    "coverage": st.get("coverage"),
                     "credential_state": "OK" if pid != "uncover" else "MISSING_CREDENTIAL"
                 })
             else:
@@ -251,6 +285,15 @@ class CaseInsightsBuilder:
             "domain_insights": domain_insights,
             "ip_insights": ip_insights,
             "username_insights": username_insights,
+            "public_profiles": public_profiles,
+            "profile_evidence": {"profiles_count": len(public_profiles),
+                "checked_sources": sorted({t.provider_id for t in task_runs if t.provider_id in ("maigret", "github_public")}),
+                "exact_email_matches": sum(p["match_basis"] == "exact_public_email" for p in public_profiles),
+                "identity_verified": False,
+                "message_vi": ("Chưa có hồ sơ công khai được đối chiếu với mục tiêu. Dữ liệu máy chủ thư không xác định chủ email."
+                    if not public_profiles else "Hồ sơ công khai và căn cứ liên hệ; chưa xác minh danh tính người sở hữu."),
+                "message_en": ("No public profile linked to this target yet. Mail infrastructure does not identify the email owner."
+                    if not public_profiles else "Public profiles and linkage evidence; owner identity has not been verified.")},
             "phone_insights": phone_insights,
             "provider_contributions": contributions,
             "empty_reason": empty_reason

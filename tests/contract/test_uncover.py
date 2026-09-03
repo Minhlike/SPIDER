@@ -9,8 +9,8 @@ from spider.models.provenance import SourceLineage
 async def test_uncover_health_missing_credentials_handling():
     adapter = UncoverAdapter(binary_path="tools/uncover/uncover.exe")
     health = await adapter.health()
-    # When no API keys exist in env, it reports MISSING_CREDENTIAL cleanly without failing
-    assert health.state in (ProviderState.MISSING_CREDENTIAL, ProviderState.READY)
+    # The unmodified binary is intentionally refused because it skips TLS verification.
+    assert health.state == ProviderState.MISSING_RUNTIME
     assert "v1.2.1" in health.message
 
 def test_uncover_build_command():
@@ -18,9 +18,10 @@ def test_uncover_build_command():
     obs = NormalizedObservable(type=ObservableType.DOMAIN, value="target.com")
     cmd = adapter.build_command(obs)
     assert "-q" in cmd
-    assert "target.com" in cmd
-    assert "-oJ" in cmd
-    assert "-silent" in cmd
+    assert 'hostname:"target.com"' in cmd
+    assert "-engine" in cmd and "shodan" in cmd
+    assert "-mode" in cmd and "search" in cmd
+    assert "-oJ" not in cmd
 
 def test_uncover_parse_frozen_fixture():
     adapter = UncoverAdapter()
