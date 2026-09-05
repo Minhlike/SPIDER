@@ -5,6 +5,7 @@ from typing import Optional, List
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from rich.markdown import Markdown
 
 from spider.core.factory import create_spider_service
 from spider.models.enums import ObservableType, ProviderState
@@ -91,43 +92,25 @@ def investigate(
             entities = await service.get_case_entities(case_id)
             assertions = await service.get_case_assertions(case_id)
 
+            from spider.service.insights import CaseInsightsBuilder
+            from spider.service.reporting import markdown_report
+            from spider.storage.schema import CaseRecord
+            async with service.db_manager.session_factory() as session:
+                case = await session.get(CaseRecord, case_id)
+                insights = await CaseInsightsBuilder.build_insights(session, case_id, case)
             if json_output:
                 res = {
                     "case_id": case_id,
                     "target": target,
                     "type": obs_type.value,
                     "run_result": run_res,
+                    "reader_report": insights["reader_report"],
                     "entities": entities,
                     "assertions": assertions
                 }
                 console.print(json.dumps(res, indent=2))
             else:
-                summary_text = (
-                    f"Case ID: {case_id}\n"
-                    f"Target: {target} ({obs_type.value})\n"
-                    f"Status: {run_res['status']}\n"
-                    f"Tasks Run: {run_res['tasks_executed']} | Observations: {run_res['observations_collected']}\n"
-                    f"Entities Discovered: {len(entities)} | Assertions: {len(assertions)}"
-                )
-                console.print(Panel(summary_text, title="Investigation Results", border_style="cyan"))
-                
-                t_ent = Table(title="Top Discovered Entities")
-                t_ent.add_column("Type", style="magenta")
-                t_ent.add_column("Canonical Name", style="bold green")
-                t_ent.add_column("Observations", justify="right")
-                t_ent.add_column("First Seen", style="dim")
-                for e in entities[:20]:
-                    t_ent.add_row(e["type"], e["canonical_name"], str(e["observation_count"]), e["first_seen"][:19])
-                console.print(t_ent)
-
-                t_asrt = Table(title="Knowledge Graph Assertions")
-                t_asrt.add_column("Assertion ID", style="dim")
-                t_asrt.add_column("Relationship Type", style="yellow")
-                t_asrt.add_column("Confidence", justify="right")
-                t_asrt.add_column("Sources", style="cyan")
-                for a in assertions[:20]:
-                    t_asrt.add_row(a["id"][:8], a["assertion_type"], f"{a['confidence']:.2f}", ",".join(a["source_families"] or ["-"]))
-                console.print(t_asrt)
+                console.print(Markdown(markdown_report(insights["reader_report"]["vi"])))
         finally:
             await service.stop()
     asyncio.run(_run())
@@ -158,10 +141,11 @@ def explain(
                 resolver_ver = explanation["resolver_version"]
                 inf_rule = explanation["inference_rule"]
 
-                info_text = f"Assertion: {src_name} -> {asrt_type} -> {tgt_name}\nConfidence: {conf:.2f} | Sources: {families}\nResolver Version: {resolver_ver} | Inference Rule: {inf_rule}"
-                console.print(Panel.fit(info_text, title=f"Assertion Explanation: {assertion_id}", border_style="yellow"))
+                from rich.text import Text
+                info_text = Text(f"Liên hệ đã ghi nhận: {src_name} → {tgt_name}\n" + explanation["reader_note"]["vi"])
+                console.print(Panel.fit(info_text, title="Căn cứ của liên hệ", border_style="yellow"))
 
-                t_ev = Table(title="Evidence Trail")
+                t_ev = Table(title="Bằng chứng để đối chiếu")
                 t_ev.add_column("Evidence ID", style="dim")
                 t_ev.add_column("Provider", style="magenta")
                 t_ev.add_column("Source Family", style="cyan")

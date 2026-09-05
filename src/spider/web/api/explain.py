@@ -11,19 +11,30 @@ def get_srv(request: Request) -> SpiderService:
 
 
 @router.get("")
-async def explain_entity(case_id: str, entity_id: str, service: SpiderService = Depends(get_srv)):
+async def explain_entity(case_id: str, entity_id: str, target_id: Optional[str] = None, service: SpiderService = Depends(get_srv)):
     from sqlalchemy import select
     from spider.storage.schema import EntityRecord, ObservationRecord
     async with service.db_manager.session_factory() as session:
         entity = await session.get(EntityRecord, entity_id)
         if not entity or entity.case_id != case_id:
             raise HTTPException(status_code=404, detail="Entity not found in case")
-        observations = (await session.execute(select(ObservationRecord).where(
-            ObservationRecord.case_id == case_id,
-            ObservationRecord.canonical_value == entity.canonical_name,
-            ObservationRecord.observable_type == entity.observable_type,
-        ).order_by(ObservationRecord.created_at).limit(300))).scalars().all()
+        from spider.service.projection import project
+        from spider.service.reporting import evidence_note
+        try:
+            view = await project(session, case_id, target_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid target scope") from None
+        if view.seed is None:
+            raise HTTPException(status_code=422, detail="Select a target")
+        if entity_id not in {item.id for item in view.entities}:
+            raise HTTPException(status_code=404, detail="Entity outside selected target")
+        matched = [o for o in view.evidence_observations if
+                   (o.observable_type, o.namespace, o.canonical_value) ==
+                   (entity.observable_type, entity.namespace, entity.canonical_name)]
+        observations = matched[:300]
         return {
+            "reader_note": {lang: evidence_note(lang) for lang in ("vi", "en")},
+            "truncated": len(matched) > 300,
             "entity": {"id": entity.id, "type": entity.observable_type,
                        "canonical_name": entity.canonical_name, "observation_count": entity.observation_count,
                        "first_seen": entity.first_seen.isoformat()},

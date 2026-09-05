@@ -151,8 +151,11 @@ async def start_investigation(
         run_id = str(uuid.uuid4())
 
         async def queue_run(session):
+            from spider.storage.repositories.case_repo import CaseRepository
+            queued_targets = await CaseRepository.get_targets(session, case_id)
             await ExecutionRepository.create_provider_run(session, ProviderRun(
-                id=run_id, case_id=case_id, status=ExecutionStatus.QUEUED
+                id=run_id, case_id=case_id, status=ExecutionStatus.QUEUED,
+                metadata={"target_ids": [target.id for target in queued_targets]}
             ))
         await service.db_writer.submit(queue_run)
 

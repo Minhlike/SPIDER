@@ -251,3 +251,16 @@ async def get_observations(case_id: str, target_id: Optional[str] = None, questi
             "confidence": obs.confidence, "raw_data": obs.raw_data_json,
             "raw_artifact_id": obs.raw_artifact_id, "created_at": obs.created_at.isoformat(),
         } for obs in observations]
+
+
+@router.get("/{case_id}/report")
+async def readable_report(case_id: str, target_id: Optional[str] = None, question: str = "all",
+                          language: str = Query(default="vi", pattern="^(vi|en)$"),
+                          service: SpiderService = Depends(get_srv)):
+    from fastapi.responses import PlainTextResponse
+    from spider.service.reporting import markdown_report
+    insights = await get_case_insights(case_id, target_id, question, service)
+    if insights["scope"]["selection_required"]:
+        raise HTTPException(status_code=422, detail="Select a target before exporting a report")
+    return PlainTextResponse(markdown_report(insights["reader_report"][language]),
+        media_type="text/markdown", headers={"Content-Disposition": 'attachment; filename="spider-report.md"'})

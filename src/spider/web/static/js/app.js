@@ -50,7 +50,8 @@ const i18n = {
     btn_start: "Bắt đầu điều tra tự động",
     btn_cancel: "Hủy bỏ",
     btn_refresh: "Làm mới",
-    btn_export: "Xuất JSON",
+    btn_export: "Dữ liệu JSON",
+    btn_reader_report: "Tải báo cáo dễ đọc",
     btn_delete: "Xóa vụ án",
     btn_save: "Lưu cài đặt",
     btn_shutdown: "Tắt SPIDER",
@@ -81,7 +82,7 @@ const i18n = {
     col_test: "Thử nghiệm trực tiếp",
     col_source: "Nguồn cụ thể",
     col_family: "Nhóm nguồn",
-    col_confidence: "Độ tin cậy",
+    col_confidence: "Cách đánh giá",
     providers_matrix_title: "Bảng chẩn đoán sức khỏe & Khả năng nguồn OSINT",
     col_version: "Phiên bản",
     col_capabilities: "Khả năng OSINT",
@@ -135,7 +136,8 @@ const i18n = {
     btn_start: "Start automatic investigation",
     btn_cancel: "Cancel",
     btn_refresh: "Refresh",
-    btn_export: "Export JSON",
+    btn_export: "JSON data",
+    btn_reader_report: "Download readable report",
     btn_delete: "Delete Case",
     btn_save: "Save Settings",
     btn_shutdown: "Stop SPIDER",
@@ -166,7 +168,7 @@ const i18n = {
     col_test: "Live Test",
     col_source: "Upstream Source",
     col_family: "Source Family",
-    col_confidence: "Confidence",
+    col_confidence: "Assessment",
     providers_matrix_title: "Provider Diagnostics & Capabilities Matrix",
     col_version: "Version",
     col_capabilities: "Capabilities",
@@ -388,6 +390,40 @@ async function loadDashboard() {
     document.getElementById("kpi-observations").textContent = totalObservations || "-";
   } catch (err) {
     console.error("Failed to load dashboard", err);
+  }
+}
+
+let reportVocabulary = {};
+async function loadReportVocabulary() {
+  try {
+    const response = await fetch("/api/report-vocabulary");
+    if (response.ok) reportVocabulary = await response.json();
+  } catch (_) { /* The safe fallback states uncertainty without exposing codes. */ }
+}
+function friendlyLabel(code) {
+  return reportVocabulary[currentLanguage]?.[code] ||
+    (currentLanguage === "vi" ? "Chưa đủ thông tin để kết luận" : "Not enough information to conclude");
+}
+function renderReaderReport(insights) {
+  const box = document.getElementById("reader-report");
+  const report = insights.reader_report?.[currentLanguage];
+  box.replaceChildren();
+  if (!report) return;
+  const heading = document.createElement("h3");
+  heading.textContent = report.title;
+  const conclusion = document.createElement("p");
+  conclusion.textContent = report.conclusion;
+  box.append(heading, conclusion);
+  for (const section of report.sections) {
+    const title = document.createElement("h4");
+    title.textContent = section.title;
+    const list = document.createElement("ul");
+    for (const text of section.items) {
+      const item = document.createElement("li");
+      item.textContent = text;
+      list.appendChild(item);
+    }
+    box.append(title, list);
   }
 }
 
@@ -699,19 +735,18 @@ async function loadCaseDetail(caseId) {
     document.getElementById('scope-explanation').textContent = scope.selection_required
       ? (currentLanguage === 'vi' ? 'Chọn mục tiêu để xem bằng chứng riêng, tránh lẫn dữ liệu.' : 'Select a target to view its evidence separately.')
       : `${currentLanguage === 'vi' ? 'Bằng chứng chưa xác định mục tiêu bị loại' : 'Unscoped evidence excluded'}: ${scope.unscoped_observations_excluded || 0}`;
-    document.getElementById('egress-explanation').textContent = ({LOCAL_ONLY: 'LOCAL_ONLY — Chỉ xử lý cục bộ / Local processing only',
-      EGRESS_ATTEMPTED: 'EGRESS_ATTEMPTED — Đã thử gửi dữ liệu ra ngoài / External disclosure attempted',
-      NOT_YET_VERIFIED: 'NOT YET VERIFIED — Chưa đủ lịch sử truyền dữ liệu / Incomplete disclosure history'})[egressRes.state] || 'NOT YET VERIFIED';
+    document.getElementById('egress-explanation').textContent = friendlyLabel(egressRes.state);
     document.getElementById('egress-events').textContent = (egressRes.events || []).map(e =>
-      `${e.provider_id} → ${e.destination} | ${e.identifier_type} | ${e.purpose} | ${e.derivation} | ${e.authentication} | ${e.outcome}`).join('\n');
+      `${e.provider_id} → ${e.destination} | ${friendlyLabel(e.derivation)} | ${friendlyLabel(e.authentication)}`).join('\n');
+    renderReaderReport(insightsRes);
     const coverage = insightsRes.coverage_report || {};
-    document.getElementById('coverage-explanation').textContent = `${currentLanguage === 'vi' ? 'Có kết luận / Chưa xác định' : 'Decided / Unknown'}: ${coverage.decided || 0} / ${coverage.unknown || 0}`;
-    document.getElementById('coverage-steps').textContent = (coverage.steps || []).map(s => `${s.provider_id}: ${s.state}${s.reason ? ' — ' + s.reason : ''}`).join('\n');
+    document.getElementById('coverage-explanation').textContent = `${currentLanguage === 'vi' ? 'Bước kiểm tra có kết quả xác định / Còn chưa rõ' : 'Steps with a determined outcome / Still unclear'}: ${coverage.decided || 0} / ${coverage.unknown || 0}`;
+    document.getElementById('coverage-steps').textContent = (coverage.steps || []).map(s => `${s.provider_id}: ${friendlyLabel(s.reason in (reportVocabulary[currentLanguage] || {}) ? s.reason : s.state)}`).join('\n');
     const analysis = insightsRes.evidence_analysis || {};
     document.getElementById('evidence-analysis').textContent = [
-      ...(analysis.link_proofs || []).map(p => `${p.kind}: ${p.source} → ${p.target} [${p.observation_id}]`),
-      ...(analysis.temporal_events || []).map(e => `${e.view}: ${e.event} | ${e.observed_at} [${e.observation_id}]`),
-      ...(analysis.hypotheses || []).map(h => `${h.claim_id}: ${h.decision} | Supporting ${h.SUPPORTING_EVIDENCE.length}; Contradicting ${h.CONTRADICTING_EVIDENCE.length}; Unknown ${h.UNKNOWN.length}`),
+      ...(analysis.link_proofs || []).map(p => `${friendlyLabel(p.kind)}: ${p.source} → ${p.target} [${p.observation_id}]`),
+      ...(analysis.temporal_events || []).map(e => `${friendlyLabel(e.view)}: ${friendlyLabel(e.event)} | ${e.observed_at} [${e.observation_id}]`),
+      ...(analysis.hypotheses || []).map(h => `${h.claim_id}: ${friendlyLabel(h.decision)} | ${friendlyLabel("SUPPORTING_EVIDENCE")}: ${h.SUPPORTING_EVIDENCE.length}; ${friendlyLabel("CONTRADICTING_EVIDENCE")}: ${h.CONTRADICTING_EVIDENCE.length}; ${friendlyLabel("UNKNOWN")}: ${h.UNKNOWN.length}`),
       currentLanguage === 'vi' ? 'Liên kết công khai chưa xác minh cùng chủ sở hữu.' : 'Public links do not verify common ownership.'
     ].join('\n');
     document.getElementById('evidence-bundle-download').href = `/api/cases/${caseId}/bundle?${scopeQuery}`;
@@ -720,7 +755,7 @@ async function loadCaseDetail(caseId) {
     document.getElementById("case-title").textContent = caseRes.name || "Cuộc điều tra";
     const status = insightsRes.status || caseRes.status || "PENDING";
     const statusBadge = document.getElementById("case-status-badge");
-    statusBadge.textContent = status;
+    statusBadge.textContent = friendlyLabel(status);
     statusBadge.className = `badge badge-${status.toLowerCase()}`;
 
     const created = caseRes.created_at ? new Date(caseRes.created_at).toLocaleString() : "-";
@@ -780,22 +815,12 @@ function coverageDescription(source) {
       UPSTREAM_ERROR: currentLanguage === "vi" ? "Chưa kết luận do dịch vụ nguồn bị lỗi" : "Unknown because the upstream service failed",
       NETWORK_OR_RESPONSE_ERROR: currentLanguage === "vi" ? "Chưa kết luận do lỗi mạng hoặc phản hồi không hợp lệ" : "Unknown because the network or response failed",
     };
-    return reasons[source.collection_reason] || source.error_message || (source.status === "NO_FINDINGS" ? "Đã kiểm tra; không có kết quả" : source.status || "");
+    return reasons[source.collection_reason] || friendlyLabel(source.collection_reason || source.status);
   }
   const priority = Object.entries(c.priority_sites || {}).map(([name, value]) => {
-    const viLabels = {
-      FOUND: "có ứng viên", CANDIDATE: "có ứng viên", CLAIMED: "có ứng viên",
-      AVAILABLE: "không thấy", NOT_FOUND: "không thấy",
-      LOGIN_REQUIRED: "cần đăng nhập", RATE_LIMITED: "bị giới hạn truy cập",
-      BLOCKED: "bị chặn/challenge", PARSER_DRIFT: "chưa xác định — rule đã lệch",
-      NETWORK_ERROR: "lỗi mạng hoặc hết thời gian",
-      UNKNOWN: "chưa xác định", UNPROCESSED: "chưa xử lý", SCHEDULED: "đã lên lịch",
-      SKIPPED_SITE_BUDGET: "bỏ qua do giới hạn", INELIGIBLE: "không đủ điều kiện",
-      NOT_IN_CATALOG: "không có trong danh mục",
-    };
     const codes = [value.reason, value.outcome, value.state].filter(Boolean);
-    const code = codes.find(item => Object.prototype.hasOwnProperty.call(viLabels, item)) || codes[0] || "UNKNOWN";
-    const outcome = currentLanguage === "vi" ? (viLabels[code] || code) : code;
+    const code = codes.find(item => item in (reportVocabulary[currentLanguage] || {})) || "UNKNOWN";
+    const outcome = friendlyLabel(code);
     return `${name}: ${outcome}`;
   }).join(" · ");
   const summary = `${c.checked || 0}/${c.selected || 0} website đã xử lý · ${c.found || 0} ứng viên tài khoản · ${c.not_found || 0} không thấy · ${c.unknown || 0} chưa xác định · ${c.invalid || 0} username không hợp lệ · ${c.unprocessed || 0} chưa xử lý · ${c.non_unique_detections || 0} kết quả không phân biệt được với đối chứng · ${(c.controls_pending || 0) + (c.controls_unknown || 0)} đối chứng chưa kết luận`;
@@ -849,7 +874,7 @@ function renderTypeSpecificInsights(insights) {
       };
       const basis = bases[profile.match_basis] || (currentLanguage === "vi" ? "Liên hệ công khai — cần đối chiếu" : "Public linkage — corroboration required");
       const work = [profile.job_title, profile.company].filter(Boolean).join(" · ");
-      entry.innerHTML = `<div><small>${escapeHtml(profile.platform)} · ${currentLanguage === "vi" ? "Tên/tiêu đề công khai" : "Public name/title"}</small><br><strong>${escapeHtml(profile.display_name || profile.platform)}</strong><p>${escapeHtml(basis)}</p><p>${escapeHtml(profile.bio || "")}</p>${profile.location ? `<p>${currentLanguage === "vi" ? "Vị trí tự khai" : "Self-reported location"}: ${escapeHtml(profile.location)}</p>` : ""}${work ? `<p>${currentLanguage === "vi" ? "Nghề nghiệp/tổ chức tự khai" : "Self-reported role/organization"}: ${escapeHtml(work)}</p>` : ""}${profile.website ? `<p>Website: ${escapeHtml(profile.website)}</p>` : ""}<small>${escapeHtml(profile.provider_id)} · ${escapeHtml(profile.verification_state || "PUBLIC_SELF_PUBLISHED")} · ${escapeHtml(profile.observed_at || "")}</small></div>`;
+      entry.innerHTML = `<div><small>${escapeHtml(profile.platform)} · ${currentLanguage === "vi" ? "Tên/tiêu đề công khai" : "Public name/title"}</small><br><strong>${escapeHtml(profile.display_name || profile.platform)}</strong><p>${escapeHtml(basis)}</p><p>${escapeHtml(profile.bio || "")}</p>${profile.location ? `<p>${currentLanguage === "vi" ? "Vị trí tự khai" : "Self-reported location"}: ${escapeHtml(profile.location)}</p>` : ""}${work ? `<p>${currentLanguage === "vi" ? "Nghề nghiệp/tổ chức tự khai" : "Self-reported role/organization"}: ${escapeHtml(work)}</p>` : ""}${profile.website ? `<p>Website: ${escapeHtml(profile.website)}</p>` : ""}<small>${escapeHtml(profile.provider_id)} · ${escapeHtml(friendlyLabel(profile.verification_state || "PUBLIC_SELF_PUBLISHED"))} · ${escapeHtml(profile.observed_at || "")}</small></div>`;
       const link = document.createElement("a");
       try {
         const url = new URL(profile.profile_url);
@@ -891,7 +916,7 @@ function renderTypeSpecificInsights(insights) {
         <span>&#x26A0;</span> ${escapeHtml(t("empty_reason_heading"))}
       </div>
       <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">
-        ${escapeHtml(t("empty_reason_desc"))}
+        ${escapeHtml(insights.reader_report?.[currentLanguage]?.conclusion || t("empty_reason_desc"))}
       </p>
       <div class="card-grid-2">
         <div>
@@ -1005,7 +1030,7 @@ function renderTypeSpecificInsights(insights) {
     const sourceRows = (ip.source_observations || []).map(source => `
       <tr><td>${escapeHtml(source.provider_id || "-")}</td><td>${escapeHtml(source.record_kind || "-")}</td>
       <td>${escapeHtml(source.observed_at ? new Date(source.observed_at).toLocaleString() : "-")}</td>
-      <td>${Math.round(Number(source.confidence || 0) * 100)}%</td></tr>`).join("");
+      <td>${escapeHtml(friendlyLabel("UNCALIBRATED"))}</td></tr>`).join("");
     const contacts = (ip.contacts || []).flatMap(contact => (contact.emails || []).map(email =>
       `${(contact.roles || []).join(", ") || "contact"}: ${email}`));
     const card = document.createElement("div");
@@ -1121,7 +1146,7 @@ async function loadCaseProgress(caseId) {
 
     const tasks = insightsRes.provider_contributions || [];
     const runStatus = insightsRes.status || "PENDING";
-    document.getElementById("live-run-status").textContent = runStatus;
+    document.getElementById("live-run-status").textContent = friendlyLabel(runStatus);
     document.getElementById("live-run-status").className = `badge badge-${runStatus.toLowerCase()}`;
 
     if (tasks.length === 0) {
@@ -1134,9 +1159,9 @@ async function loadCaseProgress(caseId) {
       const duration = t.duration_ms ? `${(t.duration_ms).toFixed(1)}ms` : "-";
       tr.innerHTML = `
         <td><strong>${escapeHtml(t.provider_id)}</strong></td>
-        <td><code>BROAD_RECON</code></td>
+        <td>${currentLanguage === "vi" ? "Kiểm tra nguồn đã chọn" : "Check selected source"}</td>
         <td><code>${escapeHtml(insightsRes.target || "-")}</code></td>
-        <td><span class="badge badge-${(t.status || "ready").toLowerCase()}">${escapeHtml(t.status || "READY")}</span></td>
+        <td><span class="badge badge-${(t.status || "ready").toLowerCase()}">${escapeHtml(friendlyLabel(t.status))}</span></td>
         <td>${escapeHtml(duration)}</td>
         <td><strong>${escapeHtml(String(t.observations_count || 0))}</strong></td>
         <td><small style="color:var(--text-muted);">${escapeHtml(coverageDescription(t))}</small></td>
@@ -1211,7 +1236,7 @@ async function loadCaseSources() {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td><strong>${escapeHtml(p.provider_id)}</strong></td>
-        <td><span class="badge badge-${(p.status || "ready").toLowerCase()}">${escapeHtml(p.status || "READY")}</span></td>
+        <td><span class="badge badge-${(p.status || "ready").toLowerCase()}">${escapeHtml(friendlyLabel(p.status))}</span></td>
         <td>${p.duration_ms ? p.duration_ms.toFixed(1) : "-"}</td>
         <td><strong>${escapeHtml(String(p.observations_count || 0))}</strong></td>
         <td><small style="color:var(--text-muted);"><strong>${escapeHtml(executionReceiptDescription(p))}</strong><br>${escapeHtml(coverageDescription(p))}</small></td>
@@ -1250,7 +1275,7 @@ async function loadCaseEvidence() {
         <td><span class="badge badge-ready">${escapeHtml(o.observable_type || "-")}</span></td>
         <td><strong>${escapeHtml(o.upstream_source || o.provider_id || "-")}</strong></td>
         <td><small>${escapeHtml(o.upstream_family || "-")}</small></td>
-        <td><strong>${(o.confidence * 100).toFixed(0)}%</strong></td>
+        <td><strong>${escapeHtml(friendlyLabel("UNCALIBRATED"))}</strong></td>
         <td style="color:var(--text-muted);">${escapeHtml(created)}</td>
         <td>
           <button class="btn btn-secondary" style="padding:3px 8px; font-size:11.5px;" onclick="inspectObservationJson('${escapeHtml(o.id)}')">
@@ -1391,7 +1416,10 @@ async function openNodeInspector(entityId) {
   drawer.classList.add("open");
 
   try {
-    const res = await fetch(`/api/explain?case_id=${currentCaseId}&entity_id=${entityId}`);
+    const explainParams = new URLSearchParams({case_id: currentCaseId, entity_id: entityId});
+    const targetId = document.getElementById('insight-target').value;
+    if (targetId) explainParams.set('target_id', targetId);
+    const res = await fetch(`/api/explain?${explainParams}`);
     if (!res.ok) throw new Error("Could not fetch provenance trace");
     const data = await res.json();
 
@@ -1423,7 +1451,7 @@ async function openNodeInspector(entityId) {
               <span class="badge badge-running">${escapeHtml(p.upstream_family || "OSINT")}</span>
             </div>
             <div style="color:var(--text-muted); font-size:11.5px; margin-bottom:6px;">Task ID: <code>${escapeHtml(p.task_id ? p.task_id.substring(0, 8) : "-")}</code></div>
-            <div style="font-size:12px;">Độ tin cậy: <strong>${(p.confidence * 100).toFixed(0)}%</strong></div>
+            <div style="font-size:12px;">${escapeHtml(friendlyLabel("UNCALIBRATED"))}</div>
           </div>
         `).join("") || "<p style='color:var(--text-muted);'>Không có chuỗi dấu vết bổ sung.</p>"}
       </div>
@@ -1653,20 +1681,9 @@ async function deleteApiEngine(engine) {
 async function exportCaseData() {
   if (!currentCaseId) return;
   try {
-    const [caseData, entities, assertions, observations] = await Promise.all([
-      fetch(`/api/cases/${currentCaseId}`).then(r => r.json()),
-      fetch(scopedCaseUrl(currentCaseId, 'entities')).then(r => r.json()),
-      fetch(scopedCaseUrl(currentCaseId, 'assertions')).then(r => r.json()),
-      fetch(scopedCaseUrl(currentCaseId, 'observations')).then(r => r.json())
-    ]);
-
-    const fullExport = {
-      case: caseData,
-      entities: entities,
-      assertions: assertions,
-      observations: observations,
-      exported_at: new Date().toISOString()
-    };
+    const response = await fetch(scopedCaseUrl(currentCaseId, 'export'));
+    if (!response.ok) throw new Error("Report unavailable");
+    const fullExport = await response.json();
 
     const blob = new Blob([JSON.stringify(fullExport, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -1677,6 +1694,22 @@ async function exportCaseData() {
     URL.revokeObjectURL(url);
   } catch (e) {
     alert("Export failed: " + e.message);
+  }
+}
+
+async function exportReadableReport() {
+  if (!currentCaseId) return;
+  try {
+    const response = await fetch(scopedCaseUrl(currentCaseId, 'report') + `&language=${currentLanguage}`);
+    if (!response.ok) throw new Error("unavailable");
+    const url = URL.createObjectURL(new Blob([await response.text()], {type: "text/markdown;charset=utf-8"}));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "SPIDER-report.md";
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (_) {
+    alert(currentLanguage === "vi" ? "Chưa xuất được báo cáo. Hãy chọn mục tiêu và thử lại." : "Report unavailable. Select a target and retry.");
   }
 }
 
@@ -1700,4 +1733,5 @@ window.addEventListener("DOMContentLoaded", () => {
   initWebSocket();
   loadDashboard();
   loadInputCatalogue();
+  loadReportVocabulary();
 });

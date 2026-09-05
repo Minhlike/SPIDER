@@ -27,6 +27,8 @@ async def case_digest(session, case_id, target_id=None, question="all", limit=20
     tasks = [t for t in tasks if (t.metadata_json or {}).get("seed_id") == view.seed.id]
     unresolved = sum(t.status != "COMPLETED" for t in tasks)
     return {
+        "explanation": {"vi": "Đây là trang bằng chứng của mục tiêu đã chọn. Bằng chứng còn thiếu hoặc nguồn chưa kiểm tra được không chứng minh tài khoản không tồn tại.",
+                        "en": "This is an evidence page for the selected target. Missing evidence or unchecked sources do not establish that an account does not exist."},
         "schema_version": "1", "case_id": case_id, "target_id": view.seed.id,
         "question": question, "identity_verified": False,
         "counts": {"evidence": len(observations), "findings": len(view.finding_entities),
@@ -56,7 +58,9 @@ async def get_evidence(session, case_id, target_id, observation_id):
     observation = next((o for o in view.evidence_observations if o.id == observation_id), None)
     if observation is None:
         raise ValueError("Evidence does not belong to selected target")
-    return {"id": observation.id, "type": observation.observable_type,
+    from spider.service.reporting import evidence_note
+    return {"reader_note": {lang: evidence_note(lang) for lang in ("vi", "en")},
+            "id": observation.id, "type": observation.observable_type,
             "value": observation.canonical_value[:512], "namespace": observation.namespace[:128],
             "provider": observation.provider_id, "provider_version": observation.provider_version,
             "adapter_version": observation.adapter_version,

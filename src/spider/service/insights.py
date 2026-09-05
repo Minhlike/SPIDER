@@ -67,6 +67,13 @@ class CaseInsightsBuilder:
         # 6. Fetch Provider Runs
         pr_stmt = select(ProviderRunRecord).where(ProviderRunRecord.case_id == case_id).order_by(ProviderRunRecord.started_at.desc())
         provider_runs = (await session.execute(pr_stmt)).scalars().all()
+        # A later run for a different seed must not become this target's report.
+        scoped_run_ids = {t.run_id for t in task_runs if seed_target and
+                          (t.metadata_json or {}).get("seed_id") == seed_target.id}
+        scoped_run_ids.update(o.run_id for o in observations)
+        provider_runs = [r for r in provider_runs if seed_target and
+            (r.id in scoped_run_ids or seed_target.id in (r.metadata_json or {}).get("target_ids", []) or seed_target.id in
+             (r.metadata_json or {}).get("expected_sources", {}))]
         latest_run = provider_runs[0] if provider_runs else None
         if latest_run:
             task_runs = [task for task in task_runs if task.run_id == latest_run.id]
@@ -418,7 +425,7 @@ class CaseInsightsBuilder:
             }
         }
 
-        return {
+        result = {
             "case_id": case_id,
             "evidence_analysis": {**analyze(observations), "hypotheses": await hypotheses(session, case_id, projection)},
             "scope": {"target_id": seed_target.id if seed_target else None, "question": question,
@@ -430,7 +437,7 @@ class CaseInsightsBuilder:
             "coverage_report": coverage_report(task_runs, observations,
                 sorted(expected_sources)),
             "target_type": target_type,
-            "status": latest_run.status if latest_run else "COMPLETED",
+            "status": latest_run.status if latest_run else "NOT_STARTED",
             "run_id": latest_run.id if latest_run else None,
             "investigation_mode": (latest_run.metadata_json or {}).get("investigation_mode") if latest_run else None,
             "browser_assisted": bool((latest_run.metadata_json or {}).get("browser_assisted")) if latest_run else False,
@@ -456,3 +463,15 @@ class CaseInsightsBuilder:
             "provider_contributions": contributions,
             "empty_reason": empty_reason
         }
+
+        from spider.service.reporting import reader_report
+        result["reader_findings"] = [{"id": entity.id, "type": entity.observable_type,
+            "value": entity.canonical_name, "evidence_ids": [o.id for o in observations
+                if (o.observable_type, o.namespace, o.canonical_value) ==
+                   (entity.observable_type, entity.namespace, entity.canonical_name)][:5]}
+            for entity in entities[:50]]
+        result["reader_findings_truncated"] = len(entities) > 50
+        result["reader_report"] = {language: reader_report(result, language) for language in ("vi", "en")}
+        result["empty_reason"].update(message_vi=result["reader_report"]["vi"]["conclusion"],
+                                      message_en=result["reader_report"]["en"]["conclusion"])
+        return result

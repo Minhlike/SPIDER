@@ -29,7 +29,9 @@ class ExplainEngine:
                 "timestamp": ev.created_at.isoformat() if ev.created_at else None
             })
 
+        from spider.service.reporting import evidence_note
         return {
+            "reader_note": {lang: evidence_note(lang) for lang in ("vi", "en")},
             "assertion_id": asrt.id,
             "source_entity": {
                 "id": src_entity.id if src_entity else asrt.source_entity_id,

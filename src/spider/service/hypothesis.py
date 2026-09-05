@@ -21,7 +21,10 @@ class HypothesisInput(BaseModel):
 
 def public_hypothesis(row):
     evidence = row.evidence_json
-    return {"id": row.id, "statement": row.statement, "evidence": evidence,
+    from spider.service.reporting import label, evidence_note
+    return {"reader_note": {lang: label("HYPOTHESIS", lang) + ". " + evidence_note(lang)
+                             for lang in ("vi", "en")},
+            "id": row.id, "statement": row.statement, "evidence": evidence,
             "label": "HYPOTHESIS", "identity_verified": False,
             "created_at": row.created_at.replace(tzinfo=timezone.utc).isoformat(),
             "assessment": "COMPETING_EVIDENCE" if evidence["contradicting"] else "REVIEW_REQUIRED",

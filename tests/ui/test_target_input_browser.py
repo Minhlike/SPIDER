@@ -240,9 +240,9 @@ def test_research_controls_light_default_and_empty_result_explanation(offline_pa
         TikTok: {outcome: 'UNKNOWN', reason: 'BLOCKED'}
       }
     }})""")
-    assert "Instagram: cần đăng nhập" in diagnostic
-    assert "Threads: chưa xác định — rule đã lệch" in diagnostic
-    assert "TikTok: bị chặn/challenge" in diagnostic
+    assert "Instagram: Cần đăng nhập để đọc tiếp" in diagnostic
+    assert "Threads: Trang đã thay đổi, công cụ chưa đọc chính xác được" in diagnostic
+    assert "TikTok: Nguồn yêu cầu kiểm tra truy cập, chưa đọc được dữ liệu" in diagnostic
     assert not errors
 
 
@@ -255,3 +255,28 @@ def test_unsupported_input_cannot_dispatch_even_through_auto(offline_page):
     page.locator("#btn-start-investigate").click()
     expect(page.locator("#classification-explanation")).to_contain_text("Chưa khởi chạy")
     assert not dispatches and not errors
+
+
+def test_reader_report_safe_rendering_language_and_markdown_download(offline_page):
+    from spider.service.reporting import reader_report, markdown_report
+    page, _, errors = offline_page
+    insights = {"target_type": "EMAIL", "status": "PARTIAL", "run_id": "fixture",
+        "observations_count": 0, "scope": {}, "coverage_report": {"unknown": 1, "decided": 0,
+            "steps": [{"provider_id": "fixture", "state": "BLOCKED", "reason": None}]}}
+    reports = {lang: reader_report(insights, lang) for lang in ("vi", "en")}
+    reports["vi"]["sections"][0]["items"].append('<img src=x onerror="window.badReport=true">')
+    page.evaluate("value => renderReaderReport({reader_report: value})", reports)
+    expect(page.locator("#reader-report")).to_contain_text("Không thể kết luận")
+    assert page.locator("#reader-report img").count() == 0
+    assert page.evaluate("window.badReport === undefined")
+    page.evaluate("value => { currentLanguage = 'en'; renderReaderReport({reader_report: value}); }", reports)
+    expect(page.locator("#reader-report")).to_contain_text("Results and how to read")
+    document = markdown_report(reports["en"])
+    page.route("**/api/cases/fixture/report?*", lambda route: route.fulfill(status=200,
+        content_type="text/markdown", body=document))
+    page.evaluate("currentCaseId = 'fixture'")
+    with page.expect_download() as downloaded:
+        page.evaluate("exportReadableReport()")
+    assert downloaded.value.suggested_filename == "SPIDER-report.md"
+    assert Path(downloaded.value.path()).read_text(encoding="utf-8") == document
+    assert not errors

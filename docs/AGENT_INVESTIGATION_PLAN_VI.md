@@ -85,3 +85,10 @@ Increment 1 đã triển khai; báo cáo và gate tại `AGENT_INVESTIGATION_INC
 P0 tiếp theo: sửa runner reservation trước I/O. Uncover hiện kiểm tra ngân sách trước gọi runner nhưng ghi request sau khi runner trả journal; Maigret có giới hạn worker riêng và báo receipt về parent. Không được coi hai cơ chế này là reservation nguyên tử dùng chung giữa nhiều runner. Chỉ bật concurrency sau gate hard-cap/cancel/deterministic-ingest. Không sửa API-key schema để giải quyết lỗi accounting.
 
 Không có nguồn mới được ADOPT, không tuyên bố speedup hay khả năng tìm danh tính tốt hơn điều tra thủ công.
+
+## Yêu cầu ad-hoc — ngôn ngữ báo cáo (đã triển khai)
+
+Áp dụng `REPORT_LANGUAGE_VI.md`: một bộ câu chữ VI/EN cho UI, Markdown tải về,
+JSON/bundle, CLI và phần diễn giải MCP. Phân biệt dữ liệu đã ghi nhận, nhận định,
+kết quả thử nghiệm và điều chưa kiểm chứng; giải thích căn cứ và giới hạn trước
+khi đưa ra bước tiếp theo. 388 test ngoại tuyến PASS; không coi đây là hoàn tất M6.

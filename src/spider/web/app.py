@@ -148,6 +148,11 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(LocalAccessMiddleware)
 
+    @app.get("/api/report-vocabulary")
+    async def report_vocabulary():
+        from spider.service.reporting import vocabulary
+        return {language: vocabulary(language) for language in ("vi", "en")}
+
     @app.get("/api/input-catalogue")
     async def supported_inputs(request: Request):
         return {"inputs": input_catalogue(get_service(request))}

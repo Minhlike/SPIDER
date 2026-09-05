@@ -2,7 +2,7 @@
 import hashlib
 import json
 from sqlalchemy import select
-from spider.storage.schema import EvidenceRefRecord, ProviderRunRecord
+from spider.storage.schema import CaseRecord, EvidenceRefRecord, ProviderRunRecord
 from spider.service.projection import project
 from spider.service.evidence_analysis import analyze, public_url
 from spider.service.review import hypotheses
@@ -48,5 +48,11 @@ async def evidence_bundle(session, case_id, target_id=None, question="all"):
                   "ledger": (r.metadata_json or {}).get("budget_ledger")} for r in sorted(runs, key=lambda r: r.id)],
         "analysis": {**analyze(observations), "hypotheses": await hypotheses(session, case_id, view)},
         "included_raw_artifacts": False}
+    from spider.service.insights import CaseInsightsBuilder
+    case = await session.get(CaseRecord, case_id)
+    if case is None:
+        raise ValueError("Case not found")
+    insights = await CaseInsightsBuilder.build_insights(session, case_id, case, target_id, question)
+    payload["reader_report"] = insights["reader_report"]
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     return {"manifest": payload, "manifest_sha256": hashlib.sha256(encoded).hexdigest()}
