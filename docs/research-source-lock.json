@@ -1,0 +1,36 @@
+{
+  "review_date": "2026-09-03",
+  "label": "FACT",
+  "sources": [
+    {
+      "repository": "megadose/holehe",
+      "commit": "14da70f588538936b20d238783c5e28a0772a2b3",
+      "license": "GPL-3.0",
+      "license_url": "https://raw.githubusercontent.com/megadose/holehe/14da70f588538936b20d238783c5e28a0772a2b3/LICENSE.md",
+      "license_sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "production_adoption": "DEFER",
+      "live_accuracy": "NOT_YET_VERIFIED",
+      "terms_per_service": "NOT_YET_VERIFIED"
+    },
+    {
+      "repository": "iojw/socialscan",
+      "commit": "5ae42d0f82b0ebd717b3ae52b693b4ececa902b1",
+      "license": "MPL-2.0",
+      "license_url": "https://raw.githubusercontent.com/iojw/socialscan/5ae42d0f82b0ebd717b3ae52b693b4ececa902b1/LICENSE",
+      "license_sha256": "c76f740d1521b9bed9ca7a04ad526c310493c62621b1341d623b431736533b30",
+      "production_adoption": "DEFER",
+      "live_accuracy": "NOT_YET_VERIFIED",
+      "terms_per_service": "NOT_YET_VERIFIED"
+    },
+    {
+      "repository": "WebBreacher/WhatsMyName",
+      "commit": "e62338e4fc88536a330733d355a9d33a3a1697c6",
+      "license": "CC-BY-SA-4.0",
+      "license_url": "https://raw.githubusercontent.com/WebBreacher/WhatsMyName/e62338e4fc88536a330733d355a9d33a3a1697c6/LICENSE.md",
+      "license_sha256": "3eab49aa5cabc24918c11aab97dfe8873e0641317b898d989c993c4283a4d84b",
+      "production_adoption": "DEFER",
+      "live_accuracy": "NOT_YET_VERIFIED",
+      "terms_per_service": "NOT_YET_VERIFIED"
+    }
+  ]
+}

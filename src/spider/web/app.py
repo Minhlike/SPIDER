@@ -1,7 +1,8 @@
 import os
+import time
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends
+from fastapi import BackgroundTasks, FastAPI, WebSocket, WebSocketDisconnect, Request, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,9 +19,56 @@ from spider.web.api.graph import router as graph_router
 from spider.web.api.explain import router as explain_router
 from spider.web.api.providers import router as providers_router
 from spider.web.api.settings import router as settings_router
+from spider.web.api.network import router as network_router
 from spider.web.api.settings import load_settings
 from spider.storage.key_store import KeyStoreError
 from spider.models.classifier import TargetClassifier
+from spider.web.security import LocalAccessMiddleware
+from spider.capability.applicability import assess_provider
+from spider.capability.scopes import capability_allowed, resolve_investigation_mode
+
+
+def source_preflight(service: SpiderService, observable_type, requested_mode=None, browser_assisted=False):
+    mode = resolve_investigation_mode([observable_type], requested_mode)
+    sources = []
+    for capability in service.capability_registry.get_capabilities_for_input(observable_type):
+        if not capability_allowed(mode, observable_type, capability.name):
+            continue
+        if capability.name == "BROWSER_PERSONAL_DISCOVERY" and not browser_assisted:
+            continue
+        for provider_id in capability.default_providers:
+            adapter = service.provider_manager.get_adapter(provider_id)
+            if adapter is None:
+                continue
+            decision = assess_provider(adapter, observable_type, capability.name)
+            sources.append({
+                "provider_id": provider_id,
+                "capability": capability.name,
+                "network_class": adapter.network_class().value,
+                "request_accounting": "SUPPORTED" if adapter.request_budget_supported else "UNMETERED_BLOCKED",
+                "credential_scope": ("INTERNET_ASSET" if provider_id == "uncover"
+                                     else "IP_ENRICHMENT" if provider_id == "whatismyip"
+                                     else "SIGNED_IN_BROWSER_SESSION" if provider_id == "coccoc_browser"
+                                     else "NOT_REQUIRED"),
+                "identifier_disclosure": ("SHA256_EMAIL" if provider_id == "gravatar_public"
+                                          else "RAW_TARGET"),
+                "applicability": "APPLICABLE" if decision.applicable else "NOT_APPLICABLE",
+                "applicability_reason": decision.reason,
+            })
+    # A provider may implement several matching capabilities but executes once per observable.
+    unique = {}
+    for item in sources:
+        existing = unique.get(item["provider_id"])
+        if existing is None or (item["applicability"] == "APPLICABLE" and
+                                existing["applicability"] != "APPLICABLE"):
+            unique[item["provider_id"]] = item
+    return {
+        "investigation_mode": mode.value,
+        "sources": list(unique.values()),
+        "internet_api_keys_applicable": any(item["provider_id"] == "uncover" and
+                                             item["applicability"] == "APPLICABLE"
+                                             for item in unique.values()),
+    }
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -46,6 +94,13 @@ def get_service(request: Request) -> SpiderService:
         srv = create_spider_service(mode="production")
         request.app.state._fallback_service = srv
     return request.app.state._fallback_service
+
+
+def _signal_launcher_shutdown(state):
+    # BackgroundTasks runs after the HTTP response has been sent.
+    time.sleep(0.15)
+    from spider.launcher import signal_stop
+    signal_stop(state)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -90,6 +145,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(LocalAccessMiddleware)
 
     # Target Classifier Endpoint (supports both GET and POST)
     @app.api_route("/api/classify", methods=["GET", "POST"])
@@ -106,7 +162,18 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=422, detail=exc.detail()) from None
         except (ValueError, TypeError):
             raise HTTPException(status_code=422, detail={"code": "invalid_target", "message": "Invalid classification request."}) from None
-        return {**res.model_dump(mode="json"), "target": raw, "type": res.detected_type.value}
+        try:
+            preflight = source_preflight(
+                get_service(request), res.detected_type, payload.get("investigation_mode"),
+                bool(payload.get("browser_assisted", False)),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail={
+                "code": "incompatible_investigation_mode",
+                "message": str(exc),
+            }) from None
+        return {**res.model_dump(mode="json"), "target": raw, "type": res.detected_type.value,
+                "source_preflight": preflight}
 
     # API Routers
     app.include_router(cases_router, prefix="/api")
@@ -115,6 +182,7 @@ def create_app() -> FastAPI:
     app.include_router(explain_router, prefix="/api")
     app.include_router(providers_router, prefix="/api")
     app.include_router(settings_router, prefix="/api")
+    app.include_router(network_router, prefix="/api")
 
     # Health Check
     @app.get("/api/health")
@@ -138,6 +206,18 @@ def create_app() -> FastAPI:
         finally:
             if is_temp:
                 await srv.stop()
+
+    @app.post("/api/system/shutdown", status_code=202)
+    async def shutdown_app(background_tasks: BackgroundTasks):
+        from fastapi import HTTPException
+        from spider.launcher import read_state
+        state = read_state()
+        if not state or state.get("pid") != os.getpid():
+            raise HTTPException(status_code=409, detail=(
+                "SPIDER is not controlled by the verified project launcher; no process was stopped."
+            ))
+        background_tasks.add_task(_signal_launcher_shutdown, state)
+        return {"status": "SHUTDOWN_REQUESTED", "pid": state["pid"]}
 
     # WebSocket Real-Time Events
     @app.websocket("/ws")

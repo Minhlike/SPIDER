@@ -1,7 +1,7 @@
 import asyncio
 import time
 from spider.models.base import utc_now
-from spider.storage.schema import TaskRunRecord
+from spider.storage.schema import TaskRunRecord, ProviderAuditRecord
 from typing import Dict, List, Optional
 from spider.providers.base import BaseProviderAdapter, ProviderHealth, ProviderExecutionResult
 from spider.models.enums import ObservableType, NetworkClass, ProviderState, ExecutionStatus
@@ -13,6 +13,8 @@ from spider.storage.repositories.artifact_repo import ArtifactRepository
 from spider.ingest.queue import IngestQueue
 from spider.storage.writer import SingleDBWriter
 from spider.storage.repositories.execution_repo import ExecutionRepository
+from spider.models.budget import RequestBudgetExceeded
+from spider.service.egress import EgressRecorder
 
 class ProviderManager:
     def __init__(self, artifact_repo: ArtifactRepository, ingest_queue: IngestQueue, db_writer: SingleDBWriter):
@@ -41,8 +43,25 @@ class ProviderManager:
             except Exception as e:
                 results[pid] = ProviderHealth(
                     state=ProviderState.BROKEN,
-                    message=f"Health check failed: {str(e)}"
+                    message="Provider health check failed"
                 )
+            if self.db_writer._running:
+                from datetime import timezone
+                async with self.db_writer.db_manager.session_factory() as session:
+                    audit = await session.get(ProviderAuditRecord, pid)
+                if audit:
+                    health = results[pid]
+                    health.details["canary_state"] = audit.state
+                    if audit.state == "QUARANTINED":
+                        health.state = ProviderState.QUARANTINED
+                        health.message = "Provider quarantined after canary failures"
+                    elif audit.state == "CONTRACT_PASSED" and (audit.provider_version, audit.adapter_version) == (adapter.version(), adapter.adapter_version()):
+                        payload = health.model_dump()
+                        payload.update(provider_version=adapter.version(), adapter_version=adapter.adapter_version(), contract_verified=True,
+                            verification_evidence={"contract": {"provider_version": audit.provider_version,
+                                "adapter_version": audit.adapter_version, "checked_at": audit.checked_at.replace(tzinfo=timezone.utc),
+                                "artifact_sha256": audit.report_sha256}})
+                        results[pid] = ProviderHealth.model_validate(payload)
         return results
 
     async def execute_task(
@@ -59,24 +78,53 @@ class ProviderManager:
 
         task.started_at = utc_now()
         started = time.perf_counter()
+        task.metadata.update(provider_version=adapter.version(), adapter_version=adapter.adapter_version())
         await self.db_writer.submit(lambda session: ExecutionRepository.create_task_run(session, task))
+        ledger = options.get("request_ledger")
+        starting_request_count = ledger.requests_count if ledger is not None else 0
+        if ledger is not None:
+            options["egress_recorder"] = EgressRecorder(self.db_writer, task, target, lineage,
+                options.pop("derivation", "DERIVED"), ledger._fingerprint_salt)
+
+        async def persist_budget():
+            if ledger is not None:
+                from spider.storage.schema import ProviderRunRecord
+                async def write(session):
+                    rec = await session.get(ProviderRunRecord, task.run_id)
+                    if rec:
+                        rec.metadata_json = {**(rec.metadata_json or {}), "budget_ledger": ledger.model_dump(mode="json")}
+                await self.db_writer.submit(write)
 
         async def on_progress(coverage):
             async def record(session):
                 rec = await session.get(TaskRunRecord, task.id)
-                rec.metadata_json = {"coverage": coverage, "duration_ms": (time.perf_counter()-started)*1000}
+                rec.metadata_json = {**task.metadata, "coverage": coverage, "duration_ms": (time.perf_counter()-started)*1000}
             await self.db_writer.submit(record)
+            await persist_budget()
 
         # Give adapters the same budget; a small grace period allows worker cleanup.
         try:
-            result = await asyncio.wait_for(
-                adapter.execute(target, lineage, timeout_seconds=timeout_seconds,
-                                on_progress=on_progress, **options),
-                timeout=timeout_seconds + 2
-            )
+            async with self.db_writer.db_manager.session_factory() as session:
+                audit = await session.get(ProviderAuditRecord, task.provider_id)
+            if audit and audit.state == "QUARANTINED":
+                result = ProviderExecutionResult(raw_content=b"", observations=[], outcome="PARTIAL",
+                    error_message="Provider quarantined after canary failures", metadata={"budget_reason": "QUARANTINED"})
+            elif options.get("request_ledger") is not None and not adapter.request_budget_supported:
+                result = ProviderExecutionResult(raw_content=b"", observations=[], outcome="PARTIAL",
+                    error_message="Provider blocked: network request accounting unavailable",
+                    metadata={"budget_reason": "UNMETERED_PROVIDER"})
+            else:
+                result = await asyncio.wait_for(
+                    adapter.execute(target, lineage, timeout_seconds=timeout_seconds,
+                                    on_progress=on_progress, **options),
+                    timeout=timeout_seconds + 2
+                )
+        except RequestBudgetExceeded:
+            result = ProviderExecutionResult(raw_content=b"", observations=[], outcome="PARTIAL",
+                error_message="Network request budget exhausted", metadata={"budget_reason": "REQUEST_LIMIT"})
         except asyncio.TimeoutError:
             result = ProviderExecutionResult(raw_content=b"Execution timed out", observations=[],
-                exit_code=124, error_message="Task execution timed out", outcome="FAILED")
+                exit_code=124, error_message="Task execution timed out", outcome="FAILED", metadata={"collection_state": "TIMEOUT"})
         except asyncio.CancelledError:
             async def cancel(session):
                 rec = await session.get(TaskRunRecord, task.id)
@@ -87,6 +135,24 @@ class ProviderManager:
         except Exception:
             result = ProviderExecutionResult(raw_content=b"Provider execution failed", observations=[],
                 exit_code=1, error_message="Provider execution failed", outcome="FAILED")
+        finally:
+            await persist_budget()
+
+        if ledger is not None:
+            result.metadata["request_count"] = max(0, ledger.requests_count - starting_request_count)
+
+        ledger, budget = options.get("request_ledger"), options.get("execution_budget")
+        if any(obs.lineage.case_id != task.case_id for obs in result.observations):
+            result = ProviderExecutionResult(raw_content=b"", observations=[], outcome="FAILED",
+                                             error_message="Observation case mismatch")
+        if ledger is not None:
+            accepted = [obs for obs in result.observations if ledger.admit_entity(budget, task.case_id, obs.observable)]
+            dropped = len(result.observations) - len(accepted)
+            result.observations = accepted
+            if dropped:
+                result.outcome = "PARTIAL"
+                result.metadata.update(budget_reason="ENTITY_LIMIT", budget_dropped=dropped)
+                result.error_message = "Entity budget exhausted; partial results retained"
 
         # Store raw artifact to disk with SHA-256
         artifact = self.artifact_repo.store_raw_bytes(
@@ -117,7 +183,7 @@ class ProviderManager:
             rec.raw_artifact_id = task.raw_artifact_id
             rec.completed_at = utc_now()
             rec.error_message = result.error_message
-            rec.metadata_json = dict(result.metadata, duration_ms=(time.perf_counter()-started)*1000)
+            rec.metadata_json = dict(task.metadata, **result.metadata, duration_ms=(time.perf_counter()-started)*1000)
             if not await ExecutionRepository.has_executed(session, task.case_id, task.execution_key_hash):
                 await ExecutionRepository.mark_executed(session, task.case_id, task.execution_key_hash, task.status.value)
 

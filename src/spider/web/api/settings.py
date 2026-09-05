@@ -34,7 +34,11 @@ SETTINGS_FILE = Path("data/settings.json")
 SETTINGS_LOCK = RLock()
 KeyName = Literal["shodan", "censys_id", "censys_secret", "securitytrails", "virustotal",
                   "SHODAN", "CENSYS", "FOFA", "SHODAN_API_KEY", "CENSYS_API_TOKEN",
-                  "CENSYS_ORGANIZATION_ID", "FOFA_EMAIL", "FOFA_KEY"]
+                  "CENSYS_ORGANIZATION_ID", "FOFA_EMAIL", "FOFA_KEY",
+                  "WHATISMYIP_API_KEY"]
+
+ALL_REQUIREMENTS = {**REQUIREMENTS, "whatismyip": ("WHATISMYIP_API_KEY",)}
+ALL_OPTIONAL_FIELDS = {**OPTIONAL_FIELDS, "whatismyip": ()}
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "language": "vi",
@@ -52,14 +56,16 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "metabigor": True,
         "spiderfoot": True,
         "maigret": True,
-        "uncover": True
+        "uncover": True,
+        "whatismyip": True
     },
     "api_keys": {
         "shodan": "",
         "censys_id": "",
         "censys_secret": "",
         "securitytrails": "",
-        "virustotal": ""
+        "virustotal": "",
+        "WHATISMYIP_API_KEY": ""
     }
 }
 
@@ -118,10 +124,10 @@ class CheckCache:
     def __init__(self):
         self.salt = secrets.token_bytes(32)
         self.entries = {}
-        self.locks = {engine: Lock() for engine in REQUIREMENTS}
+        self.locks = {engine: Lock() for engine in ALL_REQUIREMENTS}
 
     def fingerprint(self, engine, keys):
-        fields = REQUIREMENTS[engine] + tuple(OPTIONAL_FIELDS.get(engine, ()))
+        fields = ALL_REQUIREMENTS[engine] + tuple(ALL_OPTIONAL_FIELDS.get(engine, ()))
         value = json.dumps([str(SETTINGS_FILE.resolve()), *[keys.get(k, "") for k in fields]])
         return hmac.new(self.salt, value.encode(), hashlib.sha256).digest()
 
@@ -140,6 +146,11 @@ def public_settings(curr):
     result["api_keys"] = {k: "********" if v and v.strip() else "" for k, v in curr["api_keys"].items()}
     keys = canonical_keys(curr["api_keys"])
     result["credential_status"] = engine_presence(keys)
+    result["credential_status"]["whatismyip"] = {
+        "configured": bool(keys.get("WHATISMYIP_API_KEY")),
+        "missing_fields": ([] if keys.get("WHATISMYIP_API_KEY") else ["WHATISMYIP_API_KEY"]),
+        "optional_fields": [],
+    }
     for engine, status in result["credential_status"].items():
         status["test"] = CHECK_CACHE.recent(engine, keys)
     result["default_policy_profile"] = curr.get("default_profile", "passive_standard")
@@ -205,7 +216,7 @@ def _update_settings(req: UpdateSettingsRequest):
 
 
 @router.post("/test/{engine}")
-async def test_engine_access(engine: Literal["shodan", "censys", "fofa"]):
+async def test_engine_access(engine: Literal["shodan", "censys", "fofa", "whatismyip"]):
     from spider.providers.uncover.api_access import run_engine
     keys = canonical_keys(load_settings()["api_keys"])
     cached = CHECK_CACHE.recent(engine, keys, max_age=30)
@@ -215,7 +226,11 @@ async def test_engine_access(engine: Literal["shodan", "censys", "fofa"]):
     if not lock.acquire(blocking=False):
         raise HTTPException(409, "A check is already running for this engine")
     try:
-        result = await run_engine(engine, keys)
+        if engine == "whatismyip":
+            from spider.providers.whatismyip.adapter import check_api_key
+            result = await check_api_key(keys.get("WHATISMYIP_API_KEY", ""))
+        else:
+            result = await run_engine(engine, keys)
         result.pop("results", None)
         result.update(checked_at=datetime.now(timezone.utc).isoformat(), cached=False)
         # Saving another key while the request is in flight must not show old success.

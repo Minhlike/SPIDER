@@ -4,7 +4,7 @@ from spider.models.enums import ObservableType
 from spider.models.budget import ExecutionBudget
 
 @pytest.mark.asyncio
-async def test_email_pipeline_not_a_dead_end(tmp_path):
+async def test_email_pipeline_finds_public_profiles_without_infrastructure_leakage(tmp_path):
     db_file = str(tmp_path / "email_test.db")
     service = create_spider_service(mode="production", db_path=db_file)
     await service.start()
@@ -25,12 +25,14 @@ async def test_email_pipeline_not_a_dead_end(tmp_path):
         entities = await service.get_case_entities(case_id)
         assertions = await service.get_case_assertions(case_id)
         
-        # Acceptance: Valid email must NOT result in 1 entity and 0 assertions!
+        # Personal mode may return public profile entities but must not turn the
+        # email domain's infrastructure into personal findings.
         assert len(entities) >= 2, "Email investigation produced fewer than 2 entities"
         assert len(assertions) >= 1, "Email investigation produced 0 assertions"
-        
+
         types = {e["type"] for e in entities}
         assert "EMAIL" in types
-        assert "DOMAIN" in types
+        assert "DOMAIN" not in types
+        assert {"ACCOUNT", "URL"} & types
     finally:
         await service.stop()

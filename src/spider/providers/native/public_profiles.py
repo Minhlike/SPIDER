@@ -9,9 +9,12 @@ from spider.models.enums import NetworkClass, ObservableType, ProviderState
 from spider.models.observable import NormalizedObservable
 from spider.models.observation import Observation
 from spider.providers.base import BaseProviderAdapter, ProviderExecutionResult, ProviderHealth
+from spider.providers.transport import provider_client
+from spider.models.budget import RequestBudgetExceeded
 
 
 class PublicProfilesAdapter(BaseProviderAdapter):
+    request_budget_supported = True
     def __init__(self, transport=None):
         self.transport = transport
 
@@ -31,12 +34,14 @@ class PublicProfilesAdapter(BaseProviderAdapter):
 
     async def execute(self, target, lineage, **kwargs):
         started = time.perf_counter()
+        ledger = kwargs.get("request_ledger")
+        starting_requests = ledger.requests_count if ledger is not None else 0
         rows, requests, checked = [], 0, 0
         selected, incomplete, error = 0, False, None
         headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": self.version(),
                    "User-Agent": "SPIDER-public-footprint/2.1"}
         try:
-            async with httpx.AsyncClient(base_url="https://api.github.com", headers=headers,
+            async with provider_client(self.provider_id(), kwargs, base_url="https://api.github.com", headers=headers,
                     timeout=min(10, kwargs.get("timeout_seconds", 30)), follow_redirects=False,
                     transport=self.transport) as client:
                 if target.type == ObservableType.EMAIL:
@@ -56,7 +61,8 @@ class PublicProfilesAdapter(BaseProviderAdapter):
                         incomplete = True
                         continue
                     requests += 1
-                    response = await client.get(f"/users/{login}")
+                    response = await client.get(f"/users/{login}", extensions={"spider_identifier":
+                        NormalizedObservable(type=ObservableType.USERNAME, value=login, namespace="github")})
                     if response.status_code == 404:
                         checked += 1
                         continue
@@ -78,18 +84,23 @@ class PublicProfilesAdapter(BaseProviderAdapter):
                         "match_basis": "exact_public_email" if exact else "username_only",
                         "identity_verified": False,
                         "public_email": public_email if exact else None})
+        except RequestBudgetExceeded:
+            error, incomplete = "Network request budget exhausted", True
         except httpx.HTTPStatusError as exc:
             error = "GitHub rate limited or denied the request" if exc.response.status_code in (403, 429) else "GitHub public profile request failed"
             incomplete = True
         except (httpx.HTTPError, ValueError, TypeError, AttributeError):
             error, incomplete = "GitHub public profile response unavailable or invalid", True
         raw = json.dumps({"profiles": rows}, ensure_ascii=False).encode()
+        if ledger is not None:
+            requests = ledger.requests_count - starting_requests
         observations = self.parse(raw, lineage)
         return ProviderExecutionResult(raw_content=raw, observations=observations,
             exit_code=1 if error and not rows else 0,
             outcome="PARTIAL" if incomplete else "COMPLETED", error_message=error,
             duration_ms=(time.perf_counter()-started)*1000,
             metadata={"requests": requests, "profiles_checked": checked,
+                      "specific_negative_verified": target.type == ObservableType.USERNAME and checked == 1 and not rows and not incomplete,
                       "candidates_selected": selected, "incomplete": incomplete,
                       "scope": "GitHub public profiles"},
             raw_items_count=checked, accepted_count=len(observations))
@@ -112,11 +123,14 @@ class PublicProfilesAdapter(BaseProviderAdapter):
             # An explicitly published email can provide a handle for the next depth.
             if is_email: values.append((ObservableType.USERNAME, login, account))
             for typ, value, parent in values:
-                observations.append(Observation(observable=self.normalize({"type": typ, "value": value}),
+                observations.append(Observation(observable=self.normalize({"type": typ, "value": value,
+                        "namespace": "github" if typ == ObservableType.ACCOUNT else ""}),
                     lineage=lineage.model_copy(update={"upstream_source": "github_public_profile",
-                        "upstream_family": "GITHUB_PUBLIC", "parent_observable_value": parent}),
+                        "upstream_family": "GITHUB_PUBLIC", "parent_observable_value": parent,
+                        "parent_observable_type": ObservableType.ACCOUNT if parent == account else lineage.parent_observable_type,
+                        "parent_namespace": "github" if parent == account else lineage.parent_namespace}),
                     confidence=0.95 if is_email else 0.80, raw_data=row))
         return observations
 
     def normalize(self, raw_item):
-        return NormalizedObservable(type=raw_item["type"], value=raw_item["value"])
+        return NormalizedObservable(type=raw_item["type"], value=raw_item["value"], namespace=raw_item.get("namespace", ""))

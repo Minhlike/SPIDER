@@ -25,6 +25,7 @@ def public_sites(folder, names=None):
             if name == "Present" and self.path.rsplit("/", 1)[-1] != "fixture-user": code = 404
             body = (b'<html><head><meta property="og:title" content="Fixture Public Name">'
                     b'<meta property="og:description" content="Public fixture biography"></head>'
+                    b'<body><a rel="me" href="https://linked.fixture.test/owner?tracking=discard">Link</a></body>'
                     b'<body>PROFILE_PRESENT</body></html>') if name == "Present" else b"PROFILE_ABSENT"
             if name == "Slow": time.sleep(5)
             self.send_response(code)

@@ -70,3 +70,23 @@ def test_save_failure_and_cancel_clear_passwords(offline_page):
     expect(page.locator("#key-state-shodan")).to_contain_text("Chưa xác minh thành công")
     expect(page.locator("#setting-key-shodan")).to_have_value("")
     assert not errors
+
+
+def test_whatismyip_key_save_test_and_delete(offline_page, monkeypatch):
+    from spider.providers.whatismyip import adapter
+    page, _, errors = offline_page
+    async def check(key):
+        assert key == "synthetic-browser-whatismyip"
+        return {"engine": "whatismyip", "state": "VALID", "reason": "REQUEST_ACCEPTED",
+                "scope": "account", "cached": False}
+    monkeypatch.setattr(adapter, "check_api_key", check)
+    open_modal(page)
+    page.locator("#setting-key-whatismyip").fill("synthetic-browser-whatismyip")
+    page.locator('[data-api-engine="whatismyip"] [data-key-test]').click()
+    expect(page.locator("#key-state-whatismyip")).to_contain_text("VALID")
+    expect(page.locator("#setting-key-whatismyip")).to_have_value("")
+    assert "synthetic-browser-whatismyip" not in page.locator("body").inner_text()
+    assert "synthetic-browser-whatismyip" not in settings.SETTINGS_FILE.read_text()
+    page.locator('[data-api-engine="whatismyip"] [data-key-delete]').click()
+    expect(page.locator("#key-state-whatismyip")).to_contain_text("Thiếu trường")
+    assert not errors

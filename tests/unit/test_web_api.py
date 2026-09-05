@@ -25,6 +25,33 @@ def test_api_providers_list(client):
     assert "spiderfoot" in ids
     assert "maigret" in ids
     assert "uncover" in ids
+    assert "gravatar_public" in ids
+
+def test_email_preflight_discloses_gravatar_hash_egress(client):
+    response = client.post("/api/classify", json={"target": "owner@example.invalid"})
+    assert response.status_code == 200
+    preflight = response.json()["source_preflight"]
+    gravatar = next(source for source in preflight["sources"]
+                    if source["provider_id"] == "gravatar_public")
+    assert gravatar["applicability"] == "APPLICABLE"
+    assert gravatar["request_accounting"] == "SUPPORTED"
+    assert gravatar["credential_scope"] == "NOT_REQUIRED"
+    assert gravatar["identifier_disclosure"] == "SHA256_EMAIL"
+    assert preflight["investigation_mode"] == "PERSONAL_FOOTPRINT"
+    assert {source["provider_id"] for source in preflight["sources"]} == {
+        "gravatar_public", "github_public"
+    }
+
+
+def test_coccoc_preflight_requires_explicit_browser_action(client):
+    normal = client.post("/api/classify", json={"target": "fixture-user"}).json()
+    assert "coccoc_browser" not in {source["provider_id"] for source in normal["source_preflight"]["sources"]}
+    deep = client.post("/api/classify", json={
+        "target": "fixture-user", "browser_assisted": True
+    }).json()
+    browser = next(source for source in deep["source_preflight"]["sources"]
+                   if source["provider_id"] == "coccoc_browser")
+    assert browser["credential_scope"] == "SIGNED_IN_BROWSER_SESSION"
 
 def test_api_case_lifecycle(client):
     # 1. Create Case

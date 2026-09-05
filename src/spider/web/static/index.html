@@ -55,6 +55,9 @@
         <button class="header-btn" onclick="openSettingsModal()" title="Cài đặt hệ thống / Settings">
           <span>&#x2699;</span> <span data-i18n="settings_title">Cài đặt</span>
         </button>
+        <button class="header-btn" id="btn-shutdown" onclick="shutdownSpider()" title="Tắt SPIDER an toàn / Safely stop SPIDER">
+          <span>&#x23FB;</span> <span data-i18n="btn_shutdown">Tắt SPIDER</span>
+        </button>
       </div>
     </header>
 
@@ -133,6 +136,18 @@
               <option value="ACCOUNT">Username@platform</option>
             </select>
             <p id="classification-explanation" role="status" aria-live="polite" style="font-size:13px; margin-top:8px; color:var(--text-secondary);"></p>
+            <p id="public-ip-status" role="status" aria-live="polite" style="font-size:13px; margin-top:6px; color:var(--text-muted);"></p>
+            <p id="source-preflight" role="status" aria-live="polite" style="font-size:13px; margin-top:6px; color:var(--text-muted);"></p>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="investigation-mode-select">Mục đích điều tra</label>
+            <select id="investigation-mode-select" class="form-select" onchange="onTargetTypeChanged()">
+              <option value="AUTO" selected>Tự chọn theo đầu vào</option>
+              <option value="PERSONAL_FOOTPRINT">Dấu vết cá nhân — email / username</option>
+              <option value="INFRASTRUCTURE">Hạ tầng Internet — domain / IP / ASN</option>
+            </select>
+            <p class="form-hint">Email và username mặc định chỉ tìm hồ sơ công khai; DNS và công cụ hạ tầng chỉ chạy khi chọn Hạ tầng Internet.</p>
           </div>
 
           <div class="form-group">
@@ -168,11 +183,12 @@
           <div class="form-group">
             <label class="form-label" for="username-sites-select">Phạm vi tìm username</label>
             <select id="username-sites-select" class="form-select">
-              <option value="50">Nhanh — 50 website</option>
-              <option value="500" selected>Tiêu chuẩn — 500 website</option>
-              <option value="0">Tất cả website đang bật trong danh mục Maigret</option>
+              <option value="VN_COMMON_CORE" selected>Phổ biến tại Việt Nam — 10 nguồn kiểm tra trực tiếp</option>
+              <option value="GLOBAL_50">Mở rộng — 50 website</option>
+              <option value="GLOBAL_500">Rộng — 500 website</option>
+              <option value="GLOBAL_ALL">Tất cả website đang bật trong danh mục Maigret</option>
             </select>
-            <p class="form-hint">Dừng khi hết thời gian; giữ kết quả đã kiểm tra. Phạm vi phụ thuộc danh mục và khả năng truy cập từng website.</p>
+            <p class="form-hint">Maigret kiểm tra trực tiếp: Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, GitHub, Reddit, Pinterest và Telegram. Cốc Cốc bổ sung X/Twitter, Zalo, Tinhte và VOZ.</p>
           </div>
 
           <div class="form-group" style="display:flex; align-items:center; gap:8px; margin-top:14px;">
@@ -182,7 +198,10 @@
 
           <div style="margin-top:24px; display:flex; gap:12px;">
             <button class="btn btn-primary" id="btn-start-investigate" onclick="startInvestigation()">
-              <span>&#x25B6;</span> <span data-i18n="btn_start">Bắt đầu điều tra</span>
+              <span>&#x25B6;</span> <span data-i18n="btn_start">Bắt đầu điều tra tự động</span>
+            </button>
+            <button class="btn btn-secondary" id="btn-browser-investigate" style="display:none;" onclick="startInvestigation(false)">
+              <span>&#x1F310;</span> Chỉ tìm thụ động
             </button>
             <button class="btn btn-secondary" onclick="switchView('dashboard')" data-i18n="btn_cancel">Hủy bỏ</button>
           </div>
@@ -231,6 +250,23 @@
 
         <!-- TAB 1: SUMMARY (TỔNG QUAN) -->
         <div id="case-tab-content-summary" class="case-tab-content active">
+          <div class="card" style="padding:16px;margin-bottom:16px;">
+            <label for="insight-target">Mục tiêu / Target</label>
+            <select id="insight-target" onchange="refreshCurrentCase()"><option value="">Chọn mục tiêu</option></select>
+            <label for="insight-question">Câu hỏi / Question</label>
+            <select id="insight-question" onchange="refreshCurrentCase()">
+              <option value="all">Tất cả bằng chứng / All evidence</option>
+              <option value="public_profiles">Hồ sơ công khai / Public profiles</option>
+              <option value="infrastructure">Hạ tầng / Infrastructure</option>
+            </select>
+            <p id="scope-explanation"></p>
+            <p id="egress-explanation"></p>
+            <details><summary>Dữ liệu đã truyền / Data disclosures</summary><div id="egress-events"></div></details>
+            <p id="coverage-explanation"></p>
+            <details><summary>Phạm vi đã kiểm tra / Coverage</summary><div id="coverage-steps"></div></details>
+            <details><summary>Liên kết và lịch sử bằng chứng / Links and evidence history</summary><pre id="evidence-analysis" style="white-space:pre-wrap;"></pre></details>
+            <a id="evidence-bundle-download" class="btn btn-secondary" download>Xuất gói bằng chứng / Export evidence bundle</a>
+          </div>
           <!-- Summary Metrics -->
           <div class="kpi-grid">
             <div class="kpi-card">
@@ -514,6 +550,15 @@
           <p id="key-state-fofa" role="status" aria-live="polite"></p>
           <button type="button" class="btn btn-secondary" onclick="testApiEngine('fofa')" data-key-test>Lưu và thử kết nối</button>
           <button type="button" class="btn btn-secondary" onclick="deleteApiEngine('fofa')" data-key-delete>Xóa khóa đã lưu</button>
+        </fieldset>
+        <fieldset class="form-group" data-api-engine="whatismyip">
+          <legend>WhatIsMyIP</legend>
+          <label class="form-label" for="setting-key-whatismyip">API Key</label>
+          <input type="password" id="setting-key-whatismyip" class="form-input" autocomplete="new-password" spellcheck="false">
+          <p class="form-hint">Dùng API chính thức để bổ sung vị trí gần đúng, ISP, ASN và phân loại proxy/VPN cho địa chỉ IP.</p>
+          <p id="key-state-whatismyip" role="status" aria-live="polite"></p>
+          <button type="button" class="btn btn-secondary" onclick="testApiEngine('whatismyip')" data-key-test>Lưu và thử kết nối</button>
+          <button type="button" class="btn btn-secondary" onclick="deleteApiEngine('whatismyip')" data-key-delete>Xóa khóa đã lưu</button>
         </fieldset>
       </div>
       <div class="modal-footer">

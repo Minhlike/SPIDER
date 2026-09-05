@@ -6,6 +6,12 @@ capabilities:
     input_types: ["EMAIL", "USERNAME"]
     output_types: ["ACCOUNT", "URL", "USERNAME"]
 
+  EMAIL_PUBLIC_PROFILE_LOOKUP:
+    description: "Public profile metadata directly linked to a derived email identifier"
+    default_providers: ["gravatar_public"]
+    input_types: ["EMAIL"]
+    output_types: ["ACCOUNT", "URL"]
+
   DNS_ENUMERATION:
     description: "Native forward and reverse DNS enumeration (A, AAAA, MX, NS, TXT, SOA, PTR)"
     default_providers: ["native_dns"]
@@ -54,8 +60,20 @@ capabilities:
     input_types: ["USERNAME"]
     output_types: ["ACCOUNT", "URL"]
 
+  BROWSER_PERSONAL_DISCOVERY:
+    description: "Explicit, visible browser-assisted discovery using the signed-in Cốc Cốc profile"
+    default_providers: ["coccoc_browser"]
+    input_types: ["EMAIL", "USERNAME"]
+    output_types: ["ACCOUNT", "URL"]
+
   INTERNET_INTELLIGENCE:
     description: "Internet-wide search engine and asset discovery"
     default_providers: ["uncover"]
     input_types: ["DOMAIN", "IP_ADDRESS", "ORGANIZATION"]
     output_types: ["IP_ADDRESS", "HOSTNAME", "URL", "CERTIFICATE"]
+
+  IP_ENRICHMENT:
+    description: "Credentialed IP geolocation, ISP, ASN, and proxy classification with source-level evidence"
+    default_providers: ["whatismyip"]
+    input_types: ["IP_ADDRESS", "IPV6_ADDRESS"]
+    output_types: ["IP_ADDRESS", "IPV6_ADDRESS", "ASN", "ORGANIZATION"]

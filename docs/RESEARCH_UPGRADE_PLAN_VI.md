@@ -1,6 +1,6 @@
 # SPIDER — kế hoạch nghiên cứu nâng cấp có kiểm chứng
 
-Ngày cập nhật: 03/09/2026. Đây là **kế hoạch nghiên cứu**, không phải báo cáo tính năng đã triển khai. Không thay đổi hoặc mô tả lại luồng API key đang được thực hiện song song. Không chạy email, username hay hồ sơ người thật trong giai đoạn này.
+Ngày cập nhật: 04/09/2026. Các mục P0–F dưới đây là **kế hoạch nghiên cứu và gate quyết định**; bảng “Trạng thái triển khai” ở cuối ghi riêng kết quả đã thực hiện trên fixture. Không thay đổi hoặc mô tả lại luồng API key đang được thực hiện song song. Không chạy email, username hay hồ sơ người thật trong giai đoạn này.
 
 ## Mục tiêu và nguyên tắc quyết định
 
@@ -15,13 +15,34 @@ SPIDER chỉ mở rộng khi cải thiện được ít nhất một trong: kế
 
 Không coi `exists=true`, trùng username, avatar, bio, văn phong, email-domain context hoặc một `sameAs` đơn lẻ là xác minh danh tính. Không đưa vào MVP: profiling tâm lý, face recognition, suy vị trí, breach/password hunting, credential dump, EXIF GPS deanonymization, CAPTCHA/rate-limit bypass, proxy rotation, mass enumeration, hay LLM tự quyết `SAME_PERSON`.
 
+## P0 — nền tảng phải đúng trước mọi nguồn mới
+
+| Finding | FACT / yêu cầu kế hoạch | Acceptance criteria |
+|---|---|---|
+| **Typed Entity Identity** | Entity key tối thiểu là `case_id + observable_type + namespace + canonical_value`. `DOMAIN:alice.dev` và `USERNAME:alice.dev` là hai entity khác nhau. Lineage, resolver, graph rebuild và projection đều phải mang type/namespace. | Fixture cùng canonical value khác type không merge, không chia cạnh/claim, và rebuild giữ nguyên tính tách biệt. |
+| **Request/Entity Budget** | `provider_calls_count` không phải HTTP request. Ledger đặt tại transport/ingest boundary: mỗi network request, retry và control request tính một; entity ingest tăng `entities_count`; redirect và cache phải có định nghĩa riêng (`redirect hop` có/không tính theo policy; cache hit không là network request nhưng phải được ghi). | Fixture redirect/retry/cache cho tổng request/entity đúng, vượt budget không phát sinh request hoặc ingest tiếp; lý do dừng hiện được. Không nghiên cứu Cost-Aware trước gate này. |
+| **Fail-closed Provider Health** | `live_verified` và `contract_verified` không được mặc định `True`. Runtime, contract, credential và live test là bằng chứng tách biệt; chỉ nâng trạng thái sau test tương ứng. | Provider chưa test không hiển thị “verified”; fixture runtime/contract/credential/live failure đều phân biệt được. |
+| **Local API Security** | Áp dụng global Host allowlist; Origin/Sec-Fetch cho mọi thao tác nhạy cảm; WebSocket kiểm Host/Origin trước kết nối. Không giới hạn ở `/api/settings`. | Fixture hostile Host và cross-origin HTTP/WebSocket bị từ chối; luồng loopback hợp lệ vẫn hoạt động. |
+
+Các finding trên là **P0, FACT từ audit mã nguồn hiện hữu**; chưa phải tính năng hoàn thành. Mọi source/provider mới và Cost-Aware Scheduler bị chặn bởi P0.
+
+## P1 — data egress và projection theo câu hỏi
+
+**Data Egress Ledger — EXPERIMENT.** Mỗi lần gửi identifier ra ngoài ghi: identifier class/fingerprint an toàn, provider, destination, purpose, timestamp, `DIRECT|DERIVED`, `CREDENTIALED|ANONYMOUS`, request outcome và policy/budget decision. Không lưu plaintext identifier hoặc credential trong ledger. UI phân biệt rõ local-only với dữ liệu đã truyền cho bên thứ ba.
+
+Acceptance: fixture chứng minh direct/derived và destination/purpose đúng; UI không nhầm local transform với egress; ledger không chứa secret/plaintext ngoài policy đã định. Quyết định: **P1**, trước nguồn mới có egress.
+
+**Target/Question-Scoped Projection — EXPERIMENT.** Insight không được tự động lấy toàn bộ entity/observation của case rồi gán cho seed đầu tiên. Projection phải lọc theo seed/question và lineage reachable từ seed đó; entity chung chỉ xuất hiện khi cạnh/bằng chứng reachable hợp lệ.
+
+Acceptance: case hai seed có entity trùng hoặc cạnh không liên quan không làm insight cross-contaminate; truy ngược từ insight về seed/question/evidence được. Quyết định: **P1**, sau Typed Entity Identity.
+
 ## A — Email account existence
 
 **Vấn đề.** Một email có thể có tài khoản ở dịch vụ công khai; kết quả không được suy thành danh tính hay quyền sở hữu mailbox.
 
 **FACT.** [Holehe](https://github.com/megadose/holehe) có các module dịch vụ; [Socialscan](https://github.com/iojw/socialscan) là baseline thứ hai. Cả hai phải được ghim commit trước mọi benchmark. License, số module còn hoạt động, recovery information và TOS của từng module: **NOT YET VERIFIED** tại commit ghim.
 
-**Đề xuất EXPERIMENT.** Xây adapter thử nghiệm sau A/B, chỉ với tập dịch vụ giao nhau giữa Holehe và Socialscan, timeout/rate-limit riêng từng dịch vụ. Output chuẩn:
+**Đề xuất EXPERIMENT.** Chỉ sau P0/P1, xây adapter thử nghiệm với timeout/rate-limit riêng từng service. Output chuẩn:
 
 `CONFIRMED_EXISTS | CONFIRMED_NOT_EXISTS | RATE_LIMITED | UNKNOWN | ERROR`
 
@@ -29,7 +50,8 @@ Không coi `exists=true`, trùng username, avatar, bio, văn phong, email-domain
 
 | Hạng mục đánh giá | Protocol | Acceptance để ADOPT |
 |---|---|---|
-| Độ đúng | Canary accounts do người dùng kiểm soát: tồn tại, không tồn tại, login wall, soft-404, rate-limit. Tách theo service và thời gian. | Cải thiện decision coverage ở cùng hoặc tốt hơn precision/recall baseline; không tăng false positive vượt ngưỡng chốt trước. |
+| Độ đúng — `OVERLAP` | Canary accounts do người dùng kiểm soát trên tập service giao nhau Holehe/Socialscan: tồn tại, không tồn tại, login wall, soft-404, rate-limit. | So accuracy công bằng ở cùng service/budget; không tăng false positive vượt ngưỡng chốt trước. |
+| Coverage tăng thêm — `HOLEHE-ONLY` | Tập audited riêng cho service chỉ có Holehe; không trộn vào so sánh accuracy baseline. | Incremental decision coverage có provenance/service status, không suy `UNKNOWN` thành âm tính. |
 | Độ ổn định | Chạy nhiều ngày và lưu version module/parser, trạng thái recovery. | Drift phát hiện được; service suy giảm bị quarantine thay vì trả kết luận âm tính. |
 | Chi phí | Request, p50/p95, retry, 429. | Không retry xác thực/rate-limit bừa bãi; budget rõ cho từng service. |
 
@@ -67,7 +89,7 @@ Quyết định hiện tại: Contradiction Engine **EXPERIMENT, P1**; Evidence 
 
 **FACT.** Memento được chuẩn hóa tại [RFC 7089](https://www.rfc-editor.org/rfc/rfc7089); Wayback, Memento và [Common Crawl index](https://commoncrawl.org/cc-index-table) là nguồn lịch sử có thể truy vấn. Chúng phản ánh thời điểm quan sát/archive, không chứng minh trạng thái hiện tại hoặc danh tính.
 
-**Đề xuất temporal model.** Claim/evidence lưu `FIRST_SEEN`, `LAST_SEEN`, `OBSERVED_AT`, `ARCHIVED_AT`, cùng event `CHANGED`, `DISAPPEARED`, `HANDLE_CHANGED`, `LINK_CHANGED`. UI tách “current observation” với “archived observation”; archive cũ không là current state.
+**Đề xuất temporal model.** Claim/evidence lưu `FIRST_SEEN`, `LAST_SEEN`, `OBSERVED_AT`, `ARCHIVED_AT`, cùng event `CHANGED`, `DISAPPEARED`, `HANDLE_CHANGED`, `LINK_CHANGED`, `NO_ARCHIVED_OBSERVATION`. UI tách “current observation” với “archived observation”; archive cũ không là current state. Thiếu capture Wayback/Common Crawl chỉ là `NO_ARCHIVED_OBSERVATION`, không suy `DISAPPEARED`.
 
 **Provider Drift Monitor.** Canary accounts do người dùng kiểm soát, nhãn `EXISTS`, `NOT_EXISTS`, `SOFT_404`, `RATE_LIMIT`, `LOGIN_WALL`; ghi parser version, provider version, latency và recovery. Khi sai lệch vượt ngưỡng pre-registered: `DEGRADED → QUARANTINED`. Ngưỡng, lịch chạy và retention: **NOT YET VERIFIED**.
 
@@ -104,12 +126,12 @@ Quyết định hiện tại: Coverage/Unknown **EXPERIMENT, P1**; Cost-Aware **
 
 | Mốc | Phạm vi | Gate trước khi sang mốc tiếp |
 |---|---|---|
-| A | Entity key có type/namespace, lineage đúng, budget accounting. | Domain/username cùng chuỗi không merge; budget dừng chính xác. |
-| B | Host/Origin/SSRF, credential boundary, provenance tối thiểu. | Không secret trong log/DB/artifact; failure state không thành success. |
-| C | Coverage/Unknown và Provider Drift Monitor. | Unknown explanation đúng với fixture, canary có quarantine. |
+| A | Typed Entity Identity; request/entity ledger tại transport/ingest. | Domain/username cùng chuỗi không merge; redirect/retry/cache và ingest accounting đúng. |
+| B | Fail-closed health; global Host/Origin/Sec-Fetch/WebSocket; Data Egress Ledger. | Hostile/cross-origin bị chặn; provider không tự xưng verified; UI phân biệt egress. |
+| C | Target/Question-Scoped Projection; Coverage/Unknown; Provider Drift Monitor. | Không cross-contaminate seed; unknown explanation đúng; canary có quarantine. |
 | D | Explicit Link Proof + supporting/contradicting. | False merge benchmark đạt gate đã đăng ký trước. |
-| E | Temporal/dependency/reproducible bundle. | Claim truy ngược qua evidence/version/time; mirror không double-count. |
-| F | Holehe/Socialscan, WhatsMyName, passive sources, cost-aware thử nghiệm. | Mỗi nhánh vượt baseline trên holdout ở cùng ngân sách; license/TOS review PASS. |
+| E | Temporal/dependency/reproducible bundle. | `NO_ARCHIVED_OBSERVATION` không thành `DISAPPEARED`; claim truy ngược qua evidence/version/time. |
+| F | Holehe/Socialscan, WhatsMyName, passive sources, Cost-Aware thử nghiệm. | P0 ledger PASS trước Cost-Aware; mỗi nhánh vượt baseline/holdout cùng budget; license/TOS review PASS. |
 
 Mọi proposal phải có trước khi **ADOPT**: (1) vấn đề, (2) nguồn đã đọc, (3) gap hiện hữu, (4) input/output, (5) FP/FN/privacy/legal/TOS/rate-limit/drift/license risk, (6) cost, (7) milestone, (8) benchmark protocol, (9) acceptance criteria, (10) quyết định ADOPT/EXPERIMENT/DEFER/REJECT.
 
@@ -117,10 +139,25 @@ Mọi proposal phải có trước khi **ADOPT**: (1) vấn đề, (2) nguồn �
 
 **EXPERIMENT RESULT (đã có, giới hạn).** Benchmark hiện hữu chỉ gồm 7 website tổng hợp, 3 lần lặp; không chứng minh ưu thế trên Internet thực hoặc identity resolution. Kết quả phải được tái lập trên fixture và holdout mới trước khi dùng làm lý do ADOPT.
 
-**P1:** Holehe + Socialscan baseline; Explicit Link Proof; Contradiction Engine; Coverage/Unknown Accounting; Provider Drift Monitor.
+**P0:** Typed Entity Identity; Request/Entity Budget; fail-closed Provider Health; global Local API Security.
+
+**P1:** Data Egress Ledger; Target/Question-Scoped Projection; Holehe + Socialscan baseline; Explicit Link Proof; Contradiction Engine; Coverage/Unknown Accounting; Provider Drift Monitor.
 
 **P2:** WhatsMyName catalogue; Temporal Evidence; Evidence Dependency Graph; Reproducible Evidence Bundle.
 
 **P3:** Cost-Aware Acquisition; passive urlscan; Email Domain Context; Public Web Mention Discovery.
 
 Blackbird chỉ có thể là baseline coverage nếu cần; không phải bằng chứng để đưa behavioral profiling vào MVP. Không proposal nào trong tài liệu này được coi là đã triển khai hoặc được phép chạy với dữ liệu người thật.
+
+## Trạng thái triển khai 04/09/2026
+
+| Mốc | Trạng thái | Bằng chứng / giới hạn |
+|---|---|---|
+| A | **EXPERIMENT RESULT — PASS trên fixture** | Typed identity/migration/rebuild; transport request, redirect/retry/control/cache; ingest cap. Uncover private runner `secure2` có request journal đã đối chiếu với ledger; opaque subprocess khác vẫn fail-closed `UNMETERED_PROVIDER`. |
+| B | **EXPERIMENT RESULT — PASS trên fixture** | Global HTTP/WS guard; fail-closed health proof; egress ledger lưu fingerprint HMAC theo run, không identifier/credential thô. |
+| C | **EXPERIMENT RESULT — PASS trên fixture** | Projection bắt buộc chọn seed khi case có nhiều target; lineage reachable; coverage không biến unknown thành negative; canary quarantine chỉ nhận báo cáo versioned, không tự chạy target thật. |
+| D | **EXPERIMENT RESULT — PASS trên fixture** | `rel=me`, top-level JSON-LD `sameAs`, profile website tạo self-asserted/reciprocal link; contradiction/dependency là review annotation và luôn `identity_verified=false`. |
+| E | **EXPERIMENT RESULT — PASS trên fixture** | Temporal view; thiếu archive chỉ `NO_ARCHIVED_OBSERVATION`; evidence bundle allowlist, scoped, reproducible, không đóng gói raw artifact. |
+| F | **DEFER / NOT YET VERIFIED** | Đã ghim commit/license trong `docs/research-source-lock.json` và có offline scoring protocol tách OVERLAP/HOLEHE_ONLY. Holehe hiện GPL-3.0, không phải MIT; Socialscan MPL-2.0; WhatsMyName data CC-BY-SA-4.0. Chưa có consented holdout, TOS từng dịch vụ, drift và kết quả Internet nên không đưa provider/catalogue mới vào production; passive sources và Cost-Aware cũng chưa ADOPT. |
+
+Benchmark local 7 site tổng hợp ngày 03/09/2026: SPIDER precision/recall known-case `1.0/1.0`, decision coverage `0.75`; Maigret `0.5/1.0`, `1.0`; Sherlock `0.5/1.0`, `1.0`. Đây chỉ là fixture nhỏ; kết quả ở `test-results/public-footprint-benchmark/results.json` bị ignore và không chứng minh ưu thế Internet. Quyết định: giữ Maigret với negative control; không ADOPT nguồn mới.

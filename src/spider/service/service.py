@@ -99,10 +99,11 @@ class SpiderService:
             records = await CaseRepository.list_cases(session)
             return [{"id": r.id, "name": r.name, "status": r.status, "created_at": r.created_at.isoformat()} for r in records]
 
-    async def add_target(self, case_id: str, raw_input: str, observable_type: ObservableType, scope_authorized: bool = False, *, canonical_value: str = "", metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def add_target(self, case_id: str, raw_input: str, observable_type: ObservableType, scope_authorized: bool = False, *, canonical_value: str = "", namespace: str = "", metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         target = Target(
             case_id=case_id,
             observable_type=observable_type,
+            namespace=namespace,
             raw_input=raw_input,
             scope_authorized=scope_authorized,
             canonical_value=canonical_value,
@@ -113,8 +114,15 @@ class SpiderService:
             return {"id": rec.id, "case_id": rec.case_id, "canonical_value": rec.canonical_value, "type": rec.observable_type}
         return await self.db_writer.submit(_add)
 
-    async def investigate(self, case_id: str, budget: Optional[ExecutionBudget] = None, policy_profile: Optional[str] = None, run_id: Optional[str] = None) -> Dict[str, Any]:
-        return await self.engine.run_investigation(case_id, budget=budget, policy_profile=policy_profile, run_id=run_id)
+    async def investigate(self, case_id: str, budget: Optional[ExecutionBudget] = None, policy_profile: Optional[str] = None, run_id: Optional[str] = None, investigation_mode=None, browser_assisted: bool = False) -> Dict[str, Any]:
+        return await self.engine.run_investigation(
+            case_id,
+            budget=budget,
+            policy_profile=policy_profile,
+            run_id=run_id,
+            investigation_mode=investigation_mode,
+            browser_assisted=browser_assisted,
+        )
 
     async def get_case_entities(self, case_id: str) -> List[Dict[str, Any]]:
         async with self.db_manager.session_factory() as session:
@@ -123,6 +131,7 @@ class SpiderService:
                 "id": r.id,
                 "canonical_name": r.canonical_name,
                 "type": r.observable_type,
+                "namespace": r.namespace,
                 "observation_count": r.observation_count,
                 "first_seen": r.first_seen.isoformat(),
                 "last_seen": r.last_seen.isoformat()
@@ -157,7 +166,9 @@ class SpiderService:
 
     async def check_provider_health(self) -> Dict[str, Any]:
         health_map = await self.provider_manager.check_all_health()
-        return {pid: {"state": h.state.value, "message": h.message, "details": h.details} for pid, h in health_map.items()}
+        return {pid: {"state": h.state.value, "message": h.message, "details": h.details,
+            "contract_verified": h.contract_verified, "live_verified": h.live_verified,
+            "provider_version": h.provider_version, "latency_ms": h.latency_ms} for pid, h in health_map.items()}
 
     async def doctor(self) -> Dict[str, Any]:
         health = await self.check_provider_health()

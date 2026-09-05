@@ -12,6 +12,7 @@ from spider.storage.schema import TaskRunRecord
 from sqlalchemy import select
 
 class SlowFailingProvider(BaseProviderAdapter):
+    request_budget_supported = True  # Synthetic sleep/failure, no network.
     def provider_id(self) -> str:
         return "slow_failing"
     def version(self) -> str:

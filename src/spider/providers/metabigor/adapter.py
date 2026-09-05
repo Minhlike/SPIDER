@@ -159,7 +159,9 @@ class MetabigorAdapter(BaseProviderAdapter):
                 item_lineage = lineage.model_copy(update={
                     "upstream_source": source,
                     "upstream_family": family,
-                    "parent_observable_value": str(asn) if asn else lineage.parent_observable_value
+                    "parent_observable_value": obs_asn.canonical_value if asn else lineage.parent_observable_value,
+                    "parent_observable_type": ObservableType.ASN if asn else lineage.parent_observable_type,
+                    "parent_namespace": "" if asn else lineage.parent_namespace,
                 })
                 results.append(Observation(
                     observable=obs_org,
@@ -173,7 +175,9 @@ class MetabigorAdapter(BaseProviderAdapter):
                 item_lineage = lineage.model_copy(update={
                     "upstream_source": source,
                     "upstream_family": family,
-                    "parent_observable_value": str(asn) if asn else lineage.parent_observable_value
+                    "parent_observable_value": obs_asn.canonical_value if asn else lineage.parent_observable_value,
+                    "parent_observable_type": ObservableType.ASN if asn else lineage.parent_observable_type,
+                    "parent_namespace": "" if asn else lineage.parent_namespace,
                 })
                 results.append(Observation(
                     observable=obs_cidr,

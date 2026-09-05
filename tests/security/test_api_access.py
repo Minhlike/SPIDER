@@ -70,7 +70,9 @@ def test_settings_roundtrip_pairs_rotation_deletion_and_masks(caplog):
     client = TestClient(create_app())
     response = client.post("/api/settings", json={"api_keys": KEYS})
     assert response.status_code == 200
-    assert all(v["configured"] for v in response.json()["credential_status"].values())
+    status = response.json()["credential_status"]
+    assert all(status[engine]["configured"] for engine in access.REQUIREMENTS)
+    assert status["whatismyip"]["configured"] is False
     assert access.saved_keys() | KEYS == access.saved_keys()
     for path in settings.SETTINGS_FILE.parent.iterdir():
         if path.is_file():
@@ -179,7 +181,8 @@ elif action == 'encoded':
  from urllib.parse import quote
  print(quote(value, safe=''))
 elif action == 'malformed': print('not json')
-else: print(json.dumps({'state':'VALID', 'reason':'SEARCH_VERIFIED', 'results':[{'engine':'shodan','ip':'192.0.2.1'}]}))
+else: print(json.dumps({'state':'VALID', 'reason':'SEARCH_VERIFIED', 'results':[{'engine':'shodan','ip':'192.0.2.1'}],
+ 'request_journal':[{'sequence':1,'method':'GET','destination':'api.shodan.io','purpose':'account_validation','http_status':200,'outcome':'HTTP_200'}]}))
 print(value, file=sys.stderr)
 ''')
     original = asyncio.create_subprocess_exec

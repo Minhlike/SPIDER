@@ -54,6 +54,15 @@ name verification. Wider claims require a representative, consented dataset and
 the same site set/configuration for each tool. Do not compare arbitrary counts
 of supported websites as proof of accuracy.
 
+For browser automation, `score_username_manual_benchmark` compares SPIDER with a
+manual investigation on the exact same consented or controlled account/site
+pairs. Store only a stable salted fixture id, never a raw username. PASS requires
+at least 100 paired decisions (30 present and 30 absent), precision, recall and
+decision coverage no worse than manual work, no additional false positives, and
+median elapsed time no higher than manual work. Login walls, rate limits, blocks
+and parser drift remain unknown and reduce recall/coverage; they never become
+absence.
+
 ## Sources
 
 - [Maigret usage](https://github.com/soxoj/maigret/blob/main/docs/source/usage-examples.rst)

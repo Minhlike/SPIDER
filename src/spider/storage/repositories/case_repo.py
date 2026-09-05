@@ -37,6 +37,7 @@ class CaseRepository:
             id=target.id,
             case_id=target.case_id,
             observable_type=target.observable_type.value,
+            namespace=target.namespace,
             raw_input=target.raw_input,
             canonical_value=target.canonical_value,
             scope_authorized=target.scope_authorized,

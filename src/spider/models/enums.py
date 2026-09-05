@@ -9,6 +9,7 @@ class ObservableType(str, Enum):
     ASN = "ASN"
     ORGANIZATION = "ORGANIZATION"
     EMAIL = "EMAIL"
+    EMAIL_SHA256 = "EMAIL_SHA256"
     PHONE = "PHONE"
     USERNAME = "USERNAME"
     ACCOUNT = "ACCOUNT"
@@ -23,7 +24,13 @@ class NetworkClass(str, Enum):
     TARGET_ACTIVE = "TARGET_ACTIVE"
     PRIVILEGED_LOCAL = "PRIVILEGED_LOCAL"
 
+
+class InvestigationMode(str, Enum):
+    PERSONAL_FOOTPRINT = "PERSONAL_FOOTPRINT"
+    INFRASTRUCTURE = "INFRASTRUCTURE"
+
 class ProviderState(str, Enum):
+    QUARANTINED = "QUARANTINED"
     READY = "READY"
     READY_LIMITED = "READY_LIMITED"
     SUCCESS_NO_FINDINGS = "SUCCESS_NO_FINDINGS"

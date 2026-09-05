@@ -2,11 +2,18 @@ import abc
 import time
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from spider.models.enums import ObservableType, NetworkClass, ProviderState
 from spider.models.observable import NormalizedObservable
 from spider.models.observation import Observation
 from spider.models.provenance import SourceLineage
+
+class VerificationEvidence(BaseModel):
+    provider_version: str
+    adapter_version: str
+    checked_at: datetime
+    artifact_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
 
 class ProviderHealth(BaseModel):
     state: ProviderState
@@ -16,8 +23,9 @@ class ProviderHealth(BaseModel):
     runtime_exists: bool = True
     runtime_version_verified: bool = True
     credential_state: Optional[str] = "OK"
-    contract_verified: bool = True
-    live_verified: bool = True
+    contract_verified: bool = False
+    live_verified: bool = False
+    verification_evidence: Dict[str, VerificationEvidence] = Field(default_factory=dict)
     last_check: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_success: Optional[datetime] = None
     last_failure: Optional[datetime] = None
@@ -25,6 +33,17 @@ class ProviderHealth(BaseModel):
     latency_ms: Optional[float] = None
     message: str = "OK"
     details: Dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def require_verification_evidence(self):
+        for stage in ("contract", "live"):
+            proof = self.verification_evidence.get(stage)
+            verified = bool(proof and proof.provider_version == self.provider_version
+                            and proof.adapter_version == self.adapter_version
+                            and proof.checked_at.tzinfo is not None
+                            and proof.checked_at <= datetime.now(timezone.utc))
+            setattr(self, stage + "_verified", bool(getattr(self, stage + "_verified") and verified))
+        return self
 
 class ProviderExecutionResult(BaseModel):
     raw_content: bytes
@@ -40,6 +59,8 @@ class ProviderExecutionResult(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class BaseProviderAdapter(abc.ABC):
+    # Opaque subprocesses must implement an audited transport bridge before using a hard cap.
+    request_budget_supported = False
     @abc.abstractmethod
     def provider_id(self) -> str:
         pass

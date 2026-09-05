@@ -16,6 +16,8 @@ def test_production_mode_excludes_fake_providers():
     assert "spiderfoot" in provider_ids
     assert "maigret" in provider_ids
     assert "uncover" in provider_ids
+    assert "gravatar_public" in provider_ids
+    assert "whatismyip" in provider_ids
 
 def test_test_mode_includes_fake_providers():
     service = create_spider_service(mode="test")
@@ -23,3 +25,4 @@ def test_test_mode_includes_fake_providers():
     provider_ids = {a.provider_id() for a in adapters}
     assert "fake_a" in provider_ids
     assert "fake_b" in provider_ids
+    assert "whatismyip" in provider_ids

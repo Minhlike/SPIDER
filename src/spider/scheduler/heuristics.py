@@ -7,14 +7,20 @@ PROVIDER_COSTS = {
     "metabigor": 2.0,
     "uncover": 3.0,
     "spiderfoot": 5.0,
-    "maigret": 3.0
+    "maigret": 3.0,
+    "coccoc_browser": 4.0,
 }
 
 CAPABILITY_YIELD_ESTIMATES = {
     "PUBLIC_PROFILE_LOOKUP": 18.0,
+    # A single exact derived-identifier lookup should precede broader search.
+    "EMAIL_PUBLIC_PROFILE_LOOKUP": 22.0,
     "SUBDOMAIN_DISCOVERY": 10.0,
     "INFRASTRUCTURE_DISCOVERY": 5.0,
     "USERNAME_DISCOVERY": 8.0,
+    # An explicit browser action must run before broad catalog enumeration can
+    # consume the shared time/request budget.
+    "BROWSER_PERSONAL_DISCOVERY": 30.0,
     "INTERNET_INTELLIGENCE": 6.0,
     "BROAD_OSINT": 15.0
 }

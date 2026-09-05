@@ -70,6 +70,18 @@ def test_api_masks_updates_preserves_mask_and_deletes(caplog):
     assert SENTINEL not in caplog.text
 
 
+def test_whatismyip_key_is_dpapi_only_and_masked(caplog):
+    client = TestClient(create_app())
+    response = client.post("/api/settings", json={
+        "api_keys": {"WHATISMYIP_API_KEY": SENTINEL}})
+    assert response.status_code == 200
+    assert response.json()["api_keys"]["WHATISMYIP_API_KEY"] == "********"
+    assert response.json()["credential_status"]["whatismyip"]["configured"] is True
+    assert "api_keys" not in json.loads(settings.SETTINGS_FILE.read_text())
+    assert SENTINEL.encode() not in settings.SETTINGS_FILE.with_name("api-keys.dpapi").read_bytes()
+    assert SENTINEL not in response.text and SENTINEL not in caplog.text
+
+
 @pytest.mark.parametrize("payload", [
     {"api_keys": {"SHODAN": {"invalid": SENTINEL}}},
     {"api_keys": {SENTINEL: "value"}},

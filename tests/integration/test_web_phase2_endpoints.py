@@ -32,6 +32,17 @@ def test_api_classify_endpoint(client):
     res = client.get("/api/classify?target=john_doe99")
     assert res.status_code == 200
     assert res.json()["type"] == "USERNAME"
+    username_plan = res.json()["source_preflight"]
+    assert username_plan["investigation_mode"] == "PERSONAL_FOOTPRINT"
+    assert {s["provider_id"] for s in username_plan["sources"]} == {"github_public", "maigret"}
+    assert not username_plan["internet_api_keys_applicable"]
+
+    res = client.post("/api/classify", json={"target": "example.com", "target_type": "DOMAIN"})
+    assert res.status_code == 200
+    domain_plan = res.json()["source_preflight"]
+    assert domain_plan["investigation_mode"] == "INFRASTRUCTURE"
+    assert "uncover" in {s["provider_id"] for s in domain_plan["sources"]}
+    assert domain_plan["internet_api_keys_applicable"]
 
 def test_api_settings_endpoints(client):
     # GET settings

@@ -1,0 +1,1 @@
+"""Curated discovery source scopes."""

@@ -57,6 +57,9 @@ def test_selected_intent_reaches_saved_target_and_engine(intent_app, target, cho
 
 def test_classification_preview_api_validates_request(intent_app):
     client, _, _ = intent_app
+    dotted = client.post("/api/classify", json={"target": "ms.orianawren"}).json()
+    assert [s["provider_id"] for s in dotted["source_preflight"]["sources"]] == []
+    assert not dotted["source_preflight"]["internet_api_keys_applicable"]
     assert client.post("/api/classify", json={"target": "alice.dev"}).json()["needs_confirmation"]
     assert client.post("/api/classify", json={"target": "alice.dev", "target_type": "USERNAME"}).json()["type"] == "USERNAME"
     for payload in ([], {"target": 123}, {"target": "@"}, {"target": "alice", "target_type": "invalid"}):

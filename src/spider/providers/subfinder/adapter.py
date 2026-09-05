@@ -162,7 +162,9 @@ class SubfinderAdapter(BaseProviderAdapter):
                 item_lineage = lineage.model_copy(update={
                     "upstream_source": primary_source,
                     "upstream_family": family,
-                    "parent_observable_value": host or lineage.parent_observable_value
+                    "parent_observable_value": host or lineage.parent_observable_value,
+                    "parent_observable_type": ObservableType.HOSTNAME if host else lineage.parent_observable_type,
+                    "parent_namespace": "" if host else lineage.parent_namespace,
                 })
                 results.append(Observation(
                     observable=obs_ip,

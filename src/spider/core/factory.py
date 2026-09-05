@@ -7,11 +7,14 @@ from spider.providers.native.dns import NativeDnsAdapter
 from spider.providers.native.rdap import NativeRdapAdapter
 from spider.providers.native.ct import NativeCertificateTransparencyAdapter
 from spider.providers.native.public_profiles import PublicProfilesAdapter
+from spider.providers.native.gravatar import GravatarPublicProfileAdapter
 from spider.providers.subfinder.adapter import SubfinderAdapter
 from spider.providers.metabigor.adapter import MetabigorAdapter
 from spider.providers.spiderfoot.adapter import SpiderFootAdapter
 from spider.providers.maigret.adapter import MaigretAdapter
 from spider.providers.uncover.adapter import UncoverAdapter
+from spider.providers.browser.coccoc import CocCocBrowserAdapter
+from spider.providers.whatismyip import WhatIsMyIPAdapter
 
 # Fake Providers (Test Mode Only)
 from spider.providers.fake.provider_a import FakeProviderA
@@ -40,7 +43,10 @@ def create_spider_service(
         service.provider_manager.register_adapter(SpiderFootAdapter())
         service.provider_manager.register_adapter(MaigretAdapter())
         service.provider_manager.register_adapter(PublicProfilesAdapter())
+        service.provider_manager.register_adapter(GravatarPublicProfileAdapter())
         service.provider_manager.register_adapter(UncoverAdapter())
+        service.provider_manager.register_adapter(CocCocBrowserAdapter())
+        service.provider_manager.register_adapter(WhatIsMyIPAdapter())
         logger.info("SPIDER Service initialized in PRODUCTION mode.")
     elif mode == "test":
         # Test mode allows fake providers
@@ -54,6 +60,7 @@ def create_spider_service(
         service.provider_manager.register_adapter(SpiderFootAdapter())
         service.provider_manager.register_adapter(MaigretAdapter())
         service.provider_manager.register_adapter(UncoverAdapter())
+        service.provider_manager.register_adapter(WhatIsMyIPAdapter())
         logger.info("SPIDER Service initialized in TEST mode.")
     else:
         raise ValueError(f"Unknown SPIDER service mode: {mode}. Must be 'production' or 'test'.")

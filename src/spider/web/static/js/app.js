@@ -47,12 +47,13 @@ const i18n = {
     lbl_depth: "Độ sâu thu thập (Max Depth)",
     lbl_timeout: "Thời gian tối đa (Timeout)",
     lbl_scope_confirm: "Mục tiêu nằm trong phạm vi được phép điều tra an toàn",
-    btn_start: "Bắt đầu điều tra",
+    btn_start: "Bắt đầu điều tra tự động",
     btn_cancel: "Hủy bỏ",
     btn_refresh: "Làm mới",
     btn_export: "Xuất JSON",
     btn_delete: "Xóa vụ án",
     btn_save: "Lưu cài đặt",
+    btn_shutdown: "Tắt SPIDER",
     tab_summary: "Tổng quan",
     tab_live: "Tiến trình",
     tab_findings: "Phát hiện",
@@ -98,7 +99,8 @@ const i18n = {
     empty_reason_desc: "Các nguồn dữ liệu sau đã được thực thi nhưng không phát hiện thêm liên kết mới:",
     no_cases: "Chưa có cuộc điều tra nào. Nhấn 'Tạo điều tra mới' để bắt đầu.",
     loading: "Đang tải dữ liệu...",
-    confirm_delete: "Bạn có chắc chắn muốn xóa cuộc điều tra này không?"
+    confirm_delete: "Bạn có chắc chắn muốn xóa cuộc điều tra này không?",
+    confirm_shutdown: "Tắt SPIDER an toàn? Các tác vụ đang chạy sẽ được dừng theo quy trình shutdown."
   },
   en: {
     target_type_label: "Search as",
@@ -130,12 +132,13 @@ const i18n = {
     lbl_depth: "Max Recursion Depth",
     lbl_timeout: "Execution Timeout",
     lbl_scope_confirm: "Target is within authorized investigation scope",
-    btn_start: "Start Investigation",
+    btn_start: "Start automatic investigation",
     btn_cancel: "Cancel",
     btn_refresh: "Refresh",
     btn_export: "Export JSON",
     btn_delete: "Delete Case",
     btn_save: "Save Settings",
+    btn_shutdown: "Stop SPIDER",
     tab_summary: "Summary",
     tab_live: "Live Progress",
     tab_findings: "Findings",
@@ -181,7 +184,8 @@ const i18n = {
     empty_reason_desc: "The following sources executed but found no new observable links:",
     no_cases: "No investigations found. Click 'New Investigation' to begin.",
     loading: "Loading data...",
-    confirm_delete: "Are you sure you want to delete this investigation?"
+    confirm_delete: "Are you sure you want to delete this investigation?",
+    confirm_shutdown: "Stop SPIDER safely? Running tasks will follow the normal shutdown procedure."
   }
 };
 
@@ -410,35 +414,85 @@ function onTargetInputDebounced(resetType = true) {
   document.getElementById("type-preview").textContent = currentLanguage === "vi" ? "CHƯA XÁC ĐỊNH" : "UNCLASSIFIED";
   document.getElementById("type-preview").className = "badge badge-running";
   document.getElementById("classification-explanation").textContent = "";
+  document.getElementById("source-preflight").textContent = "";
+  document.getElementById("btn-browser-investigate").style.display = "none";
   if (document.getElementById("target-input").value.trim()) {
     classifyTimeout = setTimeout(classifyCurrentTarget, 250);
   }
 }
 
-function onTargetTypeChanged() {
+async function onTargetTypeChanged() {
+  const selected = document.getElementById("target-type-select").value;
+  const target = document.getElementById("target-input");
+  const status = document.getElementById("public-ip-status");
+  if (["IP_ADDRESS", "IPV6_ADDRESS"].includes(selected) && !target.value.trim()) {
+    status.textContent = currentLanguage === "vi" ? "Đang xác định IP công khai hiện tại..." : "Detecting the current public IP...";
+    try {
+      const version = selected === "IPV6_ADDRESS" ? 6 : 4;
+      const response = await fetch(`/api/network/public-address?version=${version}`);
+      const data = await response.json();
+      if (!response.ok || !data.ip) throw new Error(data.detail?.code || "UNAVAILABLE");
+      if (document.getElementById("target-type-select").value !== selected || target.value.trim()) return;
+      target.value = data.ip;
+      status.textContent = currentLanguage === "vi"
+        ? `Đã điền IPv${version} công khai từ WhatIsMyIP; hãy kiểm tra rồi bấm bắt đầu.`
+        : `Public IPv${version} filled from WhatIsMyIP; review it before starting.`;
+    } catch (_) {
+      status.textContent = currentLanguage === "vi"
+        ? "Không xác định được IP công khai. Bạn vẫn có thể nhập IP thủ công."
+        : "The public IP could not be detected. You can still enter it manually.";
+    }
+  } else {
+    status.textContent = "";
+  }
   onTargetInputDebounced(false);
 }
 
-async function classifyCurrentTarget() {
+async function classifyCurrentTarget(browserAssisted = false) {
   clearTimeout(classifyTimeout);
   const sequence = ++classificationSequence;
   if (classificationController) classificationController.abort();
   classificationController = new AbortController();
   const preview = document.getElementById("type-preview");
   const explanation = document.getElementById("classification-explanation");
+  const preflight = document.getElementById("source-preflight");
   try {
     const res = await fetch("/api/classify", {
       method: "POST", headers: {"Content-Type": "application/json"},
       signal: classificationController.signal,
       body: JSON.stringify({target: document.getElementById("target-input").value.trim(),
-        target_type: document.getElementById("target-type-select").value || null})
+        target_type: document.getElementById("target-type-select").value || null,
+        investigation_mode: document.getElementById("investigation-mode-select").value,
+        browser_assisted: browserAssisted})
     });
     const data = await res.json();
     if (sequence !== classificationSequence) return null;
     if (!res.ok) throw new Error("invalid_target");
     preview.textContent = data.type;
     preview.className = data.needs_confirmation ? "badge badge-running" : "badge badge-success";
+    document.getElementById("btn-browser-investigate").style.display =
+      (!data.needs_confirmation && ["USERNAME", "EMAIL"].includes(data.type)) ? "inline-flex" : "none";
     explanation.textContent = classificationExplanation(data);
+    const sourcePlan = data.source_preflight || {};
+    const ready = (sourcePlan.sources || []).filter(s => s.applicability !== "NOT_APPLICABLE" && s.request_accounting === "SUPPORTED").map(s => s.provider_id);
+    const blocked = (sourcePlan.sources || []).filter(s => s.applicability !== "NOT_APPLICABLE" && s.request_accounting !== "SUPPORTED").map(s => s.provider_id);
+    const inapplicable = (sourcePlan.sources || []).filter(s => s.applicability === "NOT_APPLICABLE").map(s => `${s.provider_id} (${s.applicability_reason})`);
+    const vi = currentLanguage === "vi";
+    const parts = [vi ? `Nguồn dự kiến: ${ready.join(", ") || "không có"}.` : `Planned sources: ${ready.join(", ") || "none"}.`];
+    if (sourcePlan.investigation_mode === "PERSONAL_FOOTPRINT") {
+      parts.unshift(vi ? "Chế độ: dấu vết cá nhân." : "Mode: personal footprint.");
+    } else if (sourcePlan.investigation_mode === "INFRASTRUCTURE") {
+      parts.unshift(vi ? "Chế độ: hạ tầng Internet." : "Mode: Internet infrastructure.");
+    }
+    if ((sourcePlan.sources || []).some(s => s.identifier_disclosure === "SHA256_EMAIL")) {
+      parts.push(vi ? "Gravatar nhận mã băm SHA-256 dẫn xuất từ email; email thô không nằm trong URL request." : "Gravatar receives a SHA-256 value derived from the email; the raw email is not placed in the request URL.");
+    }
+    if (blocked.length) parts.push(vi ? `Đang khóa vì chưa kiểm toán request: ${blocked.join(", ")}.` : `Blocked until request accounting is audited: ${blocked.join(", ")}.`);
+    if (inapplicable.length) parts.push(vi ? `Không chạy do sai loại đầu vào: ${inapplicable.join(", ")}.` : `Skipped for this input type: ${inapplicable.join(", ")}.`);
+    if (!sourcePlan.internet_api_keys_applicable && ["USERNAME", "EMAIL"].includes(data.type)) {
+      parts.push(vi ? "Shodan/Censys/FOFA không áp dụng cho tìm tài khoản cá nhân." : "Shodan/Censys/FOFA do not apply to personal-account discovery.");
+    }
+    preflight.textContent = parts.join(" ");
     return data;
   } catch (error) {
     if (sequence !== classificationSequence || error.name === "AbortError") return null;
@@ -447,11 +501,12 @@ async function classifyCurrentTarget() {
     explanation.textContent = currentLanguage === "vi"
       ? "Không xác định được loại. Kiểm tra đầu vào và lựa chọn; số điện thoại cần +mã quốc gia."
       : "Cannot classify this input. Check the value and selected type; phones need +country code.";
+    preflight.textContent = "";
     return null;
   }
 }
 
-async function startInvestigation() {
+async function startInvestigation(browserAssisted = "auto") {
   const targetVal = document.getElementById("target-input").value.trim();
   if (!targetVal) {
     alert(currentLanguage === "vi" ? "Vui lòng nhập mục tiêu điều tra!" : "Please enter a target value!");
@@ -464,28 +519,37 @@ async function startInvestigation() {
   const isAuthorized = document.getElementById("authorized-checkbox").checked;
 
   const btn = document.getElementById("btn-start-investigate");
+  const browserBtn = document.getElementById("btn-browser-investigate");
   btn.disabled = true;
+  browserBtn.disabled = true;
   btn.innerHTML = `<span>&#x21BB;</span> ${currentLanguage === "vi" ? "Đang khởi tạo..." : "Initializing..."}`;
 
   try {
-    const classification = await classifyCurrentTarget();
+    const classification = await classifyCurrentTarget(browserAssisted !== false);
     if (!classification || targetVal !== document.getElementById("target-input").value.trim()) return;
     if (classification.needs_confirmation) {
       document.getElementById("target-type-select").focus();
       return;
     }
+    // Clicking the primary action is the explicit start signal. Personal
+    // targets use the visible signed-in browser by default when available.
+    const effectiveBrowserAssisted = browserAssisted === true ||
+      (browserAssisted === "auto" && ["USERNAME", "EMAIL"].includes(classification.type));
     const res = await fetch("/api/investigate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         target: targetVal,
         target_type: document.getElementById("target-type-select").value || null,
+        investigation_mode: document.getElementById("investigation-mode-select").value,
+        browser_assisted: effectiveBrowserAssisted,
         policy_profile: profile,
         budget: {
           max_depth: depth,
           max_entities: 500,
+          max_requests: effectiveBrowserAssisted ? 500 : 100,
           timeout_seconds: timeout,
-          username_site_limit: parseInt(document.getElementById("username-sites-select").value, 10)
+          username_source_scope: document.getElementById("username-sites-select").value
         },
         scope_authorized: isAuthorized
       })
@@ -510,6 +574,7 @@ async function startInvestigation() {
     alert("Error: " + ex.message);
   } finally {
     btn.disabled = false;
+    browserBtn.disabled = false;
     btn.innerHTML = `<span>&#x25B6;</span> <span>${escapeHtml(t("btn_start"))}</span>`;
   }
 }
@@ -538,6 +603,7 @@ function switchCaseTab(tabName) {
 }
 
 function openCase(caseId) {
+  document.getElementById('insight-target').innerHTML = '<option value="">Chọn mục tiêu / Select target</option>';
   currentView = "case_detail";
   currentCaseId = caseId;
   document.querySelectorAll(".view-panel").forEach(el => el.classList.remove("active"));
@@ -552,12 +618,64 @@ function refreshCurrentCase() {
   if (currentCaseId) loadCaseDetail(currentCaseId);
 }
 
+async function shutdownSpider() {
+  if (!window.confirm(t("confirm_shutdown"))) return;
+  const button = document.getElementById("btn-shutdown");
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/system/shutdown", {method: "POST"});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "Shutdown request failed");
+    document.body.innerHTML = `<main style="max-width:640px;margin:15vh auto;font-family:system-ui;padding:32px;text-align:center">
+      <h1>SPIDER đã tắt an toàn</h1><p>Bạn có thể đóng tab này. Lần sau chỉ cần mở run_spider.bat.</p></main>`;
+  } catch (error) {
+    button.disabled = false;
+    alert(error.message);
+  }
+}
+
+function scopedCaseUrl(caseId, suffix) {
+  const params = new URLSearchParams({scoped: 'true', question: document.getElementById('insight-question').value});
+  const target = document.getElementById('insight-target').value;
+  if (target) params.set('target_id', target);
+  return `/api/cases/${caseId}/${suffix}?${params}`;
+}
+
 async function loadCaseDetail(caseId) {
   try {
-    const [caseRes, insightsRes] = await Promise.all([
+    const scopeQuery = new URLSearchParams({question: document.getElementById('insight-question').value});
+    const selectedTarget = document.getElementById('insight-target').value;
+    if (selectedTarget) scopeQuery.set('target_id', selectedTarget);
+    const [caseRes, insightsRes, egressRes] = await Promise.all([
       fetch(`/api/cases/${caseId}`).then(r => r.json()),
-      fetch(`/api/cases/${caseId}/insights`).then(r => r.json())
+      fetch(`/api/cases/${caseId}/insights?${scopeQuery}`).then(r => r.json()),
+      fetch(`/api/cases/${caseId}/egress?${scopeQuery}`).then(r => r.json())
     ]);
+    if (caseId !== currentCaseId) return;
+    const scope = insightsRes.scope || {};
+    const selector = document.getElementById('insight-target');
+    selector.replaceChildren(new Option(currentLanguage === 'vi' ? 'Chọn mục tiêu' : 'Select target', ''));
+    (scope.targets || []).forEach(target => selector.add(new Option(`${target.type}: ${target.value}`, target.id)));
+    selector.value = selectedTarget || scope.target_id || '';
+    document.getElementById('scope-explanation').textContent = scope.selection_required
+      ? (currentLanguage === 'vi' ? 'Chọn mục tiêu để xem bằng chứng riêng, tránh lẫn dữ liệu.' : 'Select a target to view its evidence separately.')
+      : `${currentLanguage === 'vi' ? 'Bằng chứng chưa xác định mục tiêu bị loại' : 'Unscoped evidence excluded'}: ${scope.unscoped_observations_excluded || 0}`;
+    document.getElementById('egress-explanation').textContent = ({LOCAL_ONLY: 'LOCAL_ONLY — Chỉ xử lý cục bộ / Local processing only',
+      EGRESS_ATTEMPTED: 'EGRESS_ATTEMPTED — Đã thử gửi dữ liệu ra ngoài / External disclosure attempted',
+      NOT_YET_VERIFIED: 'NOT YET VERIFIED — Chưa đủ lịch sử truyền dữ liệu / Incomplete disclosure history'})[egressRes.state] || 'NOT YET VERIFIED';
+    document.getElementById('egress-events').textContent = (egressRes.events || []).map(e =>
+      `${e.provider_id} → ${e.destination} | ${e.identifier_type} | ${e.purpose} | ${e.derivation} | ${e.authentication} | ${e.outcome}`).join('\n');
+    const coverage = insightsRes.coverage_report || {};
+    document.getElementById('coverage-explanation').textContent = `${currentLanguage === 'vi' ? 'Có kết luận / Chưa xác định' : 'Decided / Unknown'}: ${coverage.decided || 0} / ${coverage.unknown || 0}`;
+    document.getElementById('coverage-steps').textContent = (coverage.steps || []).map(s => `${s.provider_id}: ${s.state}${s.reason ? ' — ' + s.reason : ''}`).join('\n');
+    const analysis = insightsRes.evidence_analysis || {};
+    document.getElementById('evidence-analysis').textContent = [
+      ...(analysis.link_proofs || []).map(p => `${p.kind}: ${p.source} → ${p.target} [${p.observation_id}]`),
+      ...(analysis.temporal_events || []).map(e => `${e.view}: ${e.event} | ${e.observed_at} [${e.observation_id}]`),
+      ...(analysis.hypotheses || []).map(h => `${h.claim_id}: ${h.decision} | Supporting ${h.SUPPORTING_EVIDENCE.length}; Contradicting ${h.CONTRADICTING_EVIDENCE.length}; Unknown ${h.UNKNOWN.length}`),
+      currentLanguage === 'vi' ? 'Liên kết công khai chưa xác minh cùng chủ sở hữu.' : 'Public links do not verify common ownership.'
+    ].join('\n');
+    document.getElementById('evidence-bundle-download').href = `/api/cases/${caseId}/bundle?${scopeQuery}`;
 
     // Header Info
     document.getElementById("case-title").textContent = caseRes.name || "Cuộc điều tra";
@@ -614,8 +732,51 @@ async function loadCaseDetail(caseId) {
 // Render Type Specific Intelligence Cards
 function coverageDescription(source) {
   const c = source.coverage;
-  if (!c) return source.error_message || (source.status === "NO_FINDINGS" ? "Đã kiểm tra; không có kết quả" : source.status || "");
-  return `${c.checked}/${c.selected} website đã xử lý · ${c.found} ứng viên tài khoản · ${c.not_found} không thấy · ${c.unknown} chưa xác định · ${c.invalid} username không hợp lệ · ${c.unprocessed} chưa xử lý · ${c.non_unique_detections || 0} kết quả không phân biệt được với đối chứng · ${(c.controls_pending || 0) + (c.controls_unknown || 0)} đối chứng chưa kết luận`;
+  if (!c) {
+    const reasons = {
+      NO_PUBLIC_PRIMARY_EMAIL_PROFILE: currentLanguage === "vi" ? "Đã kiểm tra Gravatar; không thấy hồ sơ công khai gắn với mã băm email chính" : "Gravatar checked; no public profile for the primary email hash",
+      PUBLIC_PROFILE_FOUND: currentLanguage === "vi" ? "Đã tìm thấy hồ sơ công khai gắn trực tiếp với email" : "A public profile directly linked to the email was found",
+      RATE_LIMIT: currentLanguage === "vi" ? "Chưa kết luận do nguồn giới hạn lượt truy cập" : "Unknown because the source rate limited the request",
+      ACCESS_DENIED: currentLanguage === "vi" ? "Chưa kết luận do nguồn từ chối truy cập" : "Unknown because the source denied access",
+      UPSTREAM_ERROR: currentLanguage === "vi" ? "Chưa kết luận do dịch vụ nguồn bị lỗi" : "Unknown because the upstream service failed",
+      NETWORK_OR_RESPONSE_ERROR: currentLanguage === "vi" ? "Chưa kết luận do lỗi mạng hoặc phản hồi không hợp lệ" : "Unknown because the network or response failed",
+    };
+    return reasons[source.collection_reason] || source.error_message || (source.status === "NO_FINDINGS" ? "Đã kiểm tra; không có kết quả" : source.status || "");
+  }
+  const priority = Object.entries(c.priority_sites || {}).map(([name, value]) => {
+    const viLabels = {
+      FOUND: "có ứng viên", CANDIDATE: "có ứng viên", CLAIMED: "có ứng viên",
+      AVAILABLE: "không thấy", NOT_FOUND: "không thấy",
+      LOGIN_REQUIRED: "cần đăng nhập", RATE_LIMITED: "bị giới hạn truy cập",
+      BLOCKED: "bị chặn/challenge", PARSER_DRIFT: "chưa xác định — rule đã lệch",
+      NETWORK_ERROR: "lỗi mạng hoặc hết thời gian",
+      UNKNOWN: "chưa xác định", UNPROCESSED: "chưa xử lý", SCHEDULED: "đã lên lịch",
+      SKIPPED_SITE_BUDGET: "bỏ qua do giới hạn", INELIGIBLE: "không đủ điều kiện",
+      NOT_IN_CATALOG: "không có trong danh mục",
+    };
+    const codes = [value.reason, value.outcome, value.state].filter(Boolean);
+    const code = codes.find(item => Object.prototype.hasOwnProperty.call(viLabels, item)) || codes[0] || "UNKNOWN";
+    const outcome = currentLanguage === "vi" ? (viLabels[code] || code) : code;
+    return `${name}: ${outcome}`;
+  }).join(" · ");
+  const summary = `${c.checked || 0}/${c.selected || 0} website đã xử lý · ${c.found || 0} ứng viên tài khoản · ${c.not_found || 0} không thấy · ${c.unknown || 0} chưa xác định · ${c.invalid || 0} username không hợp lệ · ${c.unprocessed || 0} chưa xử lý · ${c.non_unique_detections || 0} kết quả không phân biệt được với đối chứng · ${(c.controls_pending || 0) + (c.controls_unknown || 0)} đối chứng chưa kết luận`;
+  return priority ? `${priority} · ${summary}` : summary;
+}
+
+function executionReceiptDescription(source) {
+  const vi = currentLanguage === "vi";
+  const state = source.execution_state || "NOT_SCHEDULED";
+  const requests = Number(source.request_count || 0);
+  const observations = Number(source.observations_count || 0);
+  const messages = {
+    NOT_APPLICABLE: vi ? "Không áp dụng cho loại mục tiêu này" : "Not applicable to this target type",
+    NOT_SCHEDULED: vi ? "Có thể áp dụng nhưng chưa được lập lịch" : "Applicable but not scheduled",
+    BLOCKED_UNMETERED: vi ? "Bị chặn vì chưa đếm được request mạng an toàn" : "Blocked because network requests cannot be audited",
+    RUNNING: vi ? "Đang chạy; chưa phát request" : "Running; no request dispatched yet",
+    EXECUTED_NO_NETWORK: vi ? "Đã thực thi nhưng không phát request mạng" : "Executed without a network request",
+    CALLED: vi ? `Đã gọi ${requests} request; đóng góp ${observations} quan sát` : `Called with ${requests} requests; contributed ${observations} observations`,
+  };
+  return messages[state] || state;
 }
 
 function renderTypeSpecificInsights(insights) {
@@ -625,6 +786,7 @@ function renderTypeSpecificInsights(insights) {
   emptyContainer.style.display = "none";
 
   const targetType = insights.target_type;
+  const investigationMode = insights.investigation_mode || (targetType === "EMAIL" || targetType === "USERNAME" ? "PERSONAL_FOOTPRINT" : "INFRASTRUCTURE");
   const entitiesCount = insights.entities_count || 0;
 
   if (["EMAIL", "USERNAME"].includes(targetType)) {
@@ -639,8 +801,16 @@ function renderTypeSpecificInsights(insights) {
     profiles.forEach(profile => {
       const entry = document.createElement("div");
       entry.className = "detail-row";
-      const basis = profile.match_basis === "exact_public_email" ? (currentLanguage === "vi" ? "Email công khai trùng khớp" : "Exact public email") : (currentLanguage === "vi" ? "Trùng username — chưa xác minh chủ sở hữu" : "Shared username — owner unverified");
-      entry.innerHTML = `<div><small>${escapeHtml(profile.platform)} · ${currentLanguage === "vi" ? "Tên/tiêu đề công khai" : "Public name/title"}</small><br><strong>${escapeHtml(profile.display_name || profile.platform)}</strong><p>${escapeHtml(basis)}</p><p>${escapeHtml(profile.bio || "")}</p>${profile.website ? `<p>Website: ${escapeHtml(profile.website)}</p>` : ""}<small>${escapeHtml(profile.provider_id)} · ${escapeHtml(profile.observed_at || "")}</small></div>`;
+      const bases = {
+        exact_public_email: currentLanguage === "vi" ? "Email công khai trùng khớp" : "Exact public email",
+        email_hash_public_profile: currentLanguage === "vi" ? "Hồ sơ công khai gắn với mã băm của email chính" : "Public profile linked to the primary email hash",
+        verified_account_from_email_profile: currentLanguage === "vi" ? "Tài khoản được hồ sơ Gravatar xác minh liên kết" : "Account link verified by the Gravatar profile",
+        username_only: currentLanguage === "vi" ? "Trùng username — chưa xác minh chủ sở hữu" : "Shared username — owner unverified",
+        signed_in_browser_candidate: currentLanguage === "vi" ? "Ứng viên từ Cốc Cốc đã đăng nhập — cần mở và đối chiếu" : "Candidate from signed-in Cốc Cốc — open and corroborate",
+      };
+      const basis = bases[profile.match_basis] || (currentLanguage === "vi" ? "Liên hệ công khai — cần đối chiếu" : "Public linkage — corroboration required");
+      const work = [profile.job_title, profile.company].filter(Boolean).join(" · ");
+      entry.innerHTML = `<div><small>${escapeHtml(profile.platform)} · ${currentLanguage === "vi" ? "Tên/tiêu đề công khai" : "Public name/title"}</small><br><strong>${escapeHtml(profile.display_name || profile.platform)}</strong><p>${escapeHtml(basis)}</p><p>${escapeHtml(profile.bio || "")}</p>${profile.location ? `<p>${currentLanguage === "vi" ? "Vị trí tự khai" : "Self-reported location"}: ${escapeHtml(profile.location)}</p>` : ""}${work ? `<p>${currentLanguage === "vi" ? "Nghề nghiệp/tổ chức tự khai" : "Self-reported role/organization"}: ${escapeHtml(work)}</p>` : ""}${profile.website ? `<p>Website: ${escapeHtml(profile.website)}</p>` : ""}<small>${escapeHtml(profile.provider_id)} · ${escapeHtml(profile.verification_state || "PUBLIC_SELF_PUBLISHED")} · ${escapeHtml(profile.observed_at || "")}</small></div>`;
       const link = document.createElement("a");
       try {
         const url = new URL(profile.profile_url);
@@ -649,6 +819,20 @@ function renderTypeSpecificInsights(insights) {
           link.textContent = profile.profile_url; entry.appendChild(link);
         }
       } catch (_) { /* Invalid source URLs are not made clickable. */ }
+      (profile.explicit_links || []).forEach(item => {
+        try {
+          const url = new URL(item.url);
+          if (["https:", "http:"].includes(url.protocol) && !url.username && !url.password) {
+            const line = document.createElement("div");
+            const label = document.createElement("small");
+            label.textContent = currentLanguage === "vi" ? "Liên kết tự công bố: " : "Self-published link: ";
+            const anchor = document.createElement("a");
+            anchor.href = url.href; anchor.target = "_blank"; anchor.rel = "noopener noreferrer";
+            anchor.textContent = item.url;
+            line.append(label, anchor); entry.appendChild(line);
+          }
+        } catch (_) { /* Invalid source URLs are not made clickable. */ }
+      });
       card.appendChild(entry);
     });
     container.appendChild(card);
@@ -688,7 +872,7 @@ function renderTypeSpecificInsights(insights) {
   }
 
   // A. EMAIL INTELLIGENCE CARD
-  if (targetType === "EMAIL" && insights.email_insights) {
+  if (targetType === "EMAIL" && investigationMode === "INFRASTRUCTURE" && insights.email_insights) {
     const em = insights.email_insights;
     const card = document.createElement("div");
     card.className = "intelligence-card";
@@ -732,7 +916,7 @@ function renderTypeSpecificInsights(insights) {
   }
 
   // B. DOMAIN INTELLIGENCE CARD
-  if ((targetType === "DOMAIN" || targetType === "HOSTNAME" || (targetType === "EMAIL" && insights.domain_insights)) && insights.domain_insights) {
+  if ((targetType === "DOMAIN" || targetType === "HOSTNAME" || (targetType === "EMAIL" && investigationMode === "INFRASTRUCTURE" && insights.domain_insights)) && insights.domain_insights) {
     const dom = insights.domain_insights;
     const card = document.createElement("div");
     card.className = "intelligence-card";
@@ -772,17 +956,29 @@ function renderTypeSpecificInsights(insights) {
   }
 
   // C. IP & BGP INTELLIGENCE CARD
-  if ((targetType === "IP_ADDRESS" || targetType === "IPV6_ADDRESS" || insights.ip_insights) && insights.ip_insights && insights.ip_insights.asn) {
+  if ((targetType === "IP_ADDRESS" || targetType === "IPV6_ADDRESS") && insights.ip_insights) {
     const ip = insights.ip_insights;
+    const yesNoUnknown = value => value === true ? (currentLanguage === "vi" ? "Có" : "Yes")
+      : value === false ? (currentLanguage === "vi" ? "Không" : "No") : (currentLanguage === "vi" ? "Chưa xác định" : "Unknown");
+    const location = [ip.city, ip.region, ip.country].filter(Boolean).join(", ") || "-";
+    const coordinates = (ip.latitude !== null && ip.latitude !== undefined && ip.longitude !== null && ip.longitude !== undefined)
+      ? `${ip.latitude}, ${ip.longitude}` : "-";
+    const sourceRows = (ip.source_observations || []).map(source => `
+      <tr><td>${escapeHtml(source.provider_id || "-")}</td><td>${escapeHtml(source.record_kind || "-")}</td>
+      <td>${escapeHtml(source.observed_at ? new Date(source.observed_at).toLocaleString() : "-")}</td>
+      <td>${Math.round(Number(source.confidence || 0) * 100)}%</td></tr>`).join("");
+    const contacts = (ip.contacts || []).flatMap(contact => (contact.emails || []).map(email =>
+      `${(contact.roles || []).join(", ") || "contact"}: ${email}`));
     const card = document.createElement("div");
     card.className = "intelligence-card";
     card.innerHTML = `
       <div class="intelligence-card-header">
-        <span class="intelligence-card-title">&#x1F5A5; Thông tin Định tuyến BGP & Đăng ký Hạ tầng (RDAP)</span>
-        <span class="badge badge-ready">ROUTING & REGISTRY</span>
+        <span class="intelligence-card-title">&#x1F5A5; Hồ sơ tình báo địa chỉ IP</span>
+        <span class="badge badge-ready">MULTI-SOURCE IP</span>
       </div>
       <div class="card-grid-2">
         <div>
+          <div class="detail-row"><span class="detail-key">Địa chỉ IP:</span><span class="detail-val"><code>${escapeHtml(ip.ip || "-")}</code></span></div>
           <div class="detail-row">
             <span class="detail-key">Số hiệu mạng (ASN):</span>
             <span class="detail-val"><strong style="color:var(--accent-primary);">${escapeHtml(ip.asn || "-")}</strong></span>
@@ -795,13 +991,34 @@ function renderTypeSpecificInsights(insights) {
             <span class="detail-key">Tổ chức quản lý (Org):</span>
             <span class="detail-val">${escapeHtml(ip.organization || "-")}</span>
           </div>
+          <div class="detail-row"><span class="detail-key">ISP:</span><span class="detail-val">${escapeHtml(ip.isp || "-")}</span></div>
+          <div class="detail-row"><span class="detail-key">RIR:</span><span class="detail-val">${escapeHtml(ip.rir || "-")}</span></div>
+          <div class="detail-row"><span class="detail-key">Tên dải mạng:</span><span class="detail-val">${escapeHtml(ip.network_name || "-")}</span></div>
         </div>
         <div>
-          <div class="detail-key">Tên máy chủ gắn với IP (Hostnames):</div>
-          <div class="chips-container">
-            ${(ip.associated_hostnames && ip.associated_hostnames.length) ? ip.associated_hostnames.map(h => `<span class="chip">${escapeHtml(h)}</span>`).join("") : "<em>Chưa có hostname gắn kết</em>"}
-          </div>
+          <div class="detail-row"><span class="detail-key">Vị trí gần đúng:</span><span class="detail-val">${escapeHtml(location)}</span></div>
+          <div class="detail-row"><span class="detail-key">Mã bưu chính:</span><span class="detail-val">${escapeHtml(ip.postal_code || "-")}</span></div>
+          <div class="detail-row"><span class="detail-key">Múi giờ:</span><span class="detail-val">${escapeHtml(ip.time_zone || "-")}</span></div>
+          <div class="detail-row"><span class="detail-key">Tọa độ ước lượng:</span><span class="detail-val">${escapeHtml(coordinates)}</span></div>
+          <div class="detail-row"><span class="detail-key">Proxy / VPN / Datacenter:</span><span class="detail-val">${escapeHtml(`${yesNoUnknown(ip.is_proxy)} / ${yesNoUnknown(ip.is_vpn)} / ${yesNoUnknown(ip.is_datacenter)}`)}</span></div>
+          <div class="detail-row"><span class="detail-key">Loại proxy:</span><span class="detail-val">${escapeHtml(ip.proxy_type || "-")}</span></div>
+          <div class="detail-row"><span class="detail-key">Mô tả proxy:</span><span class="detail-val">${escapeHtml(ip.proxy_type_description || "-")}</span></div>
+          <div class="detail-row"><span class="detail-key">Dải proxy:</span><span class="detail-val"><code>${escapeHtml(ip.proxy_range || "-")}</code></span></div>
         </div>
+      </div>
+      <div style="margin-top:14px;">
+        <div class="detail-key">Reverse DNS / Hostnames:</div>
+        <div class="chips-container">${(ip.associated_hostnames || []).length ? ip.associated_hostnames.map(h => `<span class="chip">${escapeHtml(h)}</span>`).join("") : "<em>Chưa phát hiện</em>"}</div>
+      </div>
+      <div style="margin-top:14px;">
+        <div class="detail-key">Liên hệ vận hành công khai:</div>
+        <div class="chips-container">${contacts.length ? contacts.map(item => `<span class="chip">${escapeHtml(item)}</span>`).join("") : "<em>Chưa có trong RDAP</em>"}</div>
+      </div>
+      <p class="form-hint" style="margin-top:14px;">Vị trí IP là ước lượng cấp mạng và không xác định cá nhân hoặc địa chỉ nhà.</p>
+      <div style="margin-top:14px; overflow-x:auto;">
+        <div class="detail-key">Nguồn và thời điểm quan sát:</div>
+        <table><thead><tr><th>Nguồn</th><th>Loại dữ liệu</th><th>Quan sát lúc</th><th>Độ tin cậy</th></tr></thead>
+        <tbody>${sourceRows || '<tr><td colspan="4"><em>Chưa có dữ liệu bổ sung</em></td></tr>'}</tbody></table>
       </div>
     `;
     container.appendChild(card);
@@ -859,7 +1076,7 @@ function renderTypeSpecificInsights(insights) {
 // --- 7. Tab 2: Live Progress Loader ---
 async function loadCaseProgress(caseId) {
   try {
-    const insightsRes = await fetch(`/api/cases/${caseId}/insights`).then(r => r.json());
+    const insightsRes = await fetch(scopedCaseUrl(caseId, 'insights')).then(r => r.json());
     const tbody = document.getElementById("live-tasks-tbody");
     tbody.innerHTML = "";
 
@@ -896,7 +1113,7 @@ async function loadCaseProgress(caseId) {
 async function loadCaseFindings() {
   if (!currentCaseId) return;
   try {
-    currentCaseEntities = await fetch(`/api/cases/${currentCaseId}/entities`).then(r => r.json());
+    currentCaseEntities = await fetch(scopedCaseUrl(currentCaseId, 'entities')).then(r => r.json());
     renderFilteredFindings();
   } catch (e) {
     console.error("Failed to load findings", e);
@@ -941,7 +1158,7 @@ function renderFilteredFindings() {
 async function loadCaseSources() {
   if (!currentCaseId) return;
   try {
-    const insights = await fetch(`/api/cases/${currentCaseId}/insights`).then(r => r.json());
+    const insights = await fetch(scopedCaseUrl(currentCaseId, 'insights')).then(r => r.json());
     const tbody = document.getElementById("sources-tbody");
     tbody.innerHTML = "";
 
@@ -958,7 +1175,7 @@ async function loadCaseSources() {
         <td><span class="badge badge-${(p.status || "ready").toLowerCase()}">${escapeHtml(p.status || "READY")}</span></td>
         <td>${p.duration_ms ? p.duration_ms.toFixed(1) : "-"}</td>
         <td><strong>${escapeHtml(String(p.observations_count || 0))}</strong></td>
-        <td><small style="color:var(--text-muted);">${escapeHtml(coverageDescription(p))}</small></td>
+        <td><small style="color:var(--text-muted);"><strong>${escapeHtml(executionReceiptDescription(p))}</strong><br>${escapeHtml(coverageDescription(p))}</small></td>
         <td>
           <button class="btn btn-secondary" style="padding:4px 8px; font-size:11.5px;" onclick="testProviderLive('${escapeHtml(p.provider_id)}')">
             &#x25B6; Thử nghiệm
@@ -976,7 +1193,7 @@ async function loadCaseSources() {
 async function loadCaseEvidence() {
   if (!currentCaseId) return;
   try {
-    currentCaseObservations = await fetch(`/api/cases/${currentCaseId}/observations`).then(r => r.json());
+    currentCaseObservations = await fetch(scopedCaseUrl(currentCaseId, 'observations')).then(r => r.json());
     const tbody = document.getElementById("evidence-tbody");
     tbody.innerHTML = "";
 
@@ -1023,7 +1240,7 @@ async function loadKnowledgeGraph(caseId) {
   badge.textContent = "Đang tải...";
 
   try {
-    const data = await fetch(`/api/cases/${caseId}/graph`).then(r => r.json());
+    const data = await fetch(scopedCaseUrl(caseId, 'graph')).then(r => r.json());
     let nodes = (data.elements || []).filter(element => element.group === "nodes");
     let edges = (data.elements || []).filter(element => element.group === "edges");
 
@@ -1208,14 +1425,16 @@ async function loadProviders() {
     providers.forEach(p => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td><strong>${escapeHtml(p.id)}</strong></td>
+        <td><strong>${escapeHtml(p.provider_id)}</strong></td>
         <td><code>${escapeHtml(p.version)}</code></td>
         <td><span class="badge badge-${p.state.toLowerCase()}">${escapeHtml(p.state)}</span></td>
         <td>${p.capabilities.map(c => `<span class="chip" style="font-size:11px;">${escapeHtml(c)}</span>`).join(" ")}</td>
         <td><code>${escapeHtml(p.network_class)}</code></td>
-        <td><small style="color:var(--text-muted);">${escapeHtml(p.health_message)}</small></td>
+        <td><small style="color:var(--text-muted);">${escapeHtml(p.health_message)}<br>
+          ${currentLanguage === 'vi' ? 'Kiểm thử contract' : 'Contract verification'}: ${p.contract_verified ? 'PASS' : 'NOT YET VERIFIED'}<br>
+          ${currentLanguage === 'vi' ? 'Kiểm thử nguồn thực tế' : 'Live verification'}: ${p.live_verified ? 'PASS' : 'NOT YET VERIFIED'}</small></td>
         <td>
-          <button class="btn btn-secondary" style="padding:4px 10px; font-size:11.5px;" onclick="testProviderLive('${escapeHtml(p.id)}')">
+          <button class="btn btn-secondary" style="padding:4px 10px; font-size:11.5px;" onclick="testProviderLive('${escapeHtml(p.provider_id)}')">
             &#x25B6; ${escapeHtml(t("col_test"))}
           </button>
         </td>
@@ -1228,12 +1447,14 @@ async function loadProviders() {
 }
 
 async function testProviderLive(providerId) {
-  showNotification(currentLanguage === "vi" ? `Đang kiểm tra kết nối với ${providerId}...` : `Testing ${providerId}...`);
+  showNotification(currentLanguage === "vi" ? `Đang kiểm tra khả dụng của ${providerId}...` : `Checking availability of ${providerId}...`);
   try {
     const res = await fetch(`/api/providers/${providerId}/test`, { method: "POST" });
     const data = await res.json();
     alert(`[${providerId}] Trạng thái: ${data.state}
-Chẩn đoán: ${data.message}`);
+Chẩn đoán: ${data.message}
+Contract: ${data.contract_verified ? 'PASS' : 'NOT YET VERIFIED'}
+Live: ${data.live_verified ? 'PASS' : 'NOT YET VERIFIED'}`);
     if (currentView === "providers") loadProviders();
   } catch (e) {
     alert(`Lỗi kiểm tra [${providerId}]: ${e.message}`);
@@ -1244,7 +1465,8 @@ Chẩn đoán: ${data.message}`);
 const apiFields = {
   shodan: {SHODAN_API_KEY: "setting-key-shodan"},
   censys: {CENSYS_API_TOKEN: "setting-key-censys", CENSYS_ORGANIZATION_ID: "setting-censys-org"},
-  fofa: {FOFA_EMAIL: "setting-fofa-email", FOFA_KEY: "setting-key-fofa"}
+  fofa: {FOFA_EMAIL: "setting-fofa-email", FOFA_KEY: "setting-key-fofa"},
+  whatismyip: {WHATISMYIP_API_KEY: "setting-key-whatismyip"}
 };
 let settingsBusy = false;
 let settingsEpoch = 0;
@@ -1259,7 +1481,9 @@ function setSettingsBusy(busy) {
 function apiStateText(test) {
   const vi = currentLanguage === 'vi';
   const labels = {
-    VALID: vi ? 'Khóa hợp lệ. Chưa kiểm thử quyền tìm kiếm.' : 'Account verified. Search permission not tested.',
+    VALID: test.engine === 'whatismyip'
+      ? (vi ? 'Key hợp lệ; API trả về IP công khai đúng định dạng.' : 'Key valid; the API returned a valid public IP.')
+      : (vi ? 'Khóa hợp lệ. Chưa kiểm thử quyền tìm kiếm.' : 'Account verified. Search permission not tested.'),
     VALID_FREE_PLAN: vi ? 'Token hợp lệ trên Free Plan. Chưa kiểm thử quyền Search API.' : 'Token valid on Free Plan. Search entitlement not tested.',
     INVALID_TOKEN: vi ? 'Token Censys không hợp lệ.' : 'Invalid Censys token.',
     NO_SEARCH_ENTITLEMENT: vi ? 'Token hợp lệ nhưng không có quyền Search API.' : 'Token is valid but has no Search API entitlement.',
@@ -1268,6 +1492,7 @@ function apiStateText(test) {
     KEY_VALID: vi ? 'FOFA key hợp lệ. Chưa kiểm thử quyền truy vấn.' : 'FOFA key valid. Query entitlement not tested.',
     NO_QUERY_ENTITLEMENT: vi ? 'FOFA key hợp lệ nhưng không có quyền truy vấn.' : 'FOFA key is valid but has no query entitlement.',
     INVALID_KEY: vi ? 'FOFA key không hợp lệ.' : 'Invalid FOFA key.',
+    DISABLED_KEY: vi ? 'Key đã bị tắt hoặc thu hồi.' : 'The key is disabled or revoked.',
     MISSING_CREDENTIAL: vi ? 'Thiếu thông tin xác thực.' : 'Missing credentials.',
     INVALID_CREDENTIAL: vi ? 'Thông tin xác thực không hợp lệ hoặc không khớp tài khoản.' : 'Invalid credentials or account mismatch.',
     'PLAN/QUOTA_LIMIT': vi ? 'Bị giới hạn quyền, gói hoặc quota.' : 'Permission, plan or quota limit.',
@@ -1391,9 +1616,9 @@ async function exportCaseData() {
   try {
     const [caseData, entities, assertions, observations] = await Promise.all([
       fetch(`/api/cases/${currentCaseId}`).then(r => r.json()),
-      fetch(`/api/cases/${currentCaseId}/entities`).then(r => r.json()),
-      fetch(`/api/cases/${currentCaseId}/assertions`).then(r => r.json()),
-      fetch(`/api/cases/${currentCaseId}/observations`).then(r => r.json())
+      fetch(scopedCaseUrl(currentCaseId, 'entities')).then(r => r.json()),
+      fetch(scopedCaseUrl(currentCaseId, 'assertions')).then(r => r.json()),
+      fetch(scopedCaseUrl(currentCaseId, 'observations')).then(r => r.json())
     ]);
 
     const fullExport = {

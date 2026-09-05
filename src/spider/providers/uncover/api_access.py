@@ -37,6 +37,11 @@ REASONS = {
     "REQUIRED_FIELDS_MISSING", "RUNTIME_UNAVAILABLE", "NOT_REQUESTED", "PAGE_LIMIT",
     "ACCOUNT_VERIFIED", "ACCOUNT_EMAIL_MISMATCH", "NO_QUERY_CREDITS",
 }
+JOURNAL_DESTINATIONS = {
+    "shodan": "api.shodan.io",
+    "censys": "api.platform.censys.io",
+    "fofa": "fofa.info",
+}
 ROOT = Path(__file__).resolve().parents[4]
 PRIVATE_BINARY = ROOT / "runtime/uncover/uncover-private.exe"
 
@@ -116,7 +121,8 @@ def verified_runtime(binary: Path = PRIVATE_BINARY) -> bool:
 
 
 def result_state(engine: str, state: str, reason: str, scope: str = "account") -> dict:
-    return {"engine": engine, "state": state, "reason": reason, "scope": scope, "results": []}
+    return {"engine": engine, "state": state, "reason": reason, "scope": scope,
+            "results": [], "request_journal": []}
 
 
 def contains_secret(text: str, keys: Mapping[str, str]) -> bool:
@@ -160,6 +166,26 @@ def clean_rows(rows, keys: Mapping[str, str]) -> list[dict]:
     return clean
 
 
+def clean_request_journal(rows, engine: str, scope: str) -> list[dict]:
+    if not isinstance(rows, list) or len(rows) != 1:
+        raise ValueError("Missing request journal")
+    row = rows[0]
+    expected_purpose = "account_validation" if scope == "account" else "internet_asset_search"
+    if (not isinstance(row, dict) or row.get("sequence") != 1
+            or row.get("method") not in ("GET", "POST")
+            or row.get("destination") != JOURNAL_DESTINATIONS[engine]
+            or row.get("purpose") != expected_purpose
+            or not isinstance(row.get("outcome"), str)
+            or not re.fullmatch(r"HTTP_[1-5][0-9]{2}|CONNECTION_FAILED", row["outcome"])):
+        raise ValueError("Invalid request journal")
+    status = row.get("http_status")
+    if status is not None and (not isinstance(status, int) or not 100 <= status <= 599):
+        raise ValueError("Invalid request journal status")
+    return [{"sequence": 1, "method": row["method"], "destination": row["destination"],
+             "purpose": expected_purpose, "outcome": row["outcome"],
+             **({"http_status": status} if status is not None else {})}]
+
+
 async def run_engine(engine: str, keys: Mapping[str, str], *, mode: str = "check", query: str = "",
                      limit: int = 10, binary: Path = PRIVATE_BINARY, timeout: float = 23) -> dict:
     scope = "account" if mode == "check" else "search"
@@ -196,6 +222,8 @@ async def run_engine(engine: str, keys: Mapping[str, str], *, mode: str = "check
         if not isinstance(data, dict) or data.get("state") not in STATES or data.get("reason") not in REASONS:
             return result_state(engine, "NETWORK_ERROR", "UNEXPECTED_RESPONSE", scope)
         result = result_state(engine, data["state"], data["reason"], scope)
+        if data["reason"] != "MALFORMED_CREDENTIAL":
+            result["request_journal"] = clean_request_journal(data.get("request_journal"), engine, scope)
         status = data.get("http_status")
         if isinstance(status, int) and 100 <= status <= 599:
             result["http_status"] = status

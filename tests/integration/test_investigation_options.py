@@ -9,8 +9,10 @@ def test_browser_budget_and_authorization_reach_engine(tmp_path, monkeypatch):
     import spider.web.app as web_app
     service = SpiderService(db_path=str(tmp_path / "options.db"), artifacts_dir=str(tmp_path / "runs"))
     seen = {}
-    async def investigate(case_id, budget, policy_profile, run_id):
-        seen.update(budget=budget, profile=policy_profile)
+    async def investigate(case_id, budget, policy_profile, run_id, investigation_mode,
+                          browser_assisted):
+        seen.update(budget=budget, profile=policy_profile, mode=investigation_mode,
+                    browser_assisted=browser_assisted)
         async with service.db_manager.session_factory() as session:
             from spider.storage.repositories.case_repo import CaseRepository
             seen["authorized"] = (await CaseRepository.get_targets(session, case_id))[0].scope_authorized
@@ -27,7 +29,16 @@ def test_browser_budget_and_authorization_reach_engine(tmp_path, monkeypatch):
         client.portal.call(drain)
         assert seen["budget"].max_runtime_seconds == 30
         assert seen["budget"].username_site_limit == 50
+        assert seen["budget"].username_source_scope == "VN_COMMON_CORE"
+        assert seen["mode"] == "PERSONAL_FOOTPRINT"
+        assert seen["browser_assisted"] is False
         assert seen["budget"].max_depth == 0
         assert seen["authorized"] is True
         assert client.post("/api/investigate", json={"target": "fixture-user",
             "budget": {"timeout_seconds": -1}}).status_code == 422
+        rejected = client.post("/api/investigate", json={
+            "target": "fixture-user", "browser_assisted": True,
+            "scope_authorized": False,
+        })
+        assert rejected.status_code == 422
+        assert rejected.json()["detail"]["code"] == "browser_scope_authorization_required"

@@ -7,6 +7,7 @@ from spider.models.budget import ExecutionBudget, BudgetLedger
 from spider.models.policy import PolicyContext
 from spider.capability.registry import CapabilityRegistry
 from spider.scheduler.heuristics import calculate_task_priority
+from spider.capability.applicability import assess_provider
 
 class ScheduledTask(BaseModel):
     execution_key: ExecutionKey
@@ -30,8 +31,10 @@ class DeterministicScheduler:
         provider_network_classes: Dict[str, NetworkClass],
         executed_keys: Set[str],
         available_providers: Optional[Set[str]] = None,
+        provider_adapters: Optional[Dict[str, Any]] = None,
         depth: int = 0,
-        is_seed: bool = False
+        is_seed: bool = False,
+        allowed_capabilities: Optional[Set[str]] = None,
     ) -> List[ScheduledTask]:
         """
         Evaluates capabilities for an observable, filters by available providers, policy & budget, and produces deterministic prioritized tasks.
@@ -43,9 +46,14 @@ class DeterministicScheduler:
         matching_caps = self.registry.get_capabilities_for_input(observable.type)
 
         for cap in matching_caps:
+            if allowed_capabilities is not None and cap.name not in allowed_capabilities:
+                continue
             for provider_id in cap.default_providers:
                 # Check if provider adapter is registered & available
                 if available_providers is not None and provider_id not in available_providers:
+                    continue
+                if provider_adapters is not None and not assess_provider(
+                        provider_adapters.get(provider_id), observable.type, cap.name).applicable:
                     continue
 
                 # Check policy

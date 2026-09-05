@@ -20,6 +20,7 @@ async def test_vertical_slice_subfinder_and_metabigor(tmp_path):
 
     # Subclass adapters with mock execution for deterministic vertical slice integration test
     class MockSubfinder(SubfinderAdapter):
+        request_budget_supported = True  # Fixture parsing only; no subprocess/network.
         async def execute(self, target, lineage, **kwargs):
             raw = Path("tests/fixtures/subfinder/v2.16.0_sample.jsonl").read_bytes()
             obs = self.parse(raw, lineage)
@@ -29,6 +30,7 @@ async def test_vertical_slice_subfinder_and_metabigor(tmp_path):
             return ProviderExecutionResult(raw_content=raw, observations=obs, exit_code=0, mime_type="application/x-ndjson")
 
     class MockMetabigor(MetabigorAdapter):
+        request_budget_supported = True
         async def execute(self, target, lineage, **kwargs):
             raw = Path("tests/fixtures/metabigor/v2.2.0_sample.json").read_bytes()
             obs = self.parse(raw, lineage)

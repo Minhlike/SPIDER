@@ -74,6 +74,14 @@ See the [source audit and research-based upgrade plan](docs/RESEARCH_UPGRADE_PLA
 Ambiguous inputs now require a type choice before execution; API and MCP clients
 can pass `target_type`, and CLI users can pass `--type USERNAME` or `--type DOMAIN`.
 
+### IP intelligence
+
+Save a WhatIsMyIP API key in **System Settings → WhatIsMyIP** to enable current
+public-IP autofill plus geolocation, ISP, ASN and proxy classification. SPIDER
+combines that result with global RDAP, BGP routing and reverse DNS evidence. The
+key is stored in the current Windows user's DPAPI vault and is never placed in a
+request URL. See the [Vietnamese IP intelligence guide](docs/IP_INTELLIGENCE_VI.md).
+
 ### CLI Commands (For Automation & Power Users)
 
 ### Diagnostics & Doctor
@@ -113,6 +121,7 @@ runtime\venv\Scripts\python.exe -m spider.cli.main provider health
 | **SpiderFoot** | `v4.0` | MIT | `BROAD_OSINT` | Python 3 Adapter |
 | **Maigret** | `v0.6.5` | MIT | `USERNAME_DISCOVERY` | Python 3 Adapter |
 | **Uncover** | `v1.2.1` | MIT | `INTERNET_INTELLIGENCE` | Native Win64 (.exe) |
+| **WhatIsMyIP API** | `v1` | Service API | `IP_ENRICHMENT` | Credentialed HTTPS adapter |
 
 ---
 

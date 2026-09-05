@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class KnowledgeGraphRebuilder:
     def __init__(self, resolver: Optional[EntityResolutionEngine] = None):
-        self.resolver = resolver or EntityResolutionEngine(resolver_version="1.0.0")
+        self.resolver = resolver or EntityResolutionEngine()
 
     async def rebuild_case(self, session: AsyncSession, case_id: str) -> Dict[str, Any]:
         """
@@ -37,20 +37,25 @@ class KnowledgeGraphRebuilder:
                 observable=NormalizedObservable(
                     type=ObservableType(rec.observable_type),
                     value=rec.observable_value,
+                    namespace=rec.namespace,
+                    metadata=rec.observable_metadata or {},
                     canonical_value=rec.canonical_value
                 ),
                 lineage=SourceLineage(
                     case_id=rec.case_id,
                     run_id=rec.run_id,
                     task_id=rec.task_id,
+                    seed_id=rec.seed_id,
                     provider_id=rec.provider_id,
                     provider_version=rec.provider_version,
                     adapter_version=rec.adapter_version,
                     upstream_source=rec.upstream_source,
                     upstream_family=rec.upstream_family,
                     parent_observable_value=rec.parent_observable_value,
+                    parent_observable_type=rec.parent_observable_type,
+                    parent_namespace=rec.parent_namespace,
                     configuration_hash=rec.configuration_hash,
-                    raw_artifact_sha256=None,
+                    raw_artifact_sha256=rec.raw_artifact_sha256,
                     timestamp=rec.created_at
                 ),
                 confidence=rec.confidence,

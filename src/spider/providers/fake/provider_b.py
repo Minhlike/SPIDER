@@ -7,6 +7,7 @@ from spider.models.observation import Observation
 from spider.models.provenance import SourceLineage
 
 class FakeProviderB(BaseProviderAdapter):
+    request_budget_supported = True  # Offline synthetic data, no network I/O.
     """
     Fake Provider B: Simulates Infrastructure Discovery (e.g. Metabigor).
     Accepts: IP_ADDRESS, DOMAIN
@@ -82,7 +83,9 @@ class FakeProviderB(BaseProviderAdapter):
                 item_lineage = lineage.model_copy(update={
                     "upstream_source": source,
                     "upstream_family": family,
-                    "parent_observable_value": asn or lineage.parent_observable_value
+                    "parent_observable_value": asn or lineage.parent_observable_value,
+                    "parent_observable_type": ObservableType.ASN if asn else lineage.parent_observable_type,
+                    "parent_namespace": "" if asn else lineage.parent_namespace,
                 })
                 results.append(Observation(
                     observable=obs_org,

@@ -11,9 +11,11 @@ from spider.providers.base import BaseProviderAdapter, ProviderHealth, ProviderE
 from spider.models.enums import ObservableType, NetworkClass, ProviderState
 from spider.models.observable import NormalizedObservable
 from spider.models.observation import Observation
+from spider.discovery.vn_sources import DIRECT_MAIGRET_SITES
 
 
 class MaigretAdapter(BaseProviderAdapter):
+    request_budget_supported = True
     def __init__(self, python_exec=None, database_path=None):
         self.python_exec = python_exec or sys.executable
         self.database_path = database_path
@@ -76,6 +78,8 @@ class MaigretAdapter(BaseProviderAdapter):
         status = row.get("status", "")
         if isinstance(status, dict): status = status.get("status", "")
         if row.get("error"): return "unknown"
+        if row.get("negative_control", "not_required") not in ("not_required", "available"):
+            return "unknown"
         return str(status).casefold()
 
     @classmethod
@@ -84,6 +88,17 @@ class MaigretAdapter(BaseProviderAdapter):
         manifest = next((r for r in rows if r.get("kind") == "manifest"), {})
         sites = {r.get("sitename") or r.get("site_name"): r for r in rows
                  if r.get("sitename") or r.get("site_name")}
+        priority_sites = {}
+        for platform, details in manifest.get("priority_sites", {}).items():
+            details = dict(details) if isinstance(details, dict) else {"state": str(details)}
+            row = sites.get(details.get("site_name"))
+            if row:
+                details["outcome"] = cls.state(row).upper()
+                if row.get("verification_reason"):
+                    details["reason"] = row["verification_reason"]
+            elif details.get("state") == "SCHEDULED":
+                details["outcome"] = "UNPROCESSED"
+            priority_sites[platform] = details
         found = sum(cls.state(r) in ("found", "claimed") for r in sites.values())
         absent = sum(cls.state(r) == "available" for r in sites.values())
         invalid = sum(cls.state(r) == "illegal" for r in sites.values())
@@ -98,20 +113,63 @@ class MaigretAdapter(BaseProviderAdapter):
                 "controls_pending": controls_pending, "controls_unknown": controls_unknown,
                 "non_unique_detections": sum(r.get("verification_reason") == "non_unique_detection" for r in sites.values()),
                 "excluded_ineligible": manifest.get("excluded_ineligible", 0),
-                "database_sha256": manifest.get("database_sha256")}
+                "priority_sites": priority_sites,
+                "database_sha256": manifest.get("database_sha256"),
+                "source_scope": manifest.get("source_scope", "GLOBAL_LIMIT"),
+                "requested_sites": manifest.get("requested_sites", []),
+                "requested_missing": manifest.get("requested_missing", []),
+                "search_only_sites": manifest.get("search_only_sites", [])}
 
     async def execute(self, target, lineage, **kwargs):
         started = time.perf_counter()
         timeout = max(0.1, float(kwargs.get("timeout_seconds", 180)))
         limit = kwargs.get("username_site_limit", 500)
         if limit not in (0, 50, 500): raise ValueError("Unsupported site budget")
+        scope = kwargs.get("username_source_scope")
+        if scope is None:
+            scope = {0: "GLOBAL_ALL", 50: "GLOBAL_50", 500: "GLOBAL_500"}[limit]
+        if scope not in ("VN_COMMON_CORE", "GLOBAL_50", "GLOBAL_500", "GLOBAL_ALL"):
+            raise ValueError("Unsupported username source scope")
+        if scope == "VN_COMMON_CORE":
+            requested_sites = list(DIRECT_MAIGRET_SITES)
+            limit = len(requested_sites)
+        else:
+            requested_sites = None
+            limit = {"GLOBAL_50": 50, "GLOBAL_500": 500, "GLOBAL_ALL": 0}[scope]
         progress = kwargs.get("on_progress")
         env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
         proc = None
         timed_out = False
         with tempfile.TemporaryDirectory(prefix="spider-maigret-") as folder:
             report = Path(folder) / "results.ndjson"
-            spec = {"username": target.canonical_value, "report": str(report), "site_limit": limit}
+            spec = {"username": target.canonical_value, "report": str(report),
+                    "site_limit": limit, "source_scope": scope}
+            if requested_sites is not None:
+                spec["requested_sites"] = requested_sites
+            ledger, budget = kwargs.get("request_ledger"), kwargs.get("execution_budget")
+            if ledger is not None:
+                spec["max_requests"] = max(0, budget.max_requests - ledger.requests_count)
+                spec["fingerprint_salt"] = ledger._fingerprint_salt.hex()
+            accounted = 0
+            journal_events, recorded_outcomes = {}, set()
+            recorder = kwargs.get("egress_recorder")
+            async def account_requests():
+                nonlocal accounted
+                rows = self.rows(report.read_bytes()) if report.exists() else []
+                events = [row for row in rows if row.get("kind") == "request"]
+                for event in events[accounted:]:
+                    if ledger is not None:
+                        ledger.request(budget, self.provider_id(), "HTTP", event.get("purpose", "lookup"))
+                    if recorder:
+                        journal_events[event["sequence"]] = await recorder.begin(event["destination"],
+                            event["purpose"], fingerprint=event["identifier_fingerprint"])
+                    accounted += 1
+                if recorder:
+                    for event in rows:
+                        sequence = event.get("sequence")
+                        if event.get("kind") == "request_outcome" and sequence in journal_events and sequence not in recorded_outcomes:
+                            await recorder.finish(journal_events[sequence], event["outcome"])
+                            recorded_outcomes.add(sequence)
             if self.database_path: spec["database"] = str(self.database_path)
             try:
                 proc = await asyncio.create_subprocess_exec(*self.build_command(target),
@@ -126,11 +184,13 @@ class MaigretAdapter(BaseProviderAdapter):
                             break
                         await asyncio.wait({communication}, timeout=min(1, remaining))
                         if progress and report.exists():
+                            await account_requests()
                             await progress(self.coverage(report.read_bytes()))
                 finally:
                     if proc.returncode is None:
                         proc.kill()
                     await communication
+                    await account_requests()
                 raw = report.read_bytes() if report.exists() else b""
             except OSError:
                 raw = b""
@@ -145,7 +205,7 @@ class MaigretAdapter(BaseProviderAdapter):
         return ProviderExecutionResult(raw_content=raw, observations=observations,
             exit_code=0 if complete else 124 if timed_out else 1,
             outcome="PARTIAL" if partial and coverage["checked"] else "FAILED" if partial else "COMPLETED",
-            error_message=error, metadata={"coverage": coverage},
+            error_message=error, metadata={"coverage": coverage, "requests": accounted},
             mime_type="application/x-ndjson", duration_ms=(time.perf_counter()-started)*1000,
             raw_items_count=coverage["checked"], accepted_count=len(observations))
 
@@ -158,6 +218,8 @@ class MaigretAdapter(BaseProviderAdapter):
                  if r.get("sitename") or r.get("site_name")}
         for row in sites.values():
             if self.state(row) not in ("found", "claimed"): continue
+            if row.get("negative_control", "not_required") not in ("not_required", "available"):
+                continue
             site = row.get("sitename") or row.get("site_name")
             status = row.get("status")
             url = row.get("url_user") or row.get("url") or (status.get("url") if isinstance(status, dict) else None)
@@ -174,11 +236,14 @@ class MaigretAdapter(BaseProviderAdapter):
                             identity_verified=False, platform=site)
             for typ, value, parent in ((ObservableType.ACCOUNT, account, username),
                                        (ObservableType.URL, url, account)):
-                results.append(Observation(observable=self.normalize({"type": typ, "value": value}),
+                results.append(Observation(observable=self.normalize({"type": typ, "value": value,
+                        "namespace": site.casefold() if typ == ObservableType.ACCOUNT else ""}),
                     lineage=lineage.model_copy(update={"upstream_source": f"maigret_{site.lower()}",
-                        "upstream_family": "SOCIAL_MEDIA", "parent_observable_value": parent}),
+                        "upstream_family": "SOCIAL_MEDIA", "parent_observable_value": parent,
+                        "parent_observable_type": ObservableType.ACCOUNT if parent == account else lineage.parent_observable_type,
+                        "parent_namespace": site.casefold() if parent == account else lineage.parent_namespace}),
                     confidence=0.80, raw_data=evidence))
         return results
 
     def normalize(self, raw_item):
-        return NormalizedObservable(type=raw_item["type"], value=raw_item["value"])
+        return NormalizedObservable(type=raw_item["type"], value=raw_item["value"], namespace=raw_item.get("namespace", ""))

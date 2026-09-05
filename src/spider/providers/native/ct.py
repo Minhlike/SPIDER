@@ -3,6 +3,8 @@ import json
 import logging
 import urllib.request
 import urllib.parse
+import httpx
+from spider.providers.transport import provider_client
 from typing import List, Dict, Any, Optional
 from spider.providers.base import BaseProviderAdapter, ProviderHealth, ProviderExecutionResult
 from spider.models.enums import ObservableType, NetworkClass, ProviderState
@@ -13,6 +15,7 @@ from spider.models.provenance import SourceLineage
 logger = logging.getLogger(__name__)
 
 class NativeCertificateTransparencyAdapter(BaseProviderAdapter):
+    request_budget_supported = True
     def provider_id(self) -> str:
         return "native_ct"
 
@@ -45,22 +48,14 @@ class NativeCertificateTransparencyAdapter(BaseProviderAdapter):
 
     async def execute(self, target: NormalizedObservable, lineage: SourceLineage, **kwargs) -> ProviderExecutionResult:
         domain = target.canonical_value
-        loop = asyncio.get_running_loop()
-
-        def _fetch_ct_sync() -> List[Dict[str, Any]]:
-            url = f"https://crt.sh/?q={urllib.parse.quote(domain)}&output=json"
-            req = urllib.request.Request(url, headers={"User-Agent": "SPIDER-OSINT/2.0"})
-            try:
-                with urllib.request.urlopen(req, timeout=3) as resp:
-                    return json.loads(resp.read().decode("utf-8", errors="ignore"))
-            except Exception:
-                return []
-
         try:
-            try:
-                data = await asyncio.wait_for(loop.run_in_executor(None, _fetch_ct_sync), timeout=3.5)
-            except asyncio.TimeoutError:
-                data = []
+            async with provider_client(self.provider_id(), kwargs, timeout=3,
+                                       follow_redirects=True) as client:
+                response = await client.get("https://crt.sh/", params={"q": domain, "output": "json"})
+                response.raise_for_status()
+                data = response.json()
+                if not isinstance(data, list):
+                    raise ValueError("Invalid response shape")
             raw_bytes = json.dumps(data, indent=2).encode("utf-8")
             observations = self.parse(raw_bytes, lineage)
             return ProviderExecutionResult(
@@ -69,13 +64,12 @@ class NativeCertificateTransparencyAdapter(BaseProviderAdapter):
                 exit_code=0,
                 mime_type="application/json"
             )
-        except Exception as ex:
-            logger.error(f"CT query error: {ex}")
+        except (httpx.HTTPError, ValueError):
             return ProviderExecutionResult(
-                raw_content=str(ex).encode("utf-8"),
+                raw_content=b"",
                 observations=[],
                 exit_code=1,
-                error_message=str(ex),
+                error_message="Certificate transparency response unavailable or invalid",
                 mime_type="text/plain"
             )
 

@@ -12,21 +12,24 @@ class GraphRepository:
         result = await session.execute(
             select(EntityRecord).where(
                 EntityRecord.case_id == entity.case_id,
+                EntityRecord.observable_type == entity.type.value,
+                EntityRecord.namespace == entity.namespace,
                 EntityRecord.canonical_name == entity.canonical_name
             )
         )
         existing = result.scalar_one_or_none()
         if existing:
-            existing.last_seen = entity.last_seen
+            existing.last_seen = max(existing.last_seen, entity.last_seen.replace(tzinfo=None)) if existing.last_seen.tzinfo is None else max(existing.last_seen, entity.last_seen)
             existing.observation_count += 1
             if entity.metadata:
-                existing.metadata_json.update(entity.metadata)
+                existing.metadata_json = {**(existing.metadata_json or {}), **entity.metadata}
             return existing
         else:
             rec = EntityRecord(
                 id=entity.id,
                 case_id=entity.case_id,
                 observable_type=entity.type.value,
+                namespace=entity.namespace,
                 canonical_name=entity.canonical_name,
                 first_seen=entity.first_seen,
                 last_seen=entity.last_seen,
@@ -42,10 +45,13 @@ class GraphRepository:
         return list(result.scalars().all())
 
     @staticmethod
-    async def get_entity_by_canonical(session: AsyncSession, case_id: str, canonical_name: str) -> Optional[EntityRecord]:
+    async def get_entity_by_canonical(session: AsyncSession, case_id: str, canonical_name: str,
+                                      observable_type, namespace: str = "") -> Optional[EntityRecord]:
         result = await session.execute(
             select(EntityRecord).where(
                 EntityRecord.case_id == case_id,
+                EntityRecord.observable_type == observable_type,
+                EntityRecord.namespace == namespace,
                 EntityRecord.canonical_name == canonical_name
             )
         )
@@ -68,7 +74,7 @@ class GraphRepository:
         )
         existing = result.scalar_one_or_none()
         if existing:
-            existing.last_observed = assertion.last_observed
+            existing.last_observed = max(existing.last_observed, assertion.last_observed.replace(tzinfo=None)) if existing.last_observed.tzinfo is None else max(existing.last_observed, assertion.last_observed)
             existing.confidence = max(existing.confidence, assertion.confidence)
             existing.independent_source_count = max(existing.independent_source_count, assertion.independent_source_count)
             # merge source families

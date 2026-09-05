@@ -27,6 +27,7 @@ class TargetRecord(Base):
     id = Column(String(64), primary_key=True)
     case_id = Column(String(64), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
     observable_type = Column(String(32), nullable=False, index=True)
+    namespace = Column(String(255), nullable=False, default="", server_default="")
     raw_input = Column(Text, nullable=False)
     canonical_value = Column(String(512), nullable=False, index=True)
     scope_authorized = Column(Boolean, default=False)
@@ -52,7 +53,10 @@ class ObservationRecord(Base):
     case_id = Column(String(64), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
     run_id = Column(String(64), nullable=False, index=True)
     task_id = Column(String(64), nullable=False, index=True)
+    seed_id = Column(String(64), nullable=True, index=True)
     observable_type = Column(String(32), nullable=False, index=True)
+    namespace = Column(String(255), nullable=False, default="", server_default="")
+    observable_metadata = Column(JSON, default=dict)
     observable_value = Column(Text, nullable=False)
     canonical_value = Column(String(512), nullable=False, index=True)
     provider_id = Column(String(64), nullable=False, index=True)
@@ -61,6 +65,9 @@ class ObservationRecord(Base):
     upstream_source = Column(String(128), nullable=True)
     upstream_family = Column(String(64), nullable=False, index=True)
     parent_observable_value = Column(String(512), nullable=True)
+    parent_observable_type = Column(String(32), nullable=True)
+    parent_namespace = Column(String(255), nullable=False, default="", server_default="")
+    raw_artifact_sha256 = Column(String(64), nullable=True)
     configuration_hash = Column(String(64), default="default")
     confidence = Column(Float, default=0.8)
     raw_data_json = Column(JSON, default=dict)
@@ -77,6 +84,7 @@ class EntityRecord(Base):
     id = Column(String(64), primary_key=True)
     case_id = Column(String(64), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
     observable_type = Column(String(32), nullable=False, index=True)
+    namespace = Column(String(255), nullable=False, default="", server_default="")
     canonical_name = Column(String(512), nullable=False, index=True)
     first_seen = Column(DateTime, default=utc_now)
     last_seen = Column(DateTime, default=utc_now)
@@ -84,7 +92,7 @@ class EntityRecord(Base):
     metadata_json = Column(JSON, default=dict)
 
     __table_args__ = (
-        Index("idx_entity_case_canonical", "case_id", "canonical_name", unique=True),
+        Index("idx_entity_typed_identity", "case_id", "observable_type", "namespace", "canonical_name", unique=True),
     )
 
 class AssertionRecord(Base):
@@ -158,3 +166,49 @@ class ProviderRunRecord(Base):
     tasks_count = Column(Integer, default=0)
     observations_count = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
+    metadata_json = Column(JSON, default=dict)
+
+
+class EgressRecord(Base):
+    __tablename__ = "egress_events"
+    id = Column(String(64), primary_key=True)
+    case_id = Column(String(64), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id = Column(String(64), nullable=False, index=True)
+    task_id = Column(String(64), nullable=False)
+    seed_id = Column(String(64), nullable=True)
+    provider_id = Column(String(64), nullable=False)
+    identifier_type = Column(String(32), nullable=False)
+    identifier_fingerprint = Column(String(64), nullable=False)
+    destination = Column(String(255), nullable=False)
+    purpose = Column(String(64), nullable=False)
+    derivation = Column(String(16), nullable=False)
+    authentication = Column(String(16), nullable=False)
+    outcome = Column(String(32), nullable=False)
+    policy_decision = Column(String(32), nullable=False, default="ALLOWED")
+    budget_decision = Column(String(32), nullable=False, default="RESERVED")
+    observed_at = Column(DateTime, default=utc_now)
+
+
+class ProviderAuditRecord(Base):
+    __tablename__ = "provider_audits"
+    provider_id = Column(String(64), primary_key=True)
+    provider_version = Column(String(64), nullable=False)
+    adapter_version = Column(String(64), nullable=False)
+    state = Column(String(32), nullable=False)
+    failure_streak = Column(Integer, default=0)
+    success_streak = Column(Integer, default=0)
+    report_sha256 = Column(String(64), nullable=False)
+    checked_at = Column(DateTime, default=utc_now)
+
+
+class EvidenceReviewRecord(Base):
+    __tablename__ = "evidence_reviews"
+    id = Column(String(64), primary_key=True)
+    case_id = Column(String(64), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
+    seed_id = Column(String(64), nullable=False)
+    claim_id = Column(String(64), nullable=False)
+    observation_id = Column(String(64), nullable=False)
+    role = Column(String(32), nullable=False)
+    dependency = Column(String(32), nullable=False)
+    origin_id = Column(String(64), nullable=True)
+    reviewed_at = Column(DateTime, default=utc_now)

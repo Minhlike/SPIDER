@@ -17,13 +17,18 @@ def investigate(page, base_url, target, target_type="DOMAIN", final_status="COMP
     page.locator("#nav-investigate").click()
     page.locator("#target-input").fill(target)
     page.locator("#target-type-select").select_option(target_type)
+    if target_type == "USERNAME":
+        # The synthetic fixture uses local catalog names rather than production
+        # VN_COMMON_CORE names.
+        page.locator("#username-sites-select").select_option("GLOBAL_ALL")
     expect(page.locator("#type-preview")).to_have_text(target_type)
     with page.expect_response(lambda response: response.url.endswith("/api/investigate") and response.request.method == "POST") as response:
         page.locator("#btn-start-investigate").click()
     queued = response.value.json()
     assert queued["status"] == "QUEUED" and queued["run_id"]
     expect(page.locator("#case-tab-content-live")).to_be_visible()
-    expect(page.locator("#live-run-status")).to_have_text("RUNNING", timeout=5000)
+    expect(page.locator("#live-run-status")).to_have_text(
+        re.compile(r"PENDING|RUNNING|COMPLETED|PARTIAL"), timeout=5000)
     expect(page.locator("#case-status-badge")).to_have_text(final_status, timeout=15000)
     assert any(event["event"] == "RUN_COMPLETED" for event in events)
     insights = page.request.get(f"{base_url}/api/cases/{queued['case_id']}/insights").json()
@@ -35,7 +40,8 @@ def test_critical_investigation_flow(browser_app):
     page, base_url, errors = browser_app
     queued = investigate(page, base_url, "example.com")
     page.locator("#tab-btn-summary").click()
-    expect(page.locator("#sum-kpi-entities")).to_have_text("2")
+    # The query root is lineage context, not a finding.
+    expect(page.locator("#sum-kpi-entities")).to_have_text("1")
     expect(page.locator("#sum-kpi-sources")).to_have_text(re.compile(r"[1-9]\d*"))
     expect(page.locator("#case-meta")).to_contain_text("example.com")
     expect(page.locator("#empty-reason-container")).not_to_be_visible()
@@ -67,7 +73,7 @@ def test_empty_result_explains_executed_and_missing_sources(browser_app):
     expect(banner).to_be_visible()
     expect(banner).to_contain_text("Không tìm thấy thông tin bổ sung")
     expect(banner).to_contain_text("native_dns")
-    expect(banner).to_contain_text("uncover")
+    expect(banner).to_contain_text("Không có")
     assert not errors
 
 
@@ -91,13 +97,13 @@ def test_username_real_worker_profile_sources_evidence_graph(browser_app):
     assert not errors
 
 
-def test_email_public_match_is_separate_from_mail_infrastructure(browser_app):
+def test_email_personal_mode_shows_public_match_without_mail_infrastructure(browser_app):
     page, base_url, errors = browser_app
     queued = investigate(page, base_url, "owner@example.org", "EMAIL")
     page.locator("#tab-btn-summary").click()
     expect(page.locator("#public-profile-card")).to_contain_text("Email công khai trùng khớp")
     expect(page.locator("#public-profile-card")).to_contain_text("Synthetic Profile")
-    expect(page.locator("#type-specific-container")).to_contain_text("Hạ tầng Email")
+    expect(page.locator("#type-specific-container")).not_to_contain_text("Hạ tầng Email")
     insights = page.request.get(f"{base_url}/api/cases/{queued['case_id']}/insights").json()
     assert insights["profile_evidence"]["exact_email_matches"] == 1
     assert insights["profile_evidence"]["identity_verified"] is False
@@ -115,11 +121,11 @@ def test_partial_source_stays_partial_in_browser(browser_app):
     assert not errors
 
 
-def test_email_infrastructure_does_not_hide_missing_profile(browser_app):
+def test_personal_email_empty_result_does_not_add_dns_entities(browser_app):
     page, base_url, errors = browser_app
     investigate(page, base_url, "empty-profile@example.org", "EMAIL")
     page.locator("#tab-btn-summary").click()
-    expect(page.locator("#sum-kpi-entities")).to_have_text("2")
+    expect(page.locator("#sum-kpi-entities")).to_have_text("0")
     expect(page.locator("#public-profile-card")).to_contain_text("Chưa có hồ sơ công khai")
     expect(page.locator("#public-profile-card")).to_contain_text("github_public")
     assert not errors

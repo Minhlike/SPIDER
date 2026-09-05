@@ -18,6 +18,9 @@ async def get_case_graph(
     search: Optional[str] = None,
     max_nodes: int = 250,
     center_node_id: Optional[str] = None,
+    target_id: Optional[str] = None,
+    question: str = "all",
+    scoped: bool = False,
     service: SpiderService = Depends(get_srv)
 ):
     is_temp = False
@@ -27,6 +30,17 @@ async def get_case_graph(
     try:
         all_entities = await service.get_case_entities(case_id)
         all_assertions = await service.get_case_assertions(case_id)
+        if scoped or target_id:
+            from spider.service.projection import project
+            async with service.db_manager.session_factory() as session:
+                try:
+                    view = await project(session, case_id, target_id, question)
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from None
+            nodes, edges = {e.id for e in view.entities}, {a.id: a for a in view.assertions}
+            all_entities = [e for e in all_entities if e["id"] in nodes]
+            all_assertions = [{**a, "confidence": edges[a["id"]].confidence,
+                "source_families": edges[a["id"]].source_families} for a in all_assertions if a["id"] in edges]
         
         # 1. Filter Entities
         filtered_entities = all_entities
@@ -80,6 +94,7 @@ async def get_case_graph(
                     "id": ent["id"],
                     "label": ent["canonical_name"],
                     "type": ent["type"],
+                    "namespace": ent.get("namespace", ""),
                     "observation_count": ent["observation_count"],
                     "first_seen": ent["first_seen"]
                 }

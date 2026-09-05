@@ -9,6 +9,7 @@ class Entity(SpiderBaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     case_id: str
     type: ObservableType
+    namespace: str = ""
     canonical_name: str
     first_seen: datetime = Field(default_factory=utc_now)
     last_seen: datetime = Field(default_factory=utc_now)

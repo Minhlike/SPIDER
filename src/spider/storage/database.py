@@ -35,8 +35,17 @@ class DatabaseManager:
         )
 
     async def initialize(self) -> None:
+        from spider.storage.migrations import migrate_typed_identity
+        from spider.resolution.rebuilder import KnowledgeGraphRebuilder
         async with self.engine.begin() as conn:
+            # Explicit BEGIN also covers SQLite DDL, including a rollback on rebuild failure.
+            await conn.exec_driver_sql("BEGIN IMMEDIATE")
+            legacy_cases = await conn.run_sync(migrate_typed_identity)
             await conn.run_sync(Base.metadata.create_all)
+            async with AsyncSession(bind=conn, expire_on_commit=False) as session:
+                for case_id in legacy_cases:
+                    await KnowledgeGraphRebuilder().rebuild_case(session, case_id)
+                await session.flush()
 
     async def get_session(self) -> AsyncSession:
         return self.session_factory()

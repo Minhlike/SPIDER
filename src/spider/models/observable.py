@@ -36,9 +36,16 @@ def canonicalize_observable(obs_type: ObservableType, value: str) -> str:
 class NormalizedObservable(SpiderBaseModel):
     type: ObservableType
     value: str
+    namespace: str = ""
     canonical_value: str = ""
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
     def model_post_init(self, __context: Any) -> None:
+        self.namespace = self.namespace.strip().casefold()
         if not self.canonical_value:
             self.canonical_value = canonicalize_observable(self.type, self.value)
+
+    @property
+    def identity(self) -> tuple:
+        """Identity within a case; an empty namespace means unscoped, not wildcard."""
+        return self.type.value, self.namespace, self.canonical_value

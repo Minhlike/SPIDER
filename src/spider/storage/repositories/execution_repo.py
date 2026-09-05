@@ -36,6 +36,7 @@ class ExecutionRepository:
             completed_at=run.completed_at,
             tasks_count=run.tasks_count,
             observations_count=run.observations_count,
+            metadata_json=run.metadata,
             error_message=run.error_message
         )
         session.add(rec)
@@ -50,6 +51,7 @@ class ExecutionRepository:
             rec.completed_at = run.completed_at
             rec.tasks_count = run.tasks_count
             rec.observations_count = run.observations_count
+            rec.metadata_json = run.metadata
             rec.error_message = run.error_message
             return rec
         return None

@@ -15,6 +15,7 @@ UNCOVER_ENGINES = list(access.REQUIREMENTS)
 
 
 class UncoverAdapter(BaseProviderAdapter):
+    request_budget_supported = True
     def __init__(self, binary_path: Optional[str] = None, key_loader=None):
         self.binary_path = Path(binary_path) if binary_path else access.PRIVATE_BINARY
         self.key_loader = key_loader or access.saved_keys
@@ -26,7 +27,7 @@ class UncoverAdapter(BaseProviderAdapter):
         return "v1.2.1"
 
     def adapter_version(self) -> str:
-        return "1.1.0"
+        return "1.2.0"
 
     def capabilities(self) -> List[str]:
         return ["INTERNET_INTELLIGENCE"]
@@ -87,6 +88,9 @@ class UncoverAdapter(BaseProviderAdapter):
         presence = access.engine_presence(keys)
         statuses, rows = {}, []
         timeout = max(0.1, float(kwargs.get("timeout_seconds", 60)))
+        ledger, budget = kwargs.get("request_ledger"), kwargs.get("execution_budget")
+        recorder = kwargs.get("egress_recorder")
+        request_count = 0
         try:
             for engine in UNCOVER_ENGINES:
                 remaining = timeout - (time.monotonic() - started)
@@ -94,9 +98,22 @@ class UncoverAdapter(BaseProviderAdapter):
                     result = access.result_state(engine, "MISSING_CREDENTIAL", "REQUIRED_FIELDS_MISSING", "search")
                 elif remaining <= 0:
                     result = access.result_state(engine, "NETWORK_ERROR", "TIMEOUT", "search")
+                elif ledger is not None and ledger.requests_count >= budget.max_requests:
+                    result = access.result_state(engine, "PLAN/QUOTA_LIMIT", "PAGE_LIMIT", "search")
                 else:
                     result = await access.run_engine(engine, keys, mode="search", query=self.query_for(target, engine),
                         binary=self.binary_path, timeout=min(23, remaining))
+                    journal = result.get("request_journal", [])
+                    if len(journal) != 1:
+                        result = access.result_state(engine, "NETWORK_ERROR", "UNEXPECTED_RESPONSE", "search")
+                    else:
+                        entry = journal[0]
+                        if ledger is not None:
+                            ledger.request(budget, self.provider_id(), "HTTP", f"{engine}_search")
+                        request_count += 1
+                        if recorder:
+                            event = await recorder.begin(entry["destination"], entry["purpose"], credentialed=True)
+                            await recorder.finish(event, entry["outcome"])
                 rows.extend(result.pop("results"))
                 statuses[engine] = result
             raw = "\n".join(json.dumps(row) for row in rows).encode()
@@ -107,7 +124,8 @@ class UncoverAdapter(BaseProviderAdapter):
             return ProviderExecutionResult(raw_content=raw, observations=observations,
                 exit_code=0 if outcome == "COMPLETED" else 1, outcome=outcome,
                 error_message=None if outcome == "COMPLETED" else "Uncover engines unavailable; see per-engine status",
-                metadata={"engines": statuses, "bounded_to_first_page": True},
+                metadata={"engines": statuses, "bounded_to_first_page": True,
+                          "request_count": request_count, "request_journal_verified": True},
                 raw_items_count=len(rows), accepted_count=len(observations), mime_type="application/x-ndjson",
                 duration_ms=(time.monotonic()-started)*1000)
         finally:

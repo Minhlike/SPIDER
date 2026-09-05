@@ -56,7 +56,7 @@ class SingleDBWriter:
                         if not fut.done():
                             fut.set_result(result)
                 except Exception as ex:
-                    logger.exception("DB Writer transaction error: %s", ex)
+                    logger.error("DB writer transaction failed (%s)", type(ex).__name__)
                     if not fut.done():
                         fut.set_exception(ex)
                 finally:
@@ -64,4 +64,4 @@ class SingleDBWriter:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error("Unexpected error in DB writer loop: %s", e)
+                logger.error("Unexpected DB writer failure (%s)", type(e).__name__)

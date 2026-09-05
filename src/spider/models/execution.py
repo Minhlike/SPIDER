@@ -42,3 +42,4 @@ class ProviderRun(SpiderBaseModel):
     tasks_count: int = 0
     observations_count: int = 0
     error_message: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)

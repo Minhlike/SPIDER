@@ -4,6 +4,10 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy import select
 from spider.storage.schema import TargetRecord, EntityRecord, AssertionRecord, ObservationRecord, TaskRunRecord, ProviderRunRecord
 from spider.models.enums import ObservableType
+from spider.service.projection import project
+from spider.service.coverage import coverage_report
+from spider.service.evidence_analysis import analyze, public_url
+from spider.service.review import hypotheses
 
 logger = logging.getLogger(__name__)
 
@@ -31,17 +35,18 @@ def infer_phone_country(phone: str) -> str:
 
 class CaseInsightsBuilder:
     @staticmethod
-    async def build_insights(session, case_id: str, case_rec) -> Dict[str, Any]:
+    async def build_insights(session, case_id: str, case_rec, target_id=None, question="all") -> Dict[str, Any]:
         # 1. Fetch Targets
         t_stmt = select(TargetRecord).where(TargetRecord.case_id == case_id)
         targets = (await session.execute(t_stmt)).scalars().all()
-        seed_target = targets[0] if targets else None
+        projection = await project(session, case_id, target_id, question)
+        seed_target = projection.seed
         target_val = seed_target.canonical_value if seed_target else ""
         target_type = seed_target.observable_type if seed_target else "UNKNOWN"
 
         # 2. Fetch Entities
         e_stmt = select(EntityRecord).where(EntityRecord.case_id == case_id)
-        entities = (await session.execute(e_stmt)).scalars().all()
+        entities = projection.finding_entities
         entity_map = {e.id: e for e in entities}
         entity_type_counts: Dict[str, int] = {}
         for e in entities:
@@ -49,11 +54,11 @@ class CaseInsightsBuilder:
 
         # 3. Fetch Assertions
         a_stmt = select(AssertionRecord).where(AssertionRecord.case_id == case_id)
-        assertions = (await session.execute(a_stmt)).scalars().all()
+        assertions = projection.assertions
 
         # Counts and profile evidence must include the whole case, not the first 300 rows.
         o_stmt = select(ObservationRecord).where(ObservationRecord.case_id == case_id).order_by(ObservationRecord.created_at.asc())
-        observations = (await session.execute(o_stmt)).scalars().all()
+        observations = projection.evidence_observations
 
         # 5. Fetch Task Runs
         tr_stmt = select(TaskRunRecord).where(TaskRunRecord.case_id == case_id)
@@ -65,13 +70,18 @@ class CaseInsightsBuilder:
         latest_run = provider_runs[0] if provider_runs else None
         if latest_run:
             task_runs = [task for task in task_runs if task.run_id == latest_run.id]
+        task_runs = [task for task in task_runs if seed_target and (task.metadata_json or {}).get("seed_id") == seed_target.id]
+        run_metadata = (latest_run.metadata_json or {}) if latest_run else {}
+        expected_sources = set(run_metadata.get("expected_sources", {}).get(seed_target.id, [])) if seed_target else set()
 
         profiles = {}
         for observation in observations:
             raw = observation.raw_data_json or {}
-            if observation.observable_type != "ACCOUNT" or not isinstance(raw, dict):
+            if observation.observable_type not in ("ACCOUNT", "URL") or not isinstance(raw, dict):
                 continue
-            if raw.get("match_basis") not in ("exact_public_email", "username_only"):
+            if raw.get("match_basis") not in ("exact_public_email", "email_hash_public_profile",
+                                               "verified_account_from_email_profile", "username_only",
+                                               "signed_in_browser_candidate"):
                 continue
             url = raw.get("profile_url")
             if not isinstance(url, str) or not url.startswith(("https://", "http://")):
@@ -79,9 +89,18 @@ class CaseInsightsBuilder:
             existing = profiles.get(url)
             if existing and existing["match_basis"] == "exact_public_email":
                 continue
+            explicit_links = []
+            for link in (raw.get("explicit_links") if isinstance(raw.get("explicit_links"), list) else [])[:50]:
+                safe = public_url(link.get("url")) if isinstance(link, dict) else None
+                if safe and safe != url and link.get("basis") in ("rel_me", "jsonld_sameAs"):
+                    explicit_links.append({"url": safe, "basis": link["basis"]})
             profiles[url] = {"profile_url": url, "platform": raw.get("platform", "Web"),
                 "display_name": raw.get("display_name", ""), "bio": raw.get("bio", ""),
-                "website": raw.get("website", ""), "match_basis": raw["match_basis"],
+                "website": raw.get("website", ""), "location": raw.get("location", ""),
+                "job_title": raw.get("job_title", ""), "company": raw.get("company", ""),
+                "match_basis": raw["match_basis"],
+                "verification_state": raw.get("verification_state", "PUBLIC_SELF_PUBLISHED"),
+                "explicit_links": explicit_links,
                 "provider_id": observation.provider_id, "observation_id": observation.id,
                 "observed_at": observation.created_at.isoformat(), "identity_verified": False}
         public_profiles = list(profiles.values())
@@ -117,7 +136,32 @@ class CaseInsightsBuilder:
             "asn": None,
             "cidr": None,
             "organization": None,
-            "associated_hostnames": []
+            "associated_hostnames": [],
+            "country": None,
+            "region": None,
+            "city": None,
+            "postal_code": None,
+            "latitude": None,
+            "longitude": None,
+            "time_zone": None,
+            "isp": None,
+            "rir": None,
+            "network_name": None,
+            "start_address": None,
+            "end_address": None,
+            "registry_status": [],
+            "registry_events": [],
+            "contacts": [],
+            "is_proxy": None,
+            "is_vpn": None,
+            "is_datacenter": None,
+            "is_residential": None,
+            "proxy_type": None,
+            "proxy_type_description": None,
+            "proxy_level": None,
+            "proxy_range": None,
+            "proxy_provider": None,
+            "source_observations": []
         }
 
         # Username Insights
@@ -181,9 +225,59 @@ class CaseInsightsBuilder:
                     email_insights["spf_record"] = rval
                 elif "v=DMARC1" in rval:
                     email_insights["dmarc_record"] = rval
+                record_kind = raw.get("record_kind")
+                if target_type in ("IP_ADDRESS", "IPV6_ADDRESS") and record_kind in {
+                    "whatismyip_ip_intelligence", "rdap_network", "bgp_prefix"
+                }:
+                    ip_insights["source_observations"].append({
+                        "provider_id": o.provider_id,
+                        "upstream_source": o.upstream_source,
+                        "observed_at": o.created_at.isoformat() if o.created_at else None,
+                        "confidence": o.confidence,
+                        "record_kind": record_kind,
+                    })
+                if record_kind == "whatismyip_ip_intelligence":
+                    for field in ("country", "region", "city", "postal_code", "latitude",
+                                  "longitude", "time_zone", "isp", "is_proxy", "is_vpn",
+                                  "is_datacenter", "is_residential", "proxy_type",
+                                  "proxy_type_description", "proxy_level", "proxy_range",
+                                  "proxy_provider"):
+                        if raw.get(field) is not None:
+                            ip_insights[field] = raw[field]
+                    if raw.get("asn"):
+                        ip_insights["asn"] = raw["asn"]
+                    if raw.get("isp"):
+                        ip_insights["organization"] = raw["isp"]
+                elif record_kind == "rdap_network":
+                    for field in ("rir", "network_name", "start_address", "end_address"):
+                        if raw.get(field) is not None:
+                            ip_insights[field] = raw[field]
+                    ip_insights["registry_status"] = raw.get("status", [])
+                    ip_insights["registry_events"] = raw.get("events", [])
+                    ip_insights["contacts"] = raw.get("contacts", [])
+                    if raw.get("cidrs"):
+                        ip_insights["cidr"] = raw["cidrs"][0]
+                elif record_kind == "bgp_prefix":
+                    if raw.get("asn"):
+                        ip_insights["asn"] = raw["asn"]
+                    if raw.get("prefix"):
+                        ip_insights["cidr"] = raw["prefix"]
+                    if raw.get("organization"):
+                        ip_insights["organization"] = raw["organization"]
+                if (target_type in ("IP_ADDRESS", "IPV6_ADDRESS")
+                        and o.observable_type == "HOSTNAME"
+                        and o.canonical_value not in ip_insights["reverse_dns"]):
+                    ip_insights["reverse_dns"].append(o.canonical_value)
+                    ip_insights["associated_hostnames"].append(o.canonical_value)
 
         if target_type == "EMAIL" and "@" in target_val:
             email_insights["extracted_domain"] = target_val.split("@")[1]
+
+        unique_ip_sources = {}
+        for source in ip_insights["source_observations"]:
+            key = (source["provider_id"], source["upstream_source"], source["record_kind"])
+            unique_ip_sources[key] = source
+        ip_insights["source_observations"] = list(unique_ip_sources.values())
 
         # --- B. Provider Contributions ---
         provider_stats: Dict[str, Dict[str, Any]] = {}
@@ -196,16 +290,40 @@ class CaseInsightsBuilder:
                     "status": "SUCCESS",
                     "duration_ms": 0.0,
                     "error_message": None,
-                    "coverage": None
+                    "coverage": None,
+                    "budget_reason": None,
+                    "engine_states": None,
+                    "request_count": 0,
+                    "collection_reason": None,
+                    "scope": None,
                 }
             provider_stats[pid]["tasks_count"] += 1
             metadata = tr.metadata_json or {}
             provider_stats[pid]["duration_ms"] += metadata.get("duration_ms", 0)
+            provider_stats[pid]["request_count"] += metadata.get("request_count", 0)
+            if metadata.get("collection_reason"):
+                provider_stats[pid]["collection_reason"] = metadata["collection_reason"]
+            if metadata.get("scope"):
+                provider_stats[pid]["scope"] = metadata["scope"]
             if metadata.get("coverage"):
                 previous = provider_stats[pid]["coverage"] or {}
                 current = metadata["coverage"]
-                provider_stats[pid]["coverage"] = {key: previous.get(key, 0) + current.get(key, 0)
+                combined = {key: previous.get(key, 0) + current.get(key, 0)
                     for key in ("selected", "checked", "found", "not_found", "unknown", "invalid", "unprocessed", "non_unique_detections", "controls_pending", "controls_unknown")}
+                combined["priority_sites"] = {
+                    **previous.get("priority_sites", {}),
+                    **current.get("priority_sites", {}),
+                }
+                if current.get("source_scope"):
+                    combined["source_scope"] = current["source_scope"]
+                provider_stats[pid]["coverage"] = combined
+            if metadata.get("budget_reason"):
+                provider_stats[pid]["budget_reason"] = metadata["budget_reason"]
+            if metadata.get("engines"):
+                provider_stats[pid]["engine_states"] = {
+                    name: value.get("state", "UNKNOWN") for name, value in metadata["engines"].items()
+                    if isinstance(value, dict)
+                }
             priority = {"RUNNING": 6, "PARTIAL": 5, "FAILED": 4, "CANCELLED": 3, "COMPLETED": 1, "SUCCESS": 0}
             if priority.get(tr.status, 2) > priority.get(provider_stats[pid]["status"], 0):
                 provider_stats[pid]["status"] = tr.status
@@ -218,46 +336,75 @@ class CaseInsightsBuilder:
             pid = o.provider_id or "unknown"
             provider_obs_count[pid] = provider_obs_count.get(pid, 0) + 1
 
-        all_known_providers = ["native_dns", "native_rdap", "native_ct", "subfinder", "metabigor", "spiderfoot", "maigret", "github_public", "uncover"]
+        all_known_providers = ["native_dns", "native_rdap", "native_ct", "subfinder", "metabigor", "spiderfoot", "maigret", "github_public", "gravatar_public", "uncover", "coccoc_browser"]
+        provider_ids = list(dict.fromkeys(all_known_providers + sorted(
+            expected_sources | set(provider_stats) | set(provider_obs_count))))
         contributions = []
-        for pid in all_known_providers:
+        for pid in provider_ids:
             st = provider_stats.get(pid)
             obs_cnt = provider_obs_count.get(pid, 0)
+            applicable = pid in expected_sources
+            request_count = st.get("request_count", 0) if st else 0
             if st:
                 status_str = "SUCCESS" if obs_cnt > 0 else "NO_FINDINGS"
                 if st["status"] in ("FAILED", "ERROR"):
                     status_str = "ERROR"
                 elif st["status"] in ("PARTIAL", "RUNNING", "CANCELLED"):
                     status_str = st["status"]
+                execution_state = ("BLOCKED_UNMETERED" if st.get("budget_reason") == "UNMETERED_PROVIDER"
+                    else "CALLED" if request_count
+                    else "RUNNING" if st["status"] in ("RUNNING", "PENDING")
+                    else "EXECUTED_NO_NETWORK")
+                credential_state = "NOT_REQUIRED"
+                if pid == "uncover":
+                    states = set((st.get("engine_states") or {}).values())
+                    credential_state = ("MISSING_CREDENTIAL" if states == {"MISSING_CREDENTIAL"}
+                        else "CONFIGURED" if states
+                        else "NOT_CHECKED")
                 contributions.append({
                     "provider_id": pid,
+                    "applicability": "APPLICABLE" if applicable else "NOT_APPLICABLE",
+                    "execution_state": execution_state,
+                    "request_count": request_count,
+                    "contributed": obs_cnt > 0,
                     "status": status_str,
                     "observations_count": obs_cnt,
                     "tasks_count": st["tasks_count"],
                     "duration_ms": round(st.get("duration_ms", 0), 1),
                     "error_message": st.get("error_message"),
                     "coverage": st.get("coverage"),
-                    "credential_state": "OK" if pid != "uncover" else "MISSING_CREDENTIAL"
+                    "credential_state": credential_state,
+                    "engine_states": st.get("engine_states"),
+                    "collection_reason": st.get("collection_reason"),
+                    "scope": st.get("scope"),
                 })
             else:
+                execution_state = "NOT_SCHEDULED" if applicable else "NOT_APPLICABLE"
                 contributions.append({
                     "provider_id": pid,
-                    "status": "SKIPPED" if pid != "uncover" else "MISSING_CREDENTIAL",
+                    "applicability": "APPLICABLE" if applicable else "NOT_APPLICABLE",
+                    "execution_state": execution_state,
+                    "request_count": request_count,
+                    "contributed": False,
+                    "status": "SKIPPED",
                     "observations_count": 0,
                     "tasks_count": 0,
                     "duration_ms": 0.0,
-                    "error_message": "Không kích hoạt cho loại đối tượng này" if pid != "uncover" else "Chưa cấu hình API Key tìm kiếm",
-                    "credential_state": "OK" if pid != "uncover" else "MISSING_CREDENTIAL"
+                    "error_message": "Chưa được lập lịch" if applicable else "Không áp dụng cho loại đối tượng này",
+                    "credential_state": "NOT_CHECKED" if pid == "uncover" and applicable else "NOT_APPLICABLE" if pid == "uncover" else "NOT_REQUIRED",
+                    "engine_states": None,
+                    "collection_reason": None,
+                    "scope": None,
                 })
 
         # --- C. Empty Result Explanation ---
-        total_enrichments = max(0, len(entities) - (1 if seed_target else 0))
+        total_enrichments = len(entities)
         is_empty = (total_enrichments == 0 and len(assertions) == 0)
 
         checked_count = sum(1 for c in contributions if c["tasks_count"] > 0)
         no_findings_count = sum(1 for c in contributions if c["status"] == "NO_FINDINGS")
         error_count = sum(1 for c in contributions if c["status"] == "ERROR")
-        missing_cred_count = sum(1 for c in contributions if c["status"] == "MISSING_CREDENTIAL")
+        missing_cred_count = sum(1 for c in contributions if c["credential_state"] == "MISSING_CREDENTIAL")
 
         empty_reason = {
             "is_empty": is_empty,
@@ -273,10 +420,21 @@ class CaseInsightsBuilder:
 
         return {
             "case_id": case_id,
+            "evidence_analysis": {**analyze(observations), "hypotheses": await hypotheses(session, case_id, projection)},
+            "scope": {"target_id": seed_target.id if seed_target else None, "question": question,
+                "selection_required": len(targets) > 1 and seed_target is None,
+                "unscoped_observations_excluded": projection.excluded_unscoped,
+                "evidence_ids": [o.id for o in observations],
+                "targets": [{"id": t.id, "value": t.canonical_value, "type": t.observable_type, "namespace": t.namespace} for t in targets]},
             "target": target_val,
+            "coverage_report": coverage_report(task_runs, observations,
+                sorted(expected_sources)),
             "target_type": target_type,
             "status": latest_run.status if latest_run else "COMPLETED",
             "run_id": latest_run.id if latest_run else None,
+            "investigation_mode": (latest_run.metadata_json or {}).get("investigation_mode") if latest_run else None,
+            "browser_assisted": bool((latest_run.metadata_json or {}).get("browser_assisted")) if latest_run else False,
+            "budget_ledger": (latest_run.metadata_json or {}).get("budget_ledger") if latest_run else None,
             "entities_count": len(entities),
             "assertions_count": len(assertions),
             "observations_count": len(observations),
@@ -287,8 +445,8 @@ class CaseInsightsBuilder:
             "username_insights": username_insights,
             "public_profiles": public_profiles,
             "profile_evidence": {"profiles_count": len(public_profiles),
-                "checked_sources": sorted({t.provider_id for t in task_runs if t.provider_id in ("maigret", "github_public")}),
-                "exact_email_matches": sum(p["match_basis"] == "exact_public_email" for p in public_profiles),
+                "checked_sources": sorted({t.provider_id for t in task_runs if t.provider_id in ("maigret", "github_public", "gravatar_public", "coccoc_browser")}),
+                "exact_email_matches": sum(p["match_basis"] in ("exact_public_email", "email_hash_public_profile") for p in public_profiles),
                 "identity_verified": False,
                 "message_vi": ("Chưa có hồ sơ công khai được đối chiếu với mục tiêu. Dữ liệu máy chủ thư không xác định chủ email."
                     if not public_profiles else "Hồ sơ công khai và căn cứ liên hệ; chưa xác minh danh tính người sở hữu."),

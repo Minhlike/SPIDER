@@ -11,6 +11,7 @@ from spider.models.enums import ExecutionStatus, ObservableType
 from spider.storage.repositories.execution_repo import ExecutionRepository
 from spider.storage.schema import ProviderRunRecord
 from spider.models.base import utc_now
+from spider.capability.scopes import resolve_investigation_mode
 
 router = APIRouter(tags=["Investigation"])
 
@@ -21,8 +22,10 @@ def get_srv(request: Request) -> SpiderService:
 class InvestigationBudgetRequest(BaseModel):
     max_depth: int = Field(default=1, ge=0, le=3)
     max_entities: int = Field(default=500, ge=1, le=5000)
+    max_requests: int = Field(default=100, ge=0, le=5000)
     timeout_seconds: int = Field(default=180, ge=10, le=600)
     username_site_limit: Literal[0, 50, 500] = 500
+    username_source_scope: Literal["VN_COMMON_CORE", "GLOBAL_50", "GLOBAL_500", "GLOBAL_ALL"] = "VN_COMMON_CORE"
 
 class StartInvestigationRequest(BaseModel):
     target: str = Field(min_length=1, max_length=2048)
@@ -33,21 +36,27 @@ class StartInvestigationRequest(BaseModel):
     max_depth: int = Field(default=2, ge=0, le=3)
     budget: Optional[InvestigationBudgetRequest] = None
     policy_profile: Optional[str] = "passive_standard"
+    investigation_mode: Literal["AUTO", "PERSONAL_FOOTPRINT", "INFRASTRUCTURE"] = "AUTO"
+    browser_assisted: bool = False
 
-async def _run_investigation_background(service: SpiderService, case_id: str, run_id: str, target: str, obs_type_val: str, budget: ExecutionBudget, profile: Optional[str]):
+async def _run_investigation_background(service: SpiderService, case_id: str, run_id: str, target: str, obs_type_val: str, budget: ExecutionBudget, profile: Optional[str], investigation_mode: str, browser_assisted: bool):
     await event_broker.broadcast("RUN_STARTED", {
         "case_id": case_id,
         "run_id": run_id,
         "target": target,
         "type": obs_type_val,
-        "policy_profile": profile
+        "policy_profile": profile,
+        "investigation_mode": investigation_mode,
+        "browser_assisted": browser_assisted,
     })
     try:
         run_res = await service.investigate(
             case_id=case_id,
             budget=budget,
             policy_profile=profile,
-            run_id=run_id
+            run_id=run_id,
+            investigation_mode=investigation_mode,
+            browser_assisted=browser_assisted,
         )
         entities = await service.get_case_entities(case_id)
         assertions = await service.get_case_assertions(case_id)
@@ -86,6 +95,25 @@ async def start_investigation(
         classification = TargetClassifier.resolve(req.target, req.target_type)
     except ClassificationError as exc:
         raise HTTPException(status_code=422, detail=exc.detail()) from None
+    try:
+        investigation_mode = resolve_investigation_mode(
+            [classification.detected_type], req.investigation_mode
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={
+            "code": "incompatible_investigation_mode",
+            "message": str(exc),
+        }) from None
+    if req.browser_assisted and investigation_mode.value != "PERSONAL_FOOTPRINT":
+        raise HTTPException(status_code=422, detail={
+            "code": "browser_mode_requires_personal_target",
+            "message": "Cốc Cốc assisted discovery only supports EMAIL or USERNAME targets",
+        })
+    if req.browser_assisted and not req.authorized_scope:
+        raise HTTPException(status_code=422, detail={
+            "code": "browser_scope_authorization_required",
+            "message": "Confirm authorized scope before using the signed-in browser session",
+        })
     is_temp = False
     if not service.is_running:
         await service.start()
@@ -105,13 +133,18 @@ async def start_investigation(
             observable_type=obs_type,
             scope_authorized=req.authorized_scope,
             canonical_value=classification.canonical_value,
-            metadata={"classification": classification.model_dump(mode="json")}
+            metadata={
+                "classification": classification.model_dump(mode="json"),
+                "investigation_mode": investigation_mode.value,
+            }
         )
 
         budget = (ExecutionBudget(max_depth=req.budget.max_depth,
                     max_entities=req.budget.max_entities,
+                    max_requests=req.budget.max_requests,
                     max_runtime_seconds=req.budget.timeout_seconds,
-                    username_site_limit=req.budget.username_site_limit)
+                    username_site_limit=req.budget.username_site_limit,
+                    username_source_scope=req.budget.username_source_scope)
                   if req.budget else ExecutionBudget(max_depth=req.max_depth))
 
         import uuid
@@ -132,7 +165,9 @@ async def start_investigation(
                 req.target,
                 obs_type.value,
                 budget,
-                req.policy_profile
+                req.policy_profile,
+                investigation_mode.value,
+                req.browser_assisted,
             ),
             name=f"spider-run:{run_id}",
         )
@@ -144,6 +179,8 @@ async def start_investigation(
             "run_id": run_id,
             "target": req.target,
             "type": obs_type.value,
+            "investigation_mode": investigation_mode.value,
+            "browser_assisted": req.browser_assisted,
             "status": "QUEUED",
             "message": "Investigation queued and running in background"
         }

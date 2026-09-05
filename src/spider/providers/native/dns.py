@@ -4,6 +4,11 @@ import logging
 from typing import List, Dict, Any, Optional
 import dns.resolver
 import dns.reversename
+import dns.asyncquery
+import dns.message
+import dns.flags
+import dns.rcode
+from spider.models.budget import RequestBudgetExceeded
 from spider.providers.base import BaseProviderAdapter, ProviderHealth, ProviderExecutionResult
 from spider.models.enums import ObservableType, NetworkClass, ProviderState
 from spider.models.observable import NormalizedObservable
@@ -13,6 +18,7 @@ from spider.models.provenance import SourceLineage
 logger = logging.getLogger(__name__)
 
 class NativeDnsAdapter(BaseProviderAdapter):
+    request_budget_supported = True
     def provider_id(self) -> str:
         return "native_dns"
 
@@ -58,63 +64,63 @@ class NativeDnsAdapter(BaseProviderAdapter):
         if obs_type == ObservableType.EMAIL and "@" in val:
             query_domain = val.split("@")[1].strip()
 
-        loop = asyncio.get_running_loop()
-
-        def _resolve_sync() -> Dict[str, Any]:
-            records = []
-            res = dns.resolver.Resolver()
-            res.lifetime = 4.0
-            res.timeout = 4.0
-
-            # 1. Reverse DNS (PTR) for IP
-            if obs_type in (ObservableType.IP_ADDRESS, ObservableType.IPV6_ADDRESS):
-                try:
-                    rev_name = dns.reversename.from_address(val)
-                    answers = res.resolve(rev_name, "PTR")
-                    for r in answers:
-                        records.append({"type": "PTR", "value": str(r).rstrip(".")})
-                except Exception:
-                    pass
-                return {"target": val, "records": records}
-
-            # 2. Forward DNS (A, AAAA, MX, NS, TXT, CNAME, SOA)
-            for rtype in ["A", "AAAA", "MX", "NS", "TXT", "CNAME", "SOA"]:
-                try:
-                    answers = res.resolve(query_domain, rtype)
-                    for rdata in answers:
+        records, incomplete = [], False
+        ledger, budget = kwargs.get("request_ledger"), kwargs.get("execution_budget")
+        recorder = kwargs.get("egress_recorder")
+        resolver = dns.resolver.Resolver()
+        reverse = obs_type in (ObservableType.IP_ADDRESS, ObservableType.IPV6_ADDRESS)
+        query_name = dns.reversename.from_address(val) if reverse else query_domain
+        disclosed = NormalizedObservable(type=ObservableType.DOMAIN, value=query_domain) if obs_type == ObservableType.EMAIL else target
+        async def dispatch(query, address, tcp=False):
+            protocol = "tcp_fallback" if tcp else "udp"
+            if ledger is not None:
+                ledger.request(budget, self.provider_id(), "DNS", protocol)
+            event = await recorder.begin(address, "dns_" + protocol, identifier=disclosed) if recorder else None
+            try:
+                response = await (dns.asyncquery.tcp if tcp else dns.asyncquery.udp)(query, address, timeout=4)
+            except BaseException:
+                if event:
+                    await recorder.finish(event, "UNKNOWN_AFTER_DISPATCH")
+                raise
+            if event:
+                await recorder.finish(event, "DNS_" + dns.rcode.to_text(response.rcode()))
+            return response
+        for rtype in (["PTR"] if reverse else ["A", "AAAA", "MX", "NS", "TXT", "CNAME", "SOA"]):
+            query = dns.message.make_query(query_name, rtype)
+            response = None
+            try:
+                # Explicit attempts: no resolver cache, search suffixes, or hidden retries.
+                for nameserver in resolver.nameservers:
+                    address = nameserver if isinstance(nameserver, str) else getattr(nameserver, "address", None)
+                    if not address:
+                        continue
+                    try:
+                        response = await dispatch(query, address)
+                        if response.flags & dns.flags.TC:
+                            response = await dispatch(query, address, tcp=True)
+                        if response.rcode() in (dns.rcode.NOERROR, dns.rcode.NXDOMAIN):
+                            break
+                        response = None
+                    except (dns.exception.DNSException, OSError):
+                        response = None
+                if response is None:
+                    incomplete = True
+                    continue
+                for rrset in response.answer:
+                    if rrset.rdtype != dns.rdatatype.from_text(rtype):
+                        continue
+                    for rdata in rrset:
                         if rtype == "MX":
-                            records.append({"type": "MX", "value": str(rdata.exchange).rstrip("."), "preference": rdata.preference})
-                        elif rtype in ("NS", "CNAME"):
-                            records.append({"type": rtype, "value": str(rdata).rstrip(".")})
-                        elif rtype == "TXT":
-                            records.append({"type": "TXT", "value": str(rdata)})
+                            records.append({"type": rtype, "value": str(rdata.exchange).rstrip("."), "preference": rdata.preference})
                         else:
-                            records.append({"type": rtype, "value": str(rdata)})
-                except Exception:
-                    pass
-
-            return {"target": val, "query_domain": query_domain, "records": records}
-
-        try:
-            results_data = await loop.run_in_executor(None, _resolve_sync)
-            raw_bytes = json.dumps(results_data, indent=2).encode("utf-8")
-            observations = self.parse(raw_bytes, lineage)
-            return ProviderExecutionResult(
-                raw_content=raw_bytes,
-                observations=observations,
-                exit_code=0,
-                mime_type="application/json"
-            )
-        except Exception as ex:
-            logger.error(f"Native DNS error: {ex}")
-            err_bytes = str(ex).encode("utf-8")
-            return ProviderExecutionResult(
-                raw_content=err_bytes,
-                observations=[],
-                exit_code=1,
-                error_message=str(ex),
-                mime_type="text/plain"
-            )
+                            records.append({"type": rtype, "value": str(rdata).rstrip(".") if rtype in ("NS", "PTR", "CNAME") else str(rdata)})
+            except RequestBudgetExceeded:
+                incomplete = True
+                break
+        raw_bytes = json.dumps({"target": val, "query_domain": query_domain, "records": records}).encode()
+        return ProviderExecutionResult(raw_content=raw_bytes, observations=self.parse(raw_bytes, lineage),
+            outcome="PARTIAL" if incomplete else "COMPLETED",
+            error_message="Some DNS requests could not complete within budget" if incomplete else None)
 
     def parse(self, raw_content: bytes, lineage: SourceLineage) -> List[Observation]:
         results: List[Observation] = []
@@ -133,7 +139,9 @@ class NativeDnsAdapter(BaseProviderAdapter):
             dom_lineage = lineage.model_copy(update={
                 "upstream_source": "native_dns_email_decomposer",
                 "upstream_family": "DNS",
-                "parent_observable_value": target_val
+                "parent_observable_value": target_val,
+                "parent_observable_type": ObservableType.EMAIL,
+                "parent_namespace": lineage.parent_namespace,
             })
             results.append(Observation(
                 observable=domain_obs,
@@ -151,7 +159,9 @@ class NativeDnsAdapter(BaseProviderAdapter):
             item_lineage = lineage.model_copy(update={
                 "upstream_source": f"dns_{rtype.lower()}",
                 "upstream_family": "DNS",
-                "parent_observable_value": query_domain
+                "parent_observable_value": query_domain,
+                "parent_observable_type": ObservableType.DOMAIN if "@" in target_val else lineage.parent_observable_type,
+                "parent_namespace": "" if "@" in target_val else lineage.parent_namespace,
             })
 
             if rtype == "A":
