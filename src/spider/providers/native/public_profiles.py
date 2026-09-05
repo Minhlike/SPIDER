@@ -35,7 +35,7 @@ class PublicProfilesAdapter(BaseProviderAdapter):
     async def execute(self, target, lineage, **kwargs):
         started = time.perf_counter()
         ledger = kwargs.get("request_ledger")
-        starting_requests = ledger.requests_count if ledger is not None else 0
+        starting_requests = ledger.attributed_requests_count if ledger is not None else 0
         rows, requests, checked = [], 0, 0
         selected, incomplete, error = 0, False, None
         headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": self.version(),
@@ -93,7 +93,7 @@ class PublicProfilesAdapter(BaseProviderAdapter):
             error, incomplete = "GitHub public profile response unavailable or invalid", True
         raw = json.dumps({"profiles": rows}, ensure_ascii=False).encode()
         if ledger is not None:
-            requests = ledger.requests_count - starting_requests
+            requests = ledger.attributed_requests_count - starting_requests
         observations = self.parse(raw, lineage)
         return ProviderExecutionResult(raw_content=raw, observations=observations,
             exit_code=1 if error and not rows else 0,

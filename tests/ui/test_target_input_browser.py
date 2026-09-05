@@ -18,6 +18,12 @@ def offline_page(tmp_path, monkeypatch):
     import spider.web.app as web_app
     service = SpiderService(db_path=str(tmp_path / "browser.db"), artifacts_dir=str(tmp_path / "runs"))
     monkeypatch.setattr(web_app, "create_spider_service", lambda **kwargs: service)
+    # The in-process fixture has no network adapters; this is its supported contract.
+    from spider.models.enums import ObservableType
+    monkeypatch.setattr(web_app, "input_catalogue", lambda _service: [
+        {"type": kind.value, "supported": kind.value in
+         {"USERNAME", "EMAIL", "DOMAIN", "HOSTNAME", "IP_ADDRESS", "IPV6_ADDRESS", "ASN"}}
+        for kind in ObservableType])
     monkeypatch.setattr(web_app, "source_preflight", lambda _service, observable_type, _mode=None,
                         _browser=False: {
         "investigation_mode": ("PERSONAL_FOOTPRINT" if observable_type.value in ("USERNAME", "EMAIL")
@@ -238,3 +244,14 @@ def test_research_controls_light_default_and_empty_result_explanation(offline_pa
     assert "Threads: chưa xác định — rule đã lệch" in diagnostic
     assert "TikTok: bị chặn/challenge" in diagnostic
     assert not errors
+
+
+def test_unsupported_input_cannot_dispatch_even_through_auto(offline_page):
+    page, dispatches, errors = offline_page
+    expect(page.locator('#target-type-select option[value="PHONE"]')).to_be_disabled()
+    expect(page.locator('#target-type-select option[value="URL"]')).to_be_disabled()
+    page.locator("#target-input").fill("https://example.com/path")
+    expect(page.locator("#type-preview")).to_have_text("URL")
+    page.locator("#btn-start-investigate").click()
+    expect(page.locator("#classification-explanation")).to_contain_text("Chưa khởi chạy")
+    assert not dispatches and not errors

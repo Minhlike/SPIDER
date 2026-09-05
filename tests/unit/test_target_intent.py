@@ -59,7 +59,7 @@ def test_malformed_input_is_not_a_username_fallback(value):
 
 @pytest.mark.parametrize("value,kind", [("a_b.com", T.DOMAIN), ("-bad.com", T.DOMAIN),
     ("a..com", T.DOMAIN), ("person@example.com", T.USERNAME), ("example.com", T.PHONE),
-    ("localhost", T.DOMAIN), ("Alice Smith", T.ORGANIZATION)])
+    ("localhost", T.DOMAIN), ("x", T.ORGANIZATION)])
 def test_override_validates_syntax(value, kind):
     with pytest.raises(ClassificationError):
         TargetClassifier.resolve(value, kind)
@@ -83,3 +83,11 @@ def test_cold_classifier_never_uses_dns_or_http(monkeypatch):
     monkeypatch.setattr(module, "_SUFFIXES", tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None))
     assert TargetClassifier.resolve("ms.orianawren").detected_type == T.USERNAME
     assert TargetClassifier.classify("corp.co.uk").detected_type == T.DOMAIN
+
+
+def test_explicit_organization_is_syntax_only():
+    result = TargetClassifier.resolve("Fixture Company", T.ORGANIZATION)
+    assert result.canonical_value == "Fixture Company"
+    assert result.decision_source == "explicit"
+    with pytest.raises(ClassificationError):
+        TargetClassifier.resolve("Fixture\nCompany", T.ORGANIZATION)

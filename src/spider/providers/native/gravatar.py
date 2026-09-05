@@ -81,7 +81,7 @@ class GravatarPublicProfileAdapter(BaseProviderAdapter):
     async def execute(self, target, lineage, **kwargs):
         started = time.perf_counter()
         ledger = kwargs.get("request_ledger")
-        starting_requests = ledger.requests_count if ledger is not None else 0
+        starting_requests = ledger.attributed_requests_count if ledger is not None else 0
         if target.type != ObservableType.EMAIL:
             return ProviderExecutionResult(
                 raw_content=b'{"profiles":[]}', observations=[], exit_code=1,
@@ -141,7 +141,7 @@ class GravatarPublicProfileAdapter(BaseProviderAdapter):
 
         raw = json.dumps({"profiles": rows}, ensure_ascii=False, separators=(",", ":")).encode()
         observations = self.parse(raw, lineage)
-        requests = (ledger.requests_count - starting_requests) if ledger is not None else (
+        requests = (ledger.attributed_requests_count - starting_requests) if ledger is not None else (
             0 if reason == "REQUEST_LIMIT" else 1)
         return ProviderExecutionResult(
             raw_content=raw,

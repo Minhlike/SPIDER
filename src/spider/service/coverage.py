@@ -13,7 +13,7 @@ def collection_state(task, observation_count):
     if reason == "QUARANTINED":
         return "BLOCKED"
     state = metadata.get("collection_state")
-    if state in STATES:
+    if isinstance(state, str) and state in STATES:
         return state
     if task.status in {"FAILED", "CANCELLED"}:
         return "BROKEN_PROVIDER"

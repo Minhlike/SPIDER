@@ -25,17 +25,33 @@ class BudgetLedger(SpiderBaseModel):
     entities_rejected_count: int = 0
     request_events: list[dict] = Field(default_factory=list)
     _entities: set = PrivateAttr(default_factory=set)
+    _task_request_counts: dict = PrivateAttr(default_factory=dict)
     _lock: Lock = PrivateAttr(default_factory=Lock)
     _fingerprint_salt: bytes = PrivateAttr(default_factory=lambda: secrets.token_bytes(32))
 
-    def request(self, budget: ExecutionBudget, provider_id: str, protocol: str = "HTTP", kind: str = "request"):
+    def request(self, budget: ExecutionBudget, provider_id: str, protocol: str = "HTTP", kind: str = "request", *, task_id: str | None = None):
         """Count a dispatch attempt before transport I/O; failed attempts also cost one."""
         with self._lock:
             if self.requests_count >= budget.max_requests:
                 raise RequestBudgetExceeded()
             self.requests_count += 1
-            self.request_events.append({"sequence": self.requests_count, "provider_id": provider_id,
-                                        "protocol": protocol, "kind": kind})
+            event = {"sequence": self.requests_count, "provider_id": provider_id,
+                     "protocol": protocol, "kind": kind}
+            if task_id is not None:
+                event["task_id"] = task_id
+                self._task_request_counts[task_id] = self._task_request_counts.get(task_id, 0) + 1
+            self.request_events.append(event)
+
+    @property
+    def attributed_requests_count(self):
+        return self.requests_count
+
+    def for_task(self, task_id: str):
+        return TaskBudgetLedger(self, task_id)
+
+    def count_for_task(self, task_id: str):
+        with self._lock:
+            return self._task_request_counts.get(task_id, 0)
 
     def admit_entity(self, budget: ExecutionBudget, case_id: str, observable) -> bool:
         key = (case_id, *observable.identity)
@@ -76,3 +92,19 @@ class BudgetLedger(SpiderBaseModel):
 class RequestBudgetExceeded(Exception):
     def __init__(self):
         super().__init__("Network request budget exhausted")
+
+
+class TaskBudgetLedger:
+    """Shared hard cap, explicit task receipts; no ambient async/thread context."""
+    def __init__(self, shared: BudgetLedger, task_id: str):
+        self._shared, self._task_id = shared, task_id
+
+    def __getattr__(self, name):
+        return getattr(self._shared, name)
+
+    @property
+    def attributed_requests_count(self):
+        return self._shared.count_for_task(self._task_id)
+
+    def request(self, budget, provider_id, protocol="HTTP", kind="request"):
+        self._shared.request(budget, provider_id, protocol, kind, task_id=self._task_id)

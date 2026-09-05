@@ -1,7 +1,7 @@
 """Seed-scoped evidence reachability. Shared entities never transfer another seed's claims."""
 from dataclasses import dataclass
 from types import SimpleNamespace
-from sqlalchemy import select
+from sqlalchemy import select, func
 from spider.storage.schema import TargetRecord, EntityRecord, ObservationRecord, AssertionRecord, EvidenceRefRecord
 
 QUESTIONS = {"all", "public_profiles", "infrastructure"}
@@ -45,12 +45,16 @@ async def project(session, case_id, target_id=None, question="all"):
         seed = targets[0]
     else:
         seed = None
-    all_obs = list((await session.scalars(select(ObservationRecord).where(ObservationRecord.case_id == case_id)
-                                         .order_by(ObservationRecord.created_at, ObservationRecord.id))).all())
     if seed is None:
-        return Projection(None, targets, [], [], [], len(all_obs))
+        count = await session.scalar(select(func.count()).select_from(ObservationRecord)
+                                     .where(ObservationRecord.case_id == case_id))
+        return Projection(None, targets, [], [], [], count)
     root = (seed.observable_type, seed.namespace, seed.canonical_value)
-    candidates = [o for o in all_obs if o.seed_id == seed.id]
+    candidates = list((await session.scalars(select(ObservationRecord).where(
+        ObservationRecord.case_id == case_id, ObservationRecord.seed_id == seed.id)
+        .order_by(ObservationRecord.created_at, ObservationRecord.id))).all())
+    unscoped = await session.scalar(select(func.count()).select_from(ObservationRecord).where(
+        ObservationRecord.case_id == case_id, ObservationRecord.seed_id.is_(None)))
     reachable, accepted = {root}, {}
     while True:
         before = len(accepted)
@@ -83,4 +87,4 @@ async def project(session, case_id, target_id=None, question="all"):
         data.update(confidence=max((r.confidence_weight for r in evidence), default=0),
                     source_families=sorted({r.upstream_family for r in evidence}), independent_source_count=0)
         scoped_assertions.append(SimpleNamespace(**data))
-    return Projection(seed, targets, entities, observations, scoped_assertions, sum(o.seed_id is None for o in all_obs))
+    return Projection(seed, targets, entities, observations, scoped_assertions, unscoped)

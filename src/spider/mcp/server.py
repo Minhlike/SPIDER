@@ -16,15 +16,74 @@ class SpiderMCPServer:
     """
     def __init__(self, service: Optional[SpiderService] = None):
         self.service = service or create_spider_service(mode="production")
+        self._call_lock = asyncio.Lock()
 
     async def handle_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        # Serialize dispatcher-owned lifecycle until an explicit MCP session owns it.
+        async with self._call_lock:
+            result = await self._handle_tool_call(tool_name, arguments)
+            if tool_name not in {"collect", "query_case", "explain_assertion", "rebuild_case"}:
+                result.setdefault("schema_version", "1")
+            return result
+
+    async def _handle_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        if tool_name not in {"collect", "explain_assertion", "query_case", "rebuild_case",
+                             "case_digest", "get_evidence", "input_catalogue", "graph_neighbors",
+                             "compare_runs", "run_coverage", "telemetry", "create_hypothesis", "list_hypotheses"}:
+            return {"error": "Unknown tool"}
         if tool_name == "collect":
             try:
                 classification = TargetClassifier.resolve(arguments.get("target", ""), arguments.get("target_type"))
             except ClassificationError as exc:
                 return {"error": exc.detail()}
+        owned_lifecycle = not self.service.is_running
         await self.service.start()
         try:
+            if tool_name in {"create_hypothesis", "list_hypotheses"}:
+                from spider.service.hypothesis import HypothesisInput, create_hypothesis, list_hypotheses
+                try:
+                    if tool_name == "create_hypothesis":
+                        request = HypothesisInput.model_validate({k: v for k, v in arguments.items() if k != "case_id"})
+                        return await self.service.db_writer.submit(lambda session:
+                            create_hypothesis(session, arguments["case_id"], request))
+                    limit = arguments.get("limit", 20)
+                    if type(limit) is not int or not 1 <= limit <= 100:
+                        raise ValueError("Invalid limit")
+                    async with self.service.db_manager.session_factory() as session:
+                        return await list_hypotheses(session, arguments["case_id"], arguments["target_id"], limit)
+                except (ValueError, KeyError):
+                    return {"error": {"code": "INVALID_HYPOTHESIS_OR_SCOPE"}}
+            if tool_name in {"input_catalogue", "graph_neighbors", "compare_runs", "run_coverage", "telemetry"}:
+                from spider.service import investigation_api as api
+                try:
+                    if tool_name == "input_catalogue":
+                        return {"inputs": api.input_catalogue(self.service)}
+                    async with self.service.db_manager.session_factory() as session:
+                        scope = (session, arguments["case_id"], arguments["target_id"])
+                        if tool_name == "graph_neighbors":
+                            return await api.graph_neighbors(session, self.service, arguments["case_id"],
+                                arguments["target_id"], arguments["entity_id"], arguments.get("limit", 20))
+                        if tool_name == "compare_runs":
+                            return await api.compare_runs(*scope, arguments["before_id"],
+                                arguments["after_id"], arguments.get("limit", 20))
+                        if tool_name == "run_coverage":
+                            return await api.run_coverage(*scope, arguments["run_id"])
+                        return await api.telemetry(*scope)
+                except (ValueError, KeyError, TypeError):
+                    return {"error": {"code": "INVALID_SCOPE_OR_ARGUMENT"}}
+            if tool_name in {"case_digest", "get_evidence"}:
+                from spider.service.digest import case_digest, get_evidence
+                try:
+                    async with self.service.db_manager.session_factory() as session:
+                        if tool_name == "case_digest":
+                            return await case_digest(session, arguments["case_id"],
+                                arguments.get("target_id"), arguments.get("question", "all"),
+                                arguments.get("limit", 20), arguments.get("after"))
+                        return await get_evidence(session, arguments["case_id"],
+                            arguments.get("target_id"), arguments["observation_id"])
+                except (ValueError, KeyError):
+                    return {"error": {"code": "INVALID_SCOPE_OR_ARGUMENT",
+                                      "message": "Check case, target, evidence, cursor and page limit"}}
             if tool_name == "collect":
                 target = arguments["target"]
                 case_id = arguments.get("case_id")
@@ -79,7 +138,8 @@ class SpiderMCPServer:
             else:
                 return {"error": f"Unknown tool: {tool_name}"}
         finally:
-            await self.service.stop()
+            if owned_lifecycle:
+                await self.service.stop()
 
 def create_mcp_server(service: Optional[SpiderService] = None) -> SpiderMCPServer:
     return SpiderMCPServer(service=service)

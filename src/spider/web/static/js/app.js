@@ -392,11 +392,43 @@ async function loadDashboard() {
 }
 
 // --- 5. New Investigation Classifier & Start ---
+let inputCatalogue = null;
+let inputCatalogueRequest = null;
+async function loadInputCatalogue() {
+  if (inputCatalogue) return inputCatalogue;
+  if (inputCatalogueRequest) return inputCatalogueRequest;
+  inputCatalogueRequest = (async () => {
+    const status = document.getElementById("input-support-status");
+    try {
+      const response = await fetch("/api/input-catalogue");
+      const data = await response.json();
+      if (!response.ok || !Array.isArray(data.inputs)) throw new Error("unavailable");
+      inputCatalogue = new Map(data.inputs.map(item => [item.type, item]));
+      const unsupported = [];
+      for (const option of document.getElementById("target-type-select").options) {
+        if (!option.value) continue;
+        option.disabled = inputCatalogue.get(option.value)?.supported !== true;
+        if (option.disabled) unsupported.push(option.value);
+      }
+      status.textContent = unsupported.length ? (currentLanguage === "vi"
+        ? `Chưa có luồng thu thập khả dụng: ${unsupported.join(", ")}. Các lựa chọn này đang tắt.`
+        : `No available collection workflow: ${unsupported.join(", ")}. These options are disabled.`) : "";
+      return inputCatalogue;
+    } catch (_) {
+      status.textContent = currentLanguage === "vi"
+        ? "Chưa đọc được năng lực backend. Hãy thử lại trước khi bắt đầu điều tra."
+        : "Backend capabilities unavailable. Retry before starting an investigation.";
+      return null;
+    } finally { inputCatalogueRequest = null; }
+  })();
+  return inputCatalogueRequest;
+}
+
 function classificationExplanation(data) {
   const vi = currentLanguage === "vi";
   if (data.needs_confirmation) {
     return data.reason === "numeric_identifier"
-      ? (vi ? "Chuỗi số có thể là username hoặc số điện thoại. Hãy chọn loại; số điện thoại cần + và mã quốc gia." : "Digits may identify a username or a phone. Choose a type; phones require + and a country code.")
+      ? (vi ? "Chuỗi số có thể là username hoặc số điện thoại. Hãy chọn loại; số Việt Nam được chuẩn hóa về +84." : "Digits may identify a username or a phone. Choose a type; Vietnamese numbers normalize to +84.")
       : (vi ? "Chuỗi này có thể là tên miền hoặc username. Hãy chọn loại trước khi điều tra." : "This could be a domain or a username. Choose a type before investigating.");
   }
   if (data.reason === "unknown_suffix") return vi
@@ -529,6 +561,13 @@ async function startInvestigation(browserAssisted = "auto") {
     if (!classification || targetVal !== document.getElementById("target-input").value.trim()) return;
     if (classification.needs_confirmation) {
       document.getElementById("target-type-select").focus();
+      return;
+    }
+    const catalogue = await loadInputCatalogue();
+    if (!catalogue || catalogue.get(classification.type)?.supported !== true) {
+      document.getElementById("classification-explanation").textContent = currentLanguage === "vi"
+        ? "Loại này chưa có luồng thu thập khả dụng. Chưa khởi chạy điều tra."
+        : "No available collection workflow exists for this type. Investigation has not started.";
       return;
     }
     // Clicking the primary action is the explicit start signal. Personal
@@ -1660,4 +1699,5 @@ window.addEventListener("DOMContentLoaded", () => {
   applyTranslations();
   initWebSocket();
   loadDashboard();
+  loadInputCatalogue();
 });

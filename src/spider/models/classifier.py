@@ -101,9 +101,14 @@ class TargetClassifier:
             if match and 0 <= int(match[1]) <= 4294967295:
                 return "AS" + str(int(match[1]))
         elif kind == T.PHONE:
-            phone = re.sub(r"[ ()-]", "", value)
-            if cls.PHONE_REGEX.fullmatch(phone):
-                return phone
+            from spider.models.phone import phone_metadata
+            try:
+                return phone_metadata(value)["e164"]
+            except ValueError:
+                pass
+        elif (kind == T.ORGANIZATION and 2 <= len(value) <= 256
+              and all(ord(c) >= 32 and ord(c) != 127 for c in value)):
+            return value
         return None
 
     @classmethod
@@ -126,12 +131,14 @@ class TargetClassifier:
                 raise ClassificationError("Unsupported target type.") from None
             canonical = cls._canonical_for_type(value, kind)
             if canonical is None:
-                raise ClassificationError("The value does not match the selected type. Phone numbers require + and a country code.")
+                raise ClassificationError("The value does not match the selected type. Select PHONE for Vietnamese national format, or use an international country code.")
             return result(kind, canonical, "explicit_type", source="explicit")
 
         if value.startswith("@") and cls._username(value[1:]):
             return result(T.USERNAME, value[1:], "username_marker", source="explicit")
         for kind in (T.URL, T.EMAIL, T.ACCOUNT, T.CIDR, T.IP_ADDRESS, T.IPV6_ADDRESS, T.ASN, T.PHONE):
+            if kind == T.PHONE and not value.lstrip(" (").startswith("+"):
+                continue  # Local numeric input still requires explicit PHONE intent.
             # Avoid interpreting a plain IP as a /32 or /128 network.
             if kind == T.CIDR and "/" not in value:
                 continue

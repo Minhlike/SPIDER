@@ -1,3 +1,29 @@
+# Current work: Agent investigation increment 1 (2026-09-05)
+
+Repository: `D:\PhanMem_Tools\SPIDER`; baseline `069fa49a`. Current implementation
+and limits: `docs/AGENT_INVESTIGATION_INCREMENT_1.md`. Plan:
+`docs/AGENT_INVESTIGATION_PLAN_VI.md`. User authorized development and commit/push.
+This note belongs to the increment commit; verify live Git HEAD rather than
+using the historical SHAs below.
+
+Verified: **380 passed, 1 deselected in 85.00s**, including 13 Chromium in-process
+UI tests and real MCP stdio create/retry/list. Optional SDK installed in local
+runtime only. Credential/runtime hygiene and dependency/compile gates passed.
+No production listener or real-provider search started. The supplied authorized
+phone passed offline E.164 validation; its value is deliberately not recorded here.
+
+Implemented: scoped investigation reads, persistent hypotheses with idempotency,
+MCP transport, task request receipts, DB drain/backpressure, PHONE normalization,
+IPv6 catalogue correction and unsupported-input UI guard. Do not call M1–M6 done.
+
+Next: complete evidence-linked MCP action receipts/pivots/cancellation, then
+atomic pre-I/O request reservations for opaque runners before enabling provider
+concurrency. Continue browser-owned-tab workflow and PHONE public candidates with
+controlled ground truth. Do not infer speed or identity accuracy from fixtures.
+The digest is smaller but slower in the local read experiment.
+
+## Historical notes (superseded status; retain for traceability)
+
 # Current work: research-plan fixture implementation complete (2026-09-04)
 
 Repository: `D:\PhanMem_Tools\SPIDER`. HEAD remains `b78ac038a65c5c0b215322de3acfa49e3b3fd25a`; all research-plan changes are uncommitted for review. Historical pause context is `memory/HANDOFF_P0_DEV_PAUSED.md`; completion handoff is `memory/HANDOFF_RESEARCH_PLAN_IMPLEMENTED.md`.

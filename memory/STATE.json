@@ -31,12 +31,28 @@
   "security_gate": "PASS: current-user Windows DPAPI, masked API, ignored local settings",
   "launcher_gate": "PASS: exact backend PID, duplicate prevention, readiness, graceful stop",
   "blockers": [],
-  "next_action": "Operational use; no new feature work authorized",
+  "next_action": "Continue evidence-linked MCP actions, then atomic runner reservation and bounded concurrency gates; full M1-M6 remains incomplete.",
   "web_ui": {
     "host": "127.0.0.1",
     "port": 8765,
     "launcher": "run_spider.bat",
     "shutdown": "stop_spider.bat"
   },
-  "handoff": "docs/RELEASE_V2_0_0.md"
+  "handoff": "docs/RELEASE_V2_0_0.md",
+  "current_development": {
+    "baseline_head": "069fa49a2b9eb500f1fa150775547d3851d2b509",
+    "phase": "AGENT_INVESTIGATION_INCREMENT_1",
+    "status": "PARTIAL_PLAN_IMPLEMENTED",
+    "plan": "docs/AGENT_INVESTIGATION_PLAN_VI.md",
+    "report": "docs/AGENT_INVESTIGATION_INCREMENT_1.md",
+    "offline_gate": {
+      "passed": 380,
+      "deselected": 1,
+      "seconds": 85.0,
+      "chromium_ui_included": 13
+    },
+    "live_phone_accuracy": "NOT_YET_VERIFIED",
+    "provider_concurrency_enabled": false,
+    "note": "Top-level release fields are historical v2.0.0 snapshot; use this object and NEXT.md for current development."
+  }
 }

@@ -35,7 +35,8 @@ class NativeDnsAdapter(BaseProviderAdapter):
         return NetworkClass.THIRD_PARTY_ONLY
 
     def accepts(self) -> List[ObservableType]:
-        return [ObservableType.DOMAIN, ObservableType.HOSTNAME, ObservableType.EMAIL, ObservableType.IP_ADDRESS]
+        return [ObservableType.DOMAIN, ObservableType.HOSTNAME, ObservableType.EMAIL,
+                ObservableType.IP_ADDRESS, ObservableType.IPV6_ADDRESS]
 
     def produces(self) -> List[ObservableType]:
         return [ObservableType.IP_ADDRESS, ObservableType.IPV6_ADDRESS, ObservableType.HOSTNAME, ObservableType.DOMAIN]

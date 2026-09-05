@@ -24,6 +24,7 @@ from spider.web.api.settings import load_settings
 from spider.storage.key_store import KeyStoreError
 from spider.models.classifier import TargetClassifier
 from spider.web.security import LocalAccessMiddleware
+from spider.service.investigation_api import input_catalogue
 from spider.capability.applicability import assess_provider
 from spider.capability.scopes import capability_allowed, resolve_investigation_mode
 
@@ -146,6 +147,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_middleware(LocalAccessMiddleware)
+
+    @app.get("/api/input-catalogue")
+    async def supported_inputs(request: Request):
+        return {"inputs": input_catalogue(get_service(request))}
 
     # Target Classifier Endpoint (supports both GET and POST)
     @app.api_route("/api/classify", methods=["GET", "POST"])

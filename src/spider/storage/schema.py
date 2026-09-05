@@ -212,3 +212,14 @@ class EvidenceReviewRecord(Base):
     dependency = Column(String(32), nullable=False)
     origin_id = Column(String(64), nullable=True)
     reviewed_at = Column(DateTime, default=utc_now)
+
+
+class HypothesisRecord(Base):
+    __tablename__ = "investigation_hypotheses"
+    id = Column(String(64), primary_key=True)
+    case_id = Column(String(64), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
+    seed_id = Column(String(64), ForeignKey("targets.id", ondelete="CASCADE"), nullable=False, index=True)
+    statement = Column(String(1000), nullable=False)
+    evidence_json = Column(JSON, nullable=False)
+    payload_sha256 = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=utc_now)

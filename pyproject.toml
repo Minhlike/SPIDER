@@ -21,8 +21,12 @@ dependencies = [
     "anyio>=4.3.0",
     "httpx==0.28.1",
     "tldextract==5.3.2",
-    "playwright==1.58.0"
+    "playwright==1.58.0",
+    "phonenumbers==9.0.38"
 ]
+
+[project.optional-dependencies]
+mcp = ["mcp==1.29.1"]
 
 [project.scripts]
 spider = "spider.cli.main:app"

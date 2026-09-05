@@ -81,8 +81,10 @@ class ProviderManager:
         task.metadata.update(provider_version=adapter.version(), adapter_version=adapter.adapter_version())
         await self.db_writer.submit(lambda session: ExecutionRepository.create_task_run(session, task))
         ledger = options.get("request_ledger")
-        starting_request_count = ledger.requests_count if ledger is not None else 0
+        task_ledger = ledger.for_task(task.id) if ledger is not None else None
+        starting_request_count = task_ledger.attributed_requests_count if task_ledger is not None else 0
         if ledger is not None:
+            options["request_ledger"] = task_ledger
             options["egress_recorder"] = EgressRecorder(self.db_writer, task, target, lineage,
                 options.pop("derivation", "DERIVED"), ledger._fingerprint_salt)
 
@@ -130,6 +132,9 @@ class ProviderManager:
                 rec = await session.get(TaskRunRecord, task.id)
                 rec.status = "CANCELLED"
                 rec.completed_at = utc_now()
+                rec.metadata_json = {**task.metadata, "duration_ms": (time.perf_counter()-started)*1000,
+                    "request_count": task_ledger.attributed_requests_count - starting_request_count
+                    if task_ledger is not None else None}
             await self.db_writer.submit(cancel)
             raise
         except Exception:
@@ -137,9 +142,6 @@ class ProviderManager:
                 exit_code=1, error_message="Provider execution failed", outcome="FAILED")
         finally:
             await persist_budget()
-
-        if ledger is not None:
-            result.metadata["request_count"] = max(0, ledger.requests_count - starting_request_count)
 
         ledger, budget = options.get("request_ledger"), options.get("execution_budget")
         if any(obs.lineage.case_id != task.case_id for obs in result.observations):
@@ -153,6 +155,9 @@ class ProviderManager:
                 result.outcome = "PARTIAL"
                 result.metadata.update(budget_reason="ENTITY_LIMIT", budget_dropped=dropped)
                 result.error_message = "Entity budget exhausted; partial results retained"
+
+        if task_ledger is not None:
+            result.metadata["request_count"] = task_ledger.attributed_requests_count - starting_request_count
 
         # Store raw artifact to disk with SHA-256
         artifact = self.artifact_repo.store_raw_bytes(

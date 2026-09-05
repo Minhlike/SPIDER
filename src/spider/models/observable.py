@@ -14,7 +14,7 @@ def canonicalize_observable(obs_type: ObservableType, value: str) -> str:
         return cleaned.lower().rstrip(".")
     elif obs_type == ObservableType.EMAIL:
         return cleaned.lower()
-    elif obs_type == ObservableType.IP_ADDRESS:
+    elif obs_type in (ObservableType.IP_ADDRESS, ObservableType.IPV6_ADDRESS):
         try:
             return str(ipaddress.ip_address(cleaned))
         except ValueError:
@@ -31,6 +31,9 @@ def canonicalize_observable(obs_type: ObservableType, value: str) -> str:
         return norm
     elif obs_type in (ObservableType.USERNAME, ObservableType.ACCOUNT):
         return cleaned.lower()
+    elif obs_type == ObservableType.PHONE:
+        from spider.models.phone import phone_metadata
+        return phone_metadata(cleaned)["e164"]
     return cleaned
 
 class NormalizedObservable(SpiderBaseModel):
@@ -42,7 +45,10 @@ class NormalizedObservable(SpiderBaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         self.namespace = self.namespace.strip().casefold()
-        if not self.canonical_value:
+        if self.type == ObservableType.PHONE:
+            from spider.models.phone import canonical_phone
+            self.canonical_value = canonical_phone(self.value, self.canonical_value)
+        elif not self.canonical_value:
             self.canonical_value = canonicalize_observable(self.type, self.value)
 
     @property

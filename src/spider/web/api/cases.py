@@ -12,6 +12,18 @@ def get_srv(request: Request) -> SpiderService:
     from spider.web.app import get_service
     return get_service(request)
 
+
+@router.get("/{case_id}/digest")
+async def digest(case_id: str, target_id: str, question: str = "all",
+                 limit: int = Query(default=20, ge=1, le=100), after: Optional[str] = None,
+                 service: SpiderService = Depends(get_srv)):
+    from spider.service.digest import case_digest
+    async with service.db_manager.session_factory() as session:
+        try:
+            return await case_digest(session, case_id, target_id, question, limit, after)
+        except ValueError:
+            raise HTTPException(422, "Invalid digest scope or cursor") from None
+
 class CreateCaseRequest(BaseModel):
     name: str
     description: Optional[str] = None

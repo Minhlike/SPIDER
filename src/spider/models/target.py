@@ -19,5 +19,8 @@ class Target(SpiderBaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         self.namespace = self.namespace.strip().casefold()
-        if not self.canonical_value:
+        if self.observable_type == ObservableType.PHONE:
+            from spider.models.phone import canonical_phone
+            self.canonical_value = canonical_phone(self.raw_input, self.canonical_value)
+        elif not self.canonical_value:
             self.canonical_value = canonicalize_observable(self.observable_type, self.raw_input)

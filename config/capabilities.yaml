@@ -15,7 +15,7 @@ capabilities:
   DNS_ENUMERATION:
     description: "Native forward and reverse DNS enumeration (A, AAAA, MX, NS, TXT, SOA, PTR)"
     default_providers: ["native_dns"]
-    input_types: ["DOMAIN", "HOSTNAME", "EMAIL", "IP_ADDRESS"]
+    input_types: ["DOMAIN", "HOSTNAME", "EMAIL", "IP_ADDRESS", "IPV6_ADDRESS"]
     output_types: ["DOMAIN", "HOSTNAME", "IP_ADDRESS", "IPV6_ADDRESS"]
 
   MAIL_INFRASTRUCTURE:
@@ -33,7 +33,7 @@ capabilities:
   REGISTRY_LOOKUP:
     description: "RDAP and BGP routing registry lookups for IP, ASN, and Domain ownership"
     default_providers: ["native_rdap", "metabigor"]
-    input_types: ["IP_ADDRESS", "ASN", "DOMAIN"]
+    input_types: ["IP_ADDRESS", "IPV6_ADDRESS", "ASN", "DOMAIN"]
     output_types: ["ASN", "CIDR", "ORGANIZATION"]
 
   SUBDOMAIN_DISCOVERY:
