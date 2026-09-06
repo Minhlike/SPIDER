@@ -26,6 +26,7 @@ async def case_digest(session, case_id, target_id=None, question="all", limit=20
         TaskRunRecord.started_at.desc(), TaskRunRecord.id))).all())
     tasks = [t for t in tasks if (t.metadata_json or {}).get("seed_id") == view.seed.id]
     unresolved = sum(t.status != "COMPLETED" for t in tasks)
+    entity_ids = {(e.observable_type, e.namespace, e.canonical_name): e.id for e in view.entities}
     return {
         "explanation": {"vi": "Đây là trang bằng chứng của mục tiêu đã chọn. Bằng chứng còn thiếu hoặc nguồn chưa kiểm tra được không chứng minh tài khoản không tồn tại.",
                         "en": "This is an evidence page for the selected target. Missing evidence or unchecked sources do not establish that an account does not exist."},
@@ -34,6 +35,7 @@ async def case_digest(session, case_id, target_id=None, question="all", limit=20
         "counts": {"evidence": len(observations), "findings": len(view.finding_entities),
                    "assertions": len(view.assertions), "tasks": len(tasks)},
         "evidence": [{"id": o.id, "run_id": o.run_id, "type": o.observable_type,
+                      "entity_id": entity_ids.get((o.observable_type, o.namespace, o.canonical_value)),
                       "value": o.canonical_value[:512], "namespace": o.namespace[:128],
                       "provider": o.provider_id, "observed_at": o.created_at.isoformat()}
                      for o in page],
@@ -58,9 +60,11 @@ async def get_evidence(session, case_id, target_id, observation_id):
     observation = next((o for o in view.evidence_observations if o.id == observation_id), None)
     if observation is None:
         raise ValueError("Evidence does not belong to selected target")
+    entity_id = next((e.id for e in view.entities if (e.observable_type, e.namespace, e.canonical_name) ==
+        (observation.observable_type, observation.namespace, observation.canonical_value)), None)
     from spider.service.reporting import evidence_note
     return {"reader_note": {lang: evidence_note(lang) for lang in ("vi", "en")},
-            "id": observation.id, "type": observation.observable_type,
+            "id": observation.id, "entity_id": entity_id, "type": observation.observable_type,
             "value": observation.canonical_value[:512], "namespace": observation.namespace[:128],
             "provider": observation.provider_id, "provider_version": observation.provider_version,
             "adapter_version": observation.adapter_version,

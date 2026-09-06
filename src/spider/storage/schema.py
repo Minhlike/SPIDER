@@ -223,3 +223,17 @@ class HypothesisRecord(Base):
     evidence_json = Column(JSON, nullable=False)
     payload_sha256 = Column(String(64), nullable=False)
     created_at = Column(DateTime, default=utc_now)
+
+
+class InvestigationActionRecord(Base):
+    """Durable dispatch/cancel receipts. Arguments contain IDs, never credentials."""
+    __tablename__ = "investigation_actions"
+    id = Column(String(64), primary_key=True)
+    case_id = Column(String(64), ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
+    seed_id = Column(String(64), ForeignKey("targets.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id = Column(String(64), ForeignKey("provider_runs.id", ondelete="CASCADE"), nullable=True, index=True)
+    kind = Column(String(32), nullable=False)
+    payload_sha256 = Column(String(64), nullable=False)
+    arguments_json = Column(JSON, nullable=False)
+    result_json = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, default=utc_now)

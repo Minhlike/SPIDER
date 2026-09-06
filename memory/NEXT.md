@@ -1,26 +1,30 @@
-# Current work: Agent investigation increment 1 (2026-09-05)
+# Current work: Agent investigation increment 2 (2026-09-06)
 
-Repository: `D:\PhanMem_Tools\SPIDER`; baseline `069fa49a`. Current implementation
-and limits: `docs/AGENT_INVESTIGATION_INCREMENT_1.md`. Plan:
-`docs/AGENT_INVESTIGATION_PLAN_VI.md`. User authorized development and commit/push.
-This note belongs to the increment commit; verify live Git HEAD rather than
-using the historical SHAs below.
+Repository: `D:\PhanMem_Tools\SPIDER`; original baseline `069fa49a`.
+Report language commit: `ae23c81`. Current increment and limits:
+`docs/AGENT_INVESTIGATION_INCREMENT_2.md`; plan `docs/AGENT_INVESTIGATION_PLAN_VI.md`.
+User authorized implementation and commit/push; verify live HEAD and remote.
 
-Verified: **380 passed, 1 deselected in 85.00s**, including 13 Chromium in-process
-UI tests and real MCP stdio create/retry/list. Optional SDK installed in local
-runtime only. Credential/runtime hygiene and dependency/compile gates passed.
-No production listener or real-provider search started. The supplied authorized
-phone passed offline E.164 validation; its value is deliberately not recorded here.
+Verified full offline suite: **415 passed, 1 deselected in 105.37s**. Includes
+14 Chromium in-process UI tests and two real official MCP stdio client tests.
+No production listener or live-provider/personal-target search was started.
+No real credentials used or changed. The prior supplied phone was only normalized
+in the previous increment; its value remains absent from these artifacts.
 
-Implemented: scoped investigation reads, persistent hypotheses with idempotency,
-MCP transport, task request receipts, DB drain/backpressure, PHONE normalization,
-IPv6 catalogue correction and unsupported-input UI guard. Do not call M1–M6 done.
+Implemented: shared VI/EN report language across UI/export/CLI and MCP explanation;
+15 stdio tools including case/target discovery, scoped entity IDs, one-capability
+pivot, durable UUID receipts, status, owned cancellation and evidence annotations.
+Exact typed/namespace/seed proof required; seed input excluded from evidence reviews.
+Cancellation preserves committed evidence and graph atomically. Old annotation
+retries do not undo newer reviews. Detached runs never automatically replay.
 
-Next: complete evidence-linked MCP action receipts/pivots/cancellation, then
-atomic pre-I/O request reservations for opaque runners before enabling provider
-concurrency. Continue browser-owned-tab workflow and PHONE public candidates with
-controlled ground truth. Do not infer speed or identity accuracy from fixtures.
-The digest is smaller but slower in the local read experiment.
+M2 fixture gate passed; external-provider actions remain NOT YET VERIFIED LIVE.
+Full M1-M6 is not complete. Next: atomic pre-I/O reservations for Uncover/Maigret,
+then global/provider/origin bounded concurrency and deterministic ingest benchmark.
+Do not equate post-dispatch receipts with reservations. Existing actions are serial
+within their queue, not a global multi-run scheduler. Continue M1 snapshot/delta,
+M4 owned browser workflow, M5 PHONE candidates/consented holdout and M6 graph UX.
+Do not claim speedup or identification accuracy from synthetic tests.
 
 ## Historical notes (superseded status; retain for traceability)
 

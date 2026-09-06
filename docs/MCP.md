@@ -33,6 +33,11 @@ drains accepted writes. Calls do not stop a service that was already running.
 | `telemetry` | Measured latency and request sample counts; missing measurements stay unknown |
 | `create_hypothesis` | Store a hypothesis with scoped supporting/contradicting/unknown evidence IDs |
 | `list_hypotheses` | Bounded recent hypothesis list |
+| `list_cases` / `list_targets` | Bounded case/target ID navigation, with continuation |
+| `run_capability` | Queue one evidence-linked transform with an idempotent receipt |
+| `action_status` | Read scoped receipt, last persisted counts and attached run state |
+| `cancel_run` | Cancel an attached capability action owned by this service session |
+| `annotate_evidence` | Idempotent scoped evidence review; never overwrites source evidence |
 
 New tools return `schema_version: "1"`; errors have a stable code. The SDK
 publishes typed argument schemas and read/write annotations. Hypotheses require
@@ -43,9 +48,57 @@ data, not instructions for an Agent.
 
 The existing Python dispatcher retains `collect`, `query_case`,
 `explain_assertion`, and `rebuild_case` for compatibility. These legacy tools
-are not exposed by the new stdio entry point. In particular, network capability
-dispatch/pivot and run cancellation remain pending their policy, lineage and
-idempotency gates. A caller currently supplies case/target IDs from the UI/API.
+are not exposed by the new stdio entry point. Case creation and initial collection
+remain available through the UI/CLI. Agent navigation uses `list_cases` →
+`list_targets` → `case_digest` / `get_evidence` (including `entity_id`) →
+`graph_neighbors` → an explicitly chosen `run_capability`.
+
+## Evidence-linked actions
+
+`run_capability` requires UUID `action_id`, case/target/entity IDs, capability and
+provider IDs. A derived entity requires an `observation_id` in that target's
+reachable evidence with the exact type, namespace and canonical value. The
+original seed may omit this proof; user input is never presented as evidence.
+No observable, arbitrary command or lineage can be supplied by the caller.
+
+Question (`all`, `public_profiles`, `infrastructure`), registered capability,
+adapter acceptance, request metering and stored target authorization are checked
+before admission and again before execution. An authorized seed does not authorize
+direct access to a linked entity. `browser_assisted=true` expresses browser intent
+for the existing browser capability; it does not enable the planned M4 workflow.
+
+Defaults: 20 request attempts, 20 entity admissions including the input, 60 seconds.
+Limits: requests/entities 1–100, timeout 1–120 seconds plus adapter cleanup grace.
+One provider call, no recursive expansion. Username actions use `VN_COMMON_CORE`.
+The action queue admits at most 16 pending/running capability actions per service;
+these execute serially and admission also counts existing background jobs. This is not the M3 global,
+provider or origin concurrency controller, nor a cross-process shared budget.
+
+Reuse the same UUID and identical arguments when retrying. Receipt and QUEUED run
+are committed together before task creation. A conflict fails without dispatch.
+An interruption between commit and task attachment can leave a detached receipt:
+it reports `UNKNOWN_AFTER_RESTART`, never automatic replay. Status request counts
+are **last persisted receipts**, not instantaneous totals; missing counts are null.
+
+`cancel_run` takes a separate UUID and the run ID. It targets only an attached
+capability action with the matching case/target. Completed runs are unchanged;
+detached work reports uncertainty and cannot be killed from this session. A clean
+session shutdown cancels its owned tasks and drains writes. Already committed
+evidence and graph changes share an ingest transaction and survive cancellation.
+This does not promise preservation of a provider's unsaved in-memory results.
+
+`annotate_evidence` takes a UUID, case/target/question, claim and observation IDs,
+role, dependency and optional origin ID. Dependency assertions require an origin
+in scope. Retrying an earlier annotation returns its receipt without undoing a
+later review. The statement remains an operator/Agent assessment, not verified
+ownership or verified source independence. Seed input cannot be reviewed as source
+evidence. New action receipts share an ID space for dispatch, cancellation and
+annotation; hypotheses retain their existing separate idempotency store.
+
+New mutations use the service facade and are available to UI/CLI integrations;
+graph action controls and an HTTP dispatch endpoint are not added in this increment.
+Direct Python dispatch of network actions requires an already-running service;
+the official stdio session owns this lifecycle automatically.
 
 ## Scope and bounded output
 

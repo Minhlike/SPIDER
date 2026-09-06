@@ -29,8 +29,12 @@ class SpiderMCPServer:
     async def _handle_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         if tool_name not in {"collect", "explain_assertion", "query_case", "rebuild_case",
                              "case_digest", "get_evidence", "input_catalogue", "graph_neighbors",
-                             "compare_runs", "run_coverage", "telemetry", "create_hypothesis", "list_hypotheses"}:
+                             "compare_runs", "run_coverage", "telemetry", "create_hypothesis", "list_hypotheses",
+                             "run_capability", "action_status", "cancel_run", "annotate_evidence",
+                             "list_cases", "list_targets"}:
             return {"error": "Unknown tool"}
+        if tool_name in {"run_capability", "cancel_run"} and not self.service.is_running:
+            return {"error": {"code": "SESSION_REQUIRED"}}
         if tool_name == "collect":
             try:
                 classification = TargetClassifier.resolve(arguments.get("target", ""), arguments.get("target_type"))
@@ -39,6 +43,24 @@ class SpiderMCPServer:
         owned_lifecycle = not self.service.is_running
         await self.service.start()
         try:
+            if tool_name in {"run_capability", "action_status", "cancel_run", "annotate_evidence"}:
+                from spider.service.actions import RunCapabilityInput, CancelRunInput, EvidenceAnnotationInput, ActionError
+                try:
+                    if tool_name == "action_status":
+                        if set(arguments) != {"case_id", "target_id", "action_id"}:
+                            raise ValueError("Invalid arguments")
+                        return await self.service.actions.status(arguments["case_id"],
+                            arguments["target_id"], arguments["action_id"])
+                    model = {"run_capability": RunCapabilityInput, "cancel_run": CancelRunInput,
+                             "annotate_evidence": EvidenceAnnotationInput}[tool_name]
+                    request = model.model_validate({k: v for k, v in arguments.items() if k != "case_id"})
+                    return await getattr(self.service.actions, tool_name)(arguments["case_id"], request)
+                except ActionError as exc:
+                    return {"error": {"code": str(exc)}}
+                except (ValueError, KeyError, TypeError):
+                    return {"error": {"code": "INVALID_SCOPE_OR_ARGUMENT"}}
+                except Exception:
+                    return {"error": {"code": "ACTION_STORAGE_OR_EXECUTION_ERROR"}}
             if tool_name in {"create_hypothesis", "list_hypotheses"}:
                 from spider.service.hypothesis import HypothesisInput, create_hypothesis, list_hypotheses
                 try:
@@ -53,12 +75,17 @@ class SpiderMCPServer:
                         return await list_hypotheses(session, arguments["case_id"], arguments["target_id"], limit)
                 except (ValueError, KeyError):
                     return {"error": {"code": "INVALID_HYPOTHESIS_OR_SCOPE"}}
-            if tool_name in {"input_catalogue", "graph_neighbors", "compare_runs", "run_coverage", "telemetry"}:
+            if tool_name in {"input_catalogue", "graph_neighbors", "compare_runs", "run_coverage", "telemetry",
+                             "list_cases", "list_targets"}:
                 from spider.service import investigation_api as api
                 try:
                     if tool_name == "input_catalogue":
                         return {"inputs": api.input_catalogue(self.service)}
                     async with self.service.db_manager.session_factory() as session:
+                        if tool_name in {"list_cases", "list_targets"}:
+                            return await api.list_context(session,
+                                arguments["case_id"] if tool_name == "list_targets" else None,
+                                arguments.get("limit", 20), arguments.get("after"))
                         scope = (session, arguments["case_id"], arguments["target_id"])
                         if tool_name == "graph_neighbors":
                             return await api.graph_neighbors(session, self.service, arguments["case_id"],

@@ -5,7 +5,30 @@ from spider.models.enums import ObservableType
 from spider.capability.applicability import assess_provider
 from spider.service.projection import project
 from spider.service.coverage import coverage_report
-from spider.storage.schema import TaskRunRecord, ProviderRunRecord
+from spider.storage.schema import TaskRunRecord, ProviderRunRecord, CaseRecord, TargetRecord
+
+
+async def list_context(session, case_id=None, limit=20, after=None):
+    """ID-ordered navigation without loading graph, metadata or raw evidence."""
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("Invalid limit")
+    model = TargetRecord if case_id is not None else CaseRecord
+    query = select(model)
+    if case_id is not None:
+        if await session.get(CaseRecord, case_id) is None:
+            raise ValueError("Unknown case")
+        query = query.where(TargetRecord.case_id == case_id)
+    if after is not None:
+        cursor = await session.get(model, after)
+        if cursor is None or (case_id is not None and cursor.case_id != case_id):
+            raise ValueError("Invalid cursor")
+        query = query.where(model.id > after)
+    rows = list((await session.scalars(query.order_by(model.id).limit(limit + 1))).all())
+    items = [{"id": r.id, "type": r.observable_type, "namespace": r.namespace[:128],
+              "value": r.canonical_value[:512]} if case_id is not None else
+             {"id": r.id, "name": r.name[:255], "status": r.status} for r in rows[:limit]]
+    return {"items": items, "more": len(rows) > limit,
+            "next_cursor": items[-1]["id"] if len(rows) > limit else None}
 
 
 def input_catalogue(service):

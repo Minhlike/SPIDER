@@ -73,6 +73,7 @@ class ProviderManager:
         **options
     ) -> ProviderExecutionResult:
         adapter = self.get_adapter(task.provider_id)
+        resolve_batch = options.pop("resolve_batch", None)
         if not adapter:
             raise ValueError(f"Provider {task.provider_id} not registered")
 
@@ -144,9 +145,12 @@ class ProviderManager:
             await persist_budget()
 
         ledger, budget = options.get("request_ledger"), options.get("execution_budget")
-        if any(obs.lineage.case_id != task.case_id for obs in result.observations):
+        if any((obs.lineage.case_id, obs.lineage.run_id, obs.lineage.task_id,
+                obs.lineage.provider_id, obs.lineage.seed_id) !=
+               (task.case_id, task.run_id, task.id, task.provider_id, lineage.seed_id)
+               for obs in result.observations):
             result = ProviderExecutionResult(raw_content=b"", observations=[], outcome="FAILED",
-                                             error_message="Observation case mismatch")
+                                             error_message="Observation scope mismatch")
         if ledger is not None:
             accepted = [obs for obs in result.observations if ledger.admit_entity(budget, task.case_id, obs.observable)]
             dropped = len(result.observations) - len(accepted)
@@ -176,7 +180,10 @@ class ProviderManager:
             obs.lineage.raw_artifact_sha256 = artifact.sha256
 
         # Ingest to DB
-        await self.ingest_queue.ingest_batch(result.observations, artifact)
+        if resolve_batch is None:
+            await self.ingest_queue.ingest_batch(result.observations, artifact)
+        else:
+            await self.ingest_queue.ingest_batch(result.observations, artifact, resolve_batch=resolve_batch)
 
         # Record ledger
         async def _record_task(session):

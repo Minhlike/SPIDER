@@ -52,7 +52,10 @@ class SpiderService:
             resolution_engine=self.resolution_engine
         )
         self._started = False
+        self._stopping = False
         self.background_tasks: set[asyncio.Task] = set()
+        from spider.service.actions import InvestigationActions
+        self.actions = InvestigationActions(self)
 
     async def start(self) -> None:
         if self._started:
@@ -61,13 +64,17 @@ class SpiderService:
         await self.db_writer.start()
         self.is_running = True
         self._started = True
+        self._stopping = False
 
     async def stop(self) -> None:
         if not self._started:
             return
-        tasks = list(self.background_tasks)
+        self._stopping = True
+        async with self.actions._admission:
+            tasks = list(self.background_tasks)
         for task in tasks:
-            task.cancel()
+            if not task.cancelling():
+                task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
             # A task cancelled before its first instruction cannot run its own cleanup.

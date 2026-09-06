@@ -73,10 +73,11 @@ Pin seed synthetic, version, hardware/runtime, budget và cache cold/warm. Chạ
 
 ## Trạng thái
 
-Increment 1 đã triển khai; báo cáo và gate tại `AGENT_INVESTIGATION_INCREMENT_1.md`.
+Increment 1 và 2 đã triển khai; xem `AGENT_INVESTIGATION_INCREMENT_1.md` và
+`AGENT_INVESTIGATION_INCREMENT_2.md`. Gate hiện hành nằm trong `memory/NEXT.md`.
 
 - M1 PARTIAL: scoped digest/evidence/graph, compare/coverage, benchmark có dữ liệu. Snapshot/delta và continuation của history/graph còn thiếu.
-- M2 PARTIAL: SDK stdio thật, 9 tool có schema, hypothesis idempotency; chưa có capability dispatch/pivot/cancel có receipt.
+- M2 PASS FIXTURE / NOT YET VERIFIED LIVE: 15 tool stdio, discovery case/target, evidence-linked capability dispatch, annotation, action status/cancellation và UUID receipts. Chưa có graph action controls trên UI; không coi fixture là xác minh provider ngoài Internet.
 - M3 PARTIAL: request attribution theo task, hàng đợi DB giới hạn và shutdown drain. Chưa bật concurrency; pooling/coalescing và replay integration còn PLANNED.
 - M4 PLANNED: giữ browser hiện có; chưa làm workflow session/tab/pivot/resume mới.
 - M5 PARTIAL: E.164 và metadata offline, chặn canonical override; chưa có public-candidate pipeline hoặc live accuracy benchmark. Số user cho phép chỉ đã dùng kiểm thử normalization, không ghi vào repo.

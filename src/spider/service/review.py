@@ -19,7 +19,7 @@ class EvidenceReview(BaseModel):
 
 async def save_review(session, case_id, review):
     view = await project(session, case_id, review.target_id)
-    ids = {o.id for o in view.observations}
+    ids = {o.id for o in view.evidence_observations}
     if review.claim_id not in {a.id for a in view.assertions} or review.observation_id not in ids or (review.origin_id and review.origin_id not in ids):
         raise ValueError("Review evidence must belong to the selected target and claim")
     if review.dependency != "UNKNOWN_DEPENDENCY" and not review.origin_id:

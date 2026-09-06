@@ -3,6 +3,7 @@ import html
 
 VOCABULARY = {
     "NOT_STARTED": ("Chưa có lượt kiểm tra", "No check has started"),
+    "UNKNOWN_AFTER_RESTART": ("Mất liên kết với lượt chạy; chưa xác định kết quả, không tự chạy lại", "Run is detached; outcome is uncertain and will not be replayed automatically"),
     "READY": ("Sẵn sàng kiểm tra", "Ready to check"),
     "READY_LIMITED": ("Có thể kiểm tra trong phạm vi giới hạn", "Ready for limited checks"),
     "FOUND": ("Có hồ sơ cần đối chiếu", "A profile needs comparison"),
