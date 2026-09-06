@@ -17,6 +17,12 @@ async def test_overlapping_tasks_record_own_requests_and_preserve_shared_cap(tmp
     started = []
 
     class Adapter(FakeProviderA):
+        def __init__(self, name):
+            self.name = name
+
+        def provider_id(self):
+            return self.name
+
         async def execute(self, target, lineage, **options):
             ledger = options["request_ledger"]
             ledger.request(options["execution_budget"], self.provider_id())
@@ -29,7 +35,8 @@ async def test_overlapping_tasks_record_own_requests_and_preserve_shared_cap(tmp
             return ProviderExecutionResult(raw_content=b"{}", observations=[], outcome="COMPLETED")
 
     service = SpiderService(str(tmp_path / "receipts.db"), str(tmp_path / "runs"))
-    service.provider_manager.register_adapter(Adapter())
+    for name in ("first", "second"):
+        service.provider_manager.register_adapter(Adapter(name))
     await service.start()
     try:
         case = await service.create_case("Synthetic receipts")
@@ -38,11 +45,11 @@ async def test_overlapping_tasks_record_own_requests_and_preserve_shared_cap(tmp
         await service.db_writer.submit(seed_run)
         ledger, budget = BudgetLedger(), ExecutionBudget(max_requests=3)
         async def call(task_id):
-            task = TaskRun(id=task_id, case_id=case["id"], run_id="run", provider_id="fake_a",
+            task = TaskRun(id=task_id, case_id=case["id"], run_id="run", provider_id=task_id,
                 capability="SUBDOMAIN_DISCOVERY", execution_key_hash=task_id,
                 target_observable_value="example.invalid")
             lineage = SourceLineage(case_id=case["id"], run_id="run", task_id=task_id,
-                provider_id="fake_a", provider_version="1")
+                provider_id=task_id, provider_version="1")
             return await service.provider_manager.execute_task(task,
                 NormalizedObservable(type=T.DOMAIN, value="example.invalid"), lineage,
                 request_ledger=ledger, execution_budget=budget)

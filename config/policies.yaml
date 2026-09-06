@@ -30,7 +30,7 @@ budgets:
     max_depth: 3
     max_requests: 100
     max_runtime_seconds: 300
-    max_parallel_tasks: 4
+    max_parallel_tasks: 2
     max_provider_calls: 50
     max_branch_work: 20
     diminishing_returns_cutoff: 3

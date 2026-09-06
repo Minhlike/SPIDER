@@ -166,6 +166,8 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
         recorder = options.get("egress_recorder")
         exhausted = False
         receipts, finish_tasks = {}, []
+        leases = {}
+        origin_limits = options.get("origin_limits")
 
         async with async_playwright() as playwright:
             context = None
@@ -187,10 +189,15 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                     if request.resource_type in {"image", "media", "font"}:
                         await route.abort()
                         return
+                    if origin_limits:
+                        leases[id(request)] = await origin_limits.acquire(urlsplit(request.url).hostname or "unknown")
                     try:
                         if ledger is not None:
                             ledger.request(budget, self.provider_id(), "HTTP", "browser_navigation")
                     except RequestBudgetExceeded:
+                        lease = leases.pop(id(request), None)
+                        if lease:
+                            lease.release()
                         exhausted = True
                         await route.abort()
                         return
@@ -202,10 +209,19 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                     await route.continue_()
 
                 async def finish(request, outcome):
+                    if origin_limits and outcome == "HTTP_429":
+                        origin_limits.feedback(urlsplit(request.url).hostname or "unknown", 429)
                     receipt = receipts.pop(id(request), None)
                     if receipt and recorder:
                         await recorder.finish(receipt, outcome)
 
+                def release(request):
+                    lease = leases.pop(id(request), None)
+                    if lease:
+                        lease.release()
+
+                context.on("requestfinished", release)
+                context.on("requestfailed", release)
                 context.on("response", lambda response: finish_tasks.append(
                     asyncio.create_task(finish(response.request, f"HTTP_{response.status}"))))
                 context.on("requestfailed", lambda request: finish_tasks.append(
@@ -243,6 +259,8 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 await asyncio.sleep(0)
                 if finish_tasks:
                     await asyncio.gather(*finish_tasks, return_exceptions=True)
+                for lease in list(leases.values()):
+                    lease.release()
                 if recorder:
                     for receipt in list(receipts.values()):
                         await recorder.finish(receipt, "NO_RESPONSE")

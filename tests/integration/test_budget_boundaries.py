@@ -10,6 +10,7 @@ from spider.models.enums import ObservableType as T
 from spider.models.observable import NormalizedObservable
 from spider.models.provenance import SourceLineage
 from spider.providers.transport import MeteredTransport
+from spider.providers.http_plane import HTTPPlane
 from spider.providers.native.dns import NativeDnsAdapter
 from spider.providers.fake.provider_a import FakeProviderA
 from spider.service.service import SpiderService
@@ -31,11 +32,11 @@ class _Recorder:
 
 @pytest.mark.asyncio
 async def test_api_key_header_is_credentialed_and_never_enters_replay_cache():
-    recorder, replay_cache = _Recorder(), {}
+    recorder, plane = _Recorder(), HTTPPlane()
     transport = MeteredTransport(
         BudgetLedger(), ExecutionBudget(max_requests=2), "fixture",
         httpx.MockTransport(lambda request: httpx.Response(200, json={"ok": True})),
-        recorder=recorder, replay_cache=replay_cache,
+        recorder=recorder, plane=plane, run_scope=("run", "v1"),
     )
     async with httpx.AsyncClient(transport=transport) as client:
         response = await client.get(
@@ -46,7 +47,8 @@ async def test_api_key_header_is_credentialed_and_never_enters_replay_cache():
     assert response.status_code == 200
     assert recorder.events[0]["credentialed"] is True
     assert recorder.events[0]["outcome"] == "HTTP_200"
-    assert replay_cache == {}
+    assert not plane.cache
+    await plane.aclose()
 
 
 @pytest.mark.asyncio
@@ -90,15 +92,17 @@ async def test_concurrent_http_requests_cannot_overspend():
 @pytest.mark.asyncio
 async def test_explicit_replay_cache_does_not_consume_network_budget():
     ledger, budget, dispatched = BudgetLedger(), ExecutionBudget(max_requests=1), []
+    plane = HTTPPlane()
     def upstream(request):
         dispatched.append(request.url.path)
         return httpx.Response(200, json={"fixture": True})
     async with httpx.AsyncClient(transport=MeteredTransport(ledger, budget, "fixture",
-            httpx.MockTransport(upstream), replay_cache={})) as client:
+            httpx.MockTransport(upstream), plane=plane, run_scope=("run", "v1"))) as client:
         first = await client.get("https://fixture.test/replay")
         second = await client.get("https://fixture.test/replay")
     assert first.json() == second.json() and len(dispatched) == 1
     assert ledger.requests_count == 1 and ledger.cache_hits_count == 1
+    await plane.aclose()
 
 
 @pytest.mark.asyncio

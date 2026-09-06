@@ -61,6 +61,17 @@ class SpiderService:
         if self._started:
             return
         await self.db_manager.initialize()
+        if self.provider_manager.http_plane.closed:
+            from spider.providers.http_plane import HTTPPlane
+            from spider.providers.limits import OriginLimits
+            old_plane = self.provider_manager.http_plane
+            self.provider_manager.http_plane = HTTPPlane(factory=old_plane.factory, clock=old_plane.clock)
+            # A restarted service may be attached to a new event loop.
+            self.provider_manager.origin_limits = OriginLimits()
+            self.provider_manager._global_slots = asyncio.Semaphore(4)
+            self.provider_manager._provider_slots = {
+                pid: asyncio.Semaphore(1) for pid in self.provider_manager.adapters
+            }
         await self.db_writer.start()
         self.is_running = True
         self._started = True
@@ -89,6 +100,7 @@ class SpiderService:
                     ProviderRunRecord.status.in_(["QUEUED", "RUNNING"]),
                 ).values(status="CANCELLED", completed_at=utc_now()))
             await self.db_writer.submit(cancel_unfinished)
+        await self.provider_manager.http_plane.aclose()
         await self.db_writer.stop()
         self.is_running = False
         await self.db_manager.close()
@@ -122,14 +134,27 @@ class SpiderService:
         return await self.db_writer.submit(_add)
 
     async def investigate(self, case_id: str, budget: Optional[ExecutionBudget] = None, policy_profile: Optional[str] = None, run_id: Optional[str] = None, investigation_mode=None, browser_assisted: bool = False) -> Dict[str, Any]:
-        return await self.engine.run_investigation(
-            case_id,
-            budget=budget,
-            policy_profile=policy_profile,
-            run_id=run_id,
-            investigation_mode=investigation_mode,
-            browser_assisted=browser_assisted,
-        )
+        from uuid import uuid4
+        run_id = run_id or str(uuid4())
+        try:
+            return await self.engine.run_investigation(
+                case_id, budget=budget, policy_profile=policy_profile, run_id=run_id,
+                investigation_mode=investigation_mode, browser_assisted=browser_assisted)
+        except asyncio.CancelledError:
+            from sqlalchemy import select, func
+            from spider.storage.schema import ProviderRunRecord, TaskRunRecord, ObservationRecord
+            from spider.models.base import utc_now
+            async def cancel(session):
+                row = await session.get(ProviderRunRecord, run_id)
+                if row and row.status in ("QUEUED", "RUNNING"):
+                    row.status, row.completed_at = "CANCELLED", utc_now()
+                    row.tasks_count = await session.scalar(select(func.count()).select_from(
+                        TaskRunRecord).where(TaskRunRecord.run_id == run_id))
+                    row.observations_count = await session.scalar(select(func.count()).select_from(
+                        ObservationRecord).where(ObservationRecord.run_id == run_id,
+                                                 ObservationRecord.provider_id != "seed_target"))
+            await self.db_writer.submit(cancel)
+            raise
 
     async def get_case_entities(self, case_id: str) -> List[Dict[str, Any]]:
         async with self.db_manager.session_factory() as session:

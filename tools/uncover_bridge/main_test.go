@@ -19,6 +19,35 @@ func reply(status int, body string) *http.Response {
 	return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}
 }
 
+func TestParentPermitPrecedesNetworkAndDenialSendsNothing(t *testing.T) {
+	for _, allowed := range []bool{false, true} {
+		asked, sent := false, 0
+		g := &guardedTransport{host: "api.shodan.io", maxRequests: 1,
+			permit: func(entry requestJournalEntry) bool {
+				if sent != 0 || entry.Sequence != 1 || entry.Destination != "api.shodan.io" {
+					t.Fatal("permit did not precede transport")
+				}
+				asked = true
+				return allowed
+			}, base: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if !asked {
+					t.Fatal("network without permit")
+				}
+				sent++
+				return reply(200, `{"plan":"dev"}`), nil
+			})}
+		req, _ := http.NewRequest("GET", "https://api.shodan.io/api-info", nil)
+		_, _ = g.RoundTrip(req)
+		want := 0
+		if allowed {
+			want = 1
+		}
+		if !asked || sent != want || g.requests != want || len(g.journal) != want {
+			t.Fatal("incorrect permit/request accounting")
+		}
+	}
+}
+
 func TestClassification(t *testing.T) {
 	for _, test := range []struct {
 		status      int

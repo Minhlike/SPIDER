@@ -1,30 +1,34 @@
-# Current work: Agent investigation increment 2 (2026-09-06)
+# Current work: Agent investigation increment 3 (2026-09-06)
 
 Repository: `D:\PhanMem_Tools\SPIDER`; original baseline `069fa49a`.
-Report language commit: `ae23c81`. Current increment and limits:
-`docs/AGENT_INVESTIGATION_INCREMENT_2.md`; plan `docs/AGENT_INVESTIGATION_PLAN_VI.md`.
-User authorized implementation and commit/push; verify live HEAD and remote.
+Increment baseline: `7e92711`. Report: `docs/AGENT_INVESTIGATION_INCREMENT_3.md`.
+Plan: `docs/AGENT_INVESTIGATION_PLAN_VI.md`. User authorized implementation,
+commit and push; verify live HEAD/remote before continuing.
 
-Verified full offline suite: **415 passed, 1 deselected in 105.37s**. Includes
-14 Chromium in-process UI tests and two real official MCP stdio client tests.
-No production listener or live-provider/personal-target search was started.
-No real credentials used or changed. The prior supplied phone was only normalized
-in the previous increment; its value remains absent from these artifacts.
+Final offline gate: **435 passed, 1 deselected in 101.42s** with default concurrency 2.
+Includes 14 Chromium in-process UI tests and two official MCP stdio client tests.
+Go private-runner tests/build, pip check, compile and diff whitespace: PASS.
+No production listener, real-person investigation or real-credential test started.
+Credential/settings schema unchanged; local runtime binary rebuilt and stays ignored.
 
-Implemented: shared VI/EN report language across UI/export/CLI and MCP explanation;
-15 stdio tools including case/target discovery, scoped entity IDs, one-capability
-pivot, durable UUID receipts, status, owned cancellation and evidence annotations.
-Exact typed/namespace/seed proof required; seed input excluded from evidence reviews.
-Cancellation preserves committed evidence and graph atomically. Old annotation
-retries do not undo newer reviews. Detached runs never automatically replay.
+Implemented M3: parent permits before every Maigret/Uncover HTTP attempt,
+shared per-run atomic cap, task attribution, global/provider/origin limits,
+ordered entity admission/atomic ingest, cancellation/drain, bounded HTTP pools,
+anonymous run-scoped replay/coalescing, bounded TTL/cache and 429 backoff.
+General runs default to 2 independent providers (1-4 configurable), global 4,
+per-provider 1, request global 8 and per-hostname 2. MCP action queue stays serial.
 
-M2 fixture gate passed; external-provider actions remain NOT YET VERIFIED LIVE.
-Full M1-M6 is not complete. Next: atomic pre-I/O reservations for Uncover/Maigret,
-then global/provider/origin bounded concurrency and deterministic ingest benchmark.
-Do not equate post-dispatch receipts with reservations. Existing actions are serial
-within their queue, not a global multi-run scheduler. Continue M1 snapshot/delta,
-M4 owned browser workflow, M5 PHONE candidates/consented holdout and M6 graph UX.
-Do not claim speedup or identification accuracy from synthetic tests.
+Controlled benchmark: 20 trials at each width, same synthetic evidence/graph,
+wall p50 685.521/505.342/403.211 ms at 1/2/4; request attempts 4 for each.
+This is not Internet speed, UI latency or identification-accuracy evidence.
+Full metrics and restrictions are in the increment report. M3 PASS FIXTURE;
+not a universal graph-equality claim when sources compete for the final permits.
+
+Next P0: M1 stable snapshot/delta, history/graph continuation and projection cost.
+Then M4 owned browser workflow, M5 PHONE public candidates/consented holdout,
+M6 evidence reasoning/telemetry/graph UX. Full M1-M6 remains incomplete.
+Keep seed input excluded from findings/evidence, deterministic core independent
+of AI, uncertainty explicit, and no extra provider without adoption evidence.
 
 ## Historical notes (superseded status; retain for traceability)
 

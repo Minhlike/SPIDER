@@ -12,6 +12,7 @@ from spider.models.enums import ObservableType, NetworkClass, ProviderState
 from spider.models.observable import NormalizedObservable
 from spider.models.observation import Observation
 from spider.discovery.vn_sources import DIRECT_MAIGRET_SITES
+from spider.providers.permits import RequestPermits
 
 
 class MaigretAdapter(BaseProviderAdapter):
@@ -22,7 +23,7 @@ class MaigretAdapter(BaseProviderAdapter):
 
     def provider_id(self): return "maigret"
     def version(self): return "v0.6.5"
-    def adapter_version(self): return "2.1.0"
+    def adapter_version(self): return "2.2.0"
     def capabilities(self): return ["USERNAME_DISCOVERY"]
     def network_class(self): return NetworkClass.THIRD_PARTY_ONLY
     def accepts(self): return [ObservableType.USERNAME]
@@ -143,7 +144,7 @@ class MaigretAdapter(BaseProviderAdapter):
         with tempfile.TemporaryDirectory(prefix="spider-maigret-") as folder:
             report = Path(folder) / "results.ndjson"
             spec = {"username": target.canonical_value, "report": str(report),
-                    "site_limit": limit, "source_scope": scope}
+                    "site_limit": limit, "source_scope": scope, "parent_permits": True}
             if requested_sites is not None:
                 spec["requested_sites"] = requested_sites
             ledger, budget = kwargs.get("request_ledger"), kwargs.get("execution_budget")
@@ -151,46 +152,60 @@ class MaigretAdapter(BaseProviderAdapter):
                 spec["max_requests"] = max(0, budget.max_requests - ledger.requests_count)
                 spec["fingerprint_salt"] = ledger._fingerprint_salt.hex()
             accounted = 0
-            journal_events, recorded_outcomes = {}, set()
             recorder = kwargs.get("egress_recorder")
+            permits = RequestPermits(self.provider_id(), ledger, budget, recorder,
+                                     origin_limits=kwargs.get("origin_limits"))
             async def account_requests():
                 nonlocal accounted
                 rows = self.rows(report.read_bytes()) if report.exists() else []
-                events = [row for row in rows if row.get("kind") == "request"]
-                for event in events[accounted:]:
-                    if ledger is not None:
-                        ledger.request(budget, self.provider_id(), "HTTP", event.get("purpose", "lookup"))
-                    if recorder:
-                        journal_events[event["sequence"]] = await recorder.begin(event["destination"],
-                            event["purpose"], fingerprint=event["identifier_fingerprint"])
-                    accounted += 1
-                if recorder:
-                    for event in rows:
-                        sequence = event.get("sequence")
-                        if event.get("kind") == "request_outcome" and sequence in journal_events and sequence not in recorded_outcomes:
-                            await recorder.finish(journal_events[sequence], event["outcome"])
-                            recorded_outcomes.add(sequence)
+                accounted = permits.granted
+                for event in rows:
+                    if event.get("kind") == "request_outcome":
+                        await permits.finish(event.get("sequence"), event.get("outcome"))
             if self.database_path: spec["database"] = str(self.database_path)
             try:
                 proc = await asyncio.create_subprocess_exec(*self.build_command(target),
-                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL,
+                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL, env=env)
-                communication = asyncio.create_task(proc.communicate(json.dumps(spec).encode("utf-8")))
+                async def exchange():
+                    proc.stdin.write((json.dumps(spec) + "\n").encode("utf-8"))
+                    await proc.stdin.drain()
+                    while frame := await proc.stdout.readline():
+                        if len(frame) > 4096:
+                            raise ValueError("Invalid request permit frame")
+                        allowed = await permits.grant(json.loads(frame))
+                        proc.stdin.write(b"1\n" if allowed else b"0\n")
+                        await proc.stdin.drain()
+                    await proc.wait()
+                communication = asyncio.create_task(exchange())
+                next_progress = 0.0
                 try:
                     while not communication.done():
                         remaining = timeout - (time.perf_counter() - started)
                         if remaining <= 0:
                             timed_out = True
                             break
-                        await asyncio.wait({communication}, timeout=min(1, remaining))
-                        if progress and report.exists():
+                        await asyncio.wait({communication}, timeout=min(.05, remaining))
+                        if report.exists():
                             await account_requests()
+                        if progress and report.exists() and time.perf_counter() >= next_progress:
                             await progress(self.coverage(report.read_bytes()))
+                            next_progress = time.perf_counter() + 1
+                    if not timed_out:
+                        await communication
                 finally:
                     if proc.returncode is None:
                         proc.kill()
-                    await communication
-                    await account_requests()
+                    # The handshake can be waiting for an origin lease after the
+                    # child exits. Cancel it before stopping outcome polling.
+                    if not communication.done():
+                        communication.cancel()
+                    try:
+                        await asyncio.gather(communication, return_exceptions=True)
+                        await proc.wait()
+                    finally:
+                        await account_requests()
+                        await permits.close()
                 raw = report.read_bytes() if report.exists() else b""
             except OSError:
                 raw = b""

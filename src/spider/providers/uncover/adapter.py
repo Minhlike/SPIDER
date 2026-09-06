@@ -9,6 +9,7 @@ from spider.models.observable import NormalizedObservable
 from spider.models.observation import Observation
 from spider.models.provenance import SourceLineage
 from spider.storage.key_store import KeyStoreError
+from spider.providers.permits import RequestPermits
 from . import api_access as access
 
 UNCOVER_ENGINES = list(access.REQUIREMENTS)
@@ -27,7 +28,7 @@ class UncoverAdapter(BaseProviderAdapter):
         return "v1.2.1"
 
     def adapter_version(self) -> str:
-        return "1.2.0"
+        return "1.3.0"
 
     def capabilities(self) -> List[str]:
         return ["INTERNET_INTELLIGENCE"]
@@ -99,33 +100,38 @@ class UncoverAdapter(BaseProviderAdapter):
                 elif remaining <= 0:
                     result = access.result_state(engine, "NETWORK_ERROR", "TIMEOUT", "search")
                 elif ledger is not None and ledger.requests_count >= budget.max_requests:
-                    result = access.result_state(engine, "PLAN/QUOTA_LIMIT", "PAGE_LIMIT", "search")
+                    result = access.result_state(engine, "SKIPPED_BUDGET", "REQUEST_LIMIT", "search")
                 else:
-                    result = await access.run_engine(engine, keys, mode="search", query=self.query_for(target, engine),
-                        binary=self.binary_path, timeout=min(23, remaining))
-                    journal = result.get("request_journal", [])
-                    if len(journal) != 1:
-                        result = access.result_state(engine, "NETWORK_ERROR", "UNEXPECTED_RESPONSE", "search")
-                    else:
-                        entry = journal[0]
-                        if ledger is not None:
-                            ledger.request(budget, self.provider_id(), "HTTP", f"{engine}_search")
-                        request_count += 1
-                        if recorder:
-                            event = await recorder.begin(entry["destination"], entry["purpose"], credentialed=True)
-                            await recorder.finish(event, entry["outcome"])
+                    permits = RequestPermits(self.provider_id(), ledger, budget, recorder,
+                        destination=access.JOURNAL_DESTINATIONS[engine], credentialed=True,
+                        origin_limits=kwargs.get("origin_limits"))
+                    try:
+                        result = await access.run_engine(engine, keys, mode="search", query=self.query_for(target, engine),
+                            binary=self.binary_path, timeout=min(23, remaining), on_request=permits.grant)
+                        journal = result.get("request_journal", [])
+                        if permits.denied:
+                            result = access.result_state(engine, "SKIPPED_BUDGET", "REQUEST_LIMIT", "search")
+                        elif len(journal) != permits.granted or (result["state"] == "VALID" and permits.granted != 1):
+                            result = access.result_state(engine, "NETWORK_ERROR", "UNEXPECTED_RESPONSE", "search")
+                        elif journal:
+                            await permits.finish(1, journal[0]["outcome"])
+                    finally:
+                        request_count += permits.granted
+                        await permits.close()
                 rows.extend(result.pop("results"))
                 statuses[engine] = result
             raw = "\n".join(json.dumps(row) for row in rows).encode()
             observations = self.parse(raw, lineage)
             attempted = [r for e, r in statuses.items() if presence[e]["configured"]]
             successes = sum(r["state"] == "VALID" for r in attempted)
-            outcome = "COMPLETED" if attempted and successes == len(attempted) else "PARTIAL" if successes else "FAILED"
+            budget_limited = any(r["state"] == "SKIPPED_BUDGET" for r in attempted)
+            outcome = "COMPLETED" if attempted and successes == len(attempted) else "PARTIAL" if successes or budget_limited else "FAILED"
             return ProviderExecutionResult(raw_content=raw, observations=observations,
                 exit_code=0 if outcome == "COMPLETED" else 1, outcome=outcome,
                 error_message=None if outcome == "COMPLETED" else "Uncover engines unavailable; see per-engine status",
                 metadata={"engines": statuses, "bounded_to_first_page": True,
-                          "request_count": request_count, "request_journal_verified": True},
+                          "request_count": request_count, "request_journal_verified": True,
+                          **({"budget_reason": "REQUEST_LIMIT"} if budget_limited else {})},
                 raw_items_count=len(rows), accepted_count=len(observations), mime_type="application/x-ndjson",
                 duration_ms=(time.monotonic()-started)*1000)
         finally:

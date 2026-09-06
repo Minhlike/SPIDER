@@ -20,6 +20,13 @@ experiments. Do not configure multiple writers against the same database as a
 performance strategy. Service lifetime belongs to the MCP session, and shutdown
 drains accepted writes. Calls do not stop a service that was already running.
 
+General investigations now default to two independent providers, with shared
+provider/origin limits and pre-I/O request accounting. A capability action still
+selects one provider and the action queue remains serial. Task metadata separates
+provider wait, execution and commit wait; run-scoped anonymous HTTP replay records
+cache hits without charging another network request. See increment 3 for the
+controlled benchmark and limits; these measurements do not verify live sources.
+
 ## Tools exposed over stdio (schema version 1)
 
 | Tool | Effect |

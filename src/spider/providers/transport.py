@@ -1,56 +1,76 @@
 """Request accounting at the HTTP transport boundary; no URL/header/body logging."""
 import httpx
-
-CREDENTIAL_HEADERS = frozenset({"authorization", "cookie", "x-api-key", "x-key", "api-key"})
-
+from spider.providers.http_plane import credentialed
 
 class MeteredTransport(httpx.AsyncBaseTransport):
-    def __init__(self, ledger, budget, provider_id, inner=None, recorder=None, replay_cache=None):
+    def __init__(self, ledger, budget, provider_id, inner=None, recorder=None,
+                 origin_limits=None, plane=None, run_scope=None):
         self.ledger, self.budget, self.provider_id = ledger, budget, provider_id
         # Disable hidden connection retries. Redirects re-enter handle_async_request.
-        self.inner = inner if inner is not None else httpx.AsyncHTTPTransport(retries=0)
+        self.inner = inner if inner is not None else (None if plane else httpx.AsyncHTTPTransport(retries=0))
         self.recorder = recorder
-        # Explicit run-local replay only, disabled by default; no credentials cached.
-        self.replay_cache = replay_cache
+        self.origin_limits = origin_limits
+        self.plane, self.run_scope, self.temporary = plane, run_scope, []
 
     async def handle_async_request(self, request):
-        credentialed = any(name in request.headers for name in CREDENTIAL_HEADERS)
-        cacheable = request.method == "GET" and not credentialed
-        key = ((str(request.url), tuple(request.headers.multi_items()))
-               if cacheable else None)
-        if cacheable and self.replay_cache is not None and key in self.replay_cache:
-            if self.ledger is not None:
-                self.ledger.record_cache_hit()
-            status, headers, content = self.replay_cache[key]
-            return httpx.Response(status, headers=headers, content=content)
+        if self.plane:
+            return await self.plane.request(request, self.provider_id, self.run_scope,
+                                            self.ledger, self._limited_request)
+        return await self._limited_request(request)
+
+    async def _limited_request(self, request):
+        lease = await self.origin_limits.acquire(request.url.host) if self.origin_limits else None
+        response = None
+        try:
+            response = await self._request(request)
+            if self.origin_limits:
+                self.origin_limits.feedback(request.url.host, response.status_code, response.headers.get("retry-after"))
+            # Hold the origin slot through body collection, not just response headers.
+            await response.aread()
+            return response
+        except BaseException:
+            if response is not None:
+                await response.aclose()
+            raise
+        finally:
+            if lease:
+                lease.release()
+
+    async def _request(self, request):
+        authenticated = credentialed(request)
         if self.ledger is not None:
             self.ledger.request(self.budget, self.provider_id)
         event = await self.recorder.begin(
             str(request.url),
             purpose=request.extensions.get("spider_purpose", "lookup"),
-            credentialed=credentialed,
+            credentialed=authenticated,
             identifier=request.extensions.get("spider_identifier"),
         ) if self.recorder else None
         try:
-            response = await self.inner.handle_async_request(request)
+            inner = self.inner
+            if inner is None:
+                inner, temporary = self.plane.pool(self.provider_id, request)
+                if temporary:
+                    self.temporary.append(inner)
+            response = await inner.handle_async_request(request)
         except BaseException:
             if event:
                 await self.recorder.finish(event, "UNKNOWN_AFTER_DISPATCH")
             raise
         if event:
             await self.recorder.finish(event, "HTTP_" + str(response.status_code))
-        if cacheable and self.replay_cache is not None and response.status_code == 200 and "set-cookie" not in response.headers:
-            content = await response.aread()
-            if len(content) <= 65536:
-                self.replay_cache[key] = (response.status_code, dict(response.headers), content)
         return response
 
     async def aclose(self):
-        await self.inner.aclose()
+        if self.inner:
+            await self.inner.aclose()
+        for inner in self.temporary:
+            await inner.aclose()
 
 
 def provider_client(provider_id, options, **kwargs):
     inner = kwargs.pop("transport", None)
     return httpx.AsyncClient(trust_env=False, transport=MeteredTransport(
         options.get("request_ledger"), options.get("execution_budget"), provider_id, inner,
-        options.get("egress_recorder")), **kwargs)
+        options.get("egress_recorder"), origin_limits=options.get("origin_limits"),
+        plane=options.get("http_plane"), run_scope=options.get("http_run_scope")), **kwargs)

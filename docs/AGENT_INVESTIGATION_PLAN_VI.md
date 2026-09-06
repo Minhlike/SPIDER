@@ -73,19 +73,21 @@ Pin seed synthetic, version, hardware/runtime, budget và cache cold/warm. Chạ
 
 ## Trạng thái
 
-Increment 1 và 2 đã triển khai; xem `AGENT_INVESTIGATION_INCREMENT_1.md` và
-`AGENT_INVESTIGATION_INCREMENT_2.md`. Gate hiện hành nằm trong `memory/NEXT.md`.
+Increment 1–3 đã triển khai; xem `AGENT_INVESTIGATION_INCREMENT_1.md`,
+`AGENT_INVESTIGATION_INCREMENT_2.md` và `AGENT_INVESTIGATION_INCREMENT_3.md`.
+Gate hiện hành nằm trong `memory/NEXT.md`.
 
 - M1 PARTIAL: scoped digest/evidence/graph, compare/coverage, benchmark có dữ liệu. Snapshot/delta và continuation của history/graph còn thiếu.
 - M2 PASS FIXTURE / NOT YET VERIFIED LIVE: 15 tool stdio, discovery case/target, evidence-linked capability dispatch, annotation, action status/cancellation và UUID receipts. Chưa có graph action controls trên UI; không coi fixture là xác minh provider ngoài Internet.
-- M3 PARTIAL: request attribution theo task, hàng đợi DB giới hạn và shutdown drain. Chưa bật concurrency; pooling/coalescing và replay integration còn PLANNED.
+- M3 PASS FIXTURE / NOT YET VERIFIED LIVE: parent permit trước I/O cho Maigret/Uncover, shared hard cap và attribution theo task; default 2 provider, giới hạn global/provider/origin, cancel/drain và ingest theo thứ tự. Pool theo credential scope, anonymous replay/coalescing trong run có TTL/no-store/giới hạn bộ nhớ. Benchmark 20 lượt cho 1/2/4 nguồn được ghi ở increment 3; không suy ra tốc độ Internet hoặc UI. MCP action queue vẫn serial.
 - M4 PLANNED: giữ browser hiện có; chưa làm workflow session/tab/pivot/resume mới.
 - M5 PARTIAL: E.164 và metadata offline, chặn canonical override; chưa có public-candidate pipeline hoặc live accuracy benchmark. Số user cho phép chỉ đã dùng kiểm thử normalization, không ghi vào repo.
 - M6 PARTIAL: catalogue backend khóa lựa chọn UI chưa hỗ trợ; telemetry latency/request có sample counts. Reasoning/UX đầy đủ còn PLANNED.
 
-P0 tiếp theo: sửa runner reservation trước I/O. Uncover hiện kiểm tra ngân sách trước gọi runner nhưng ghi request sau khi runner trả journal; Maigret có giới hạn worker riêng và báo receipt về parent. Không được coi hai cơ chế này là reservation nguyên tử dùng chung giữa nhiều runner. Chỉ bật concurrency sau gate hard-cap/cancel/deterministic-ingest. Không sửa API-key schema để giải quyết lỗi accounting.
+P0 tiếp theo: hoàn thiện M1 snapshot/delta và phân trang history/graph, tránh Agent phải đọc lại dữ liệu cũ. M3 đã thay post-dispatch receipts bằng parent reservation trước I/O; scope giới hạn là một service process. Giữ rõ PARTIAL khi request cap làm thiếu coverage; không hứa cùng graph khi các nguồn tranh ngân sách cuối. Không sửa API-key schema để giải quyết accounting.
 
-Không có nguồn mới được ADOPT, không tuyên bố speedup hay khả năng tìm danh tính tốt hơn điều tra thủ công.
+Không có nguồn mới được ADOPT. Chỉ báo chênh lệch thời gian trên fixture đã đo;
+không tuyên bố khả năng tìm danh tính tốt hơn điều tra thủ công.
 
 ## Yêu cầu ad-hoc — ngôn ngữ báo cáo (đã triển khai)
 

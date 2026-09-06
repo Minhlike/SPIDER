@@ -73,6 +73,15 @@ class NativeDnsAdapter(BaseProviderAdapter):
         query_name = dns.reversename.from_address(val) if reverse else query_domain
         disclosed = NormalizedObservable(type=ObservableType.DOMAIN, value=query_domain) if obs_type == ObservableType.EMAIL else target
         async def dispatch(query, address, tcp=False):
+            limits = kwargs.get("origin_limits")
+            lease = await limits.acquire(address) if limits else None
+            try:
+                return await _dispatch(query, address, tcp)
+            finally:
+                if lease:
+                    lease.release()
+
+        async def _dispatch(query, address, tcp=False):
             protocol = "tcp_fallback" if tcp else "udp"
             if ledger is not None:
                 ledger.request(budget, self.provider_id(), "DNS", protocol)

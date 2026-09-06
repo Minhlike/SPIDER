@@ -1,4 +1,4 @@
-"""Isolated Maigret 0.6.5 bridge. stdout is never the report transport."""
+"""Isolated Maigret bridge. stdout carries permits, never page/report content."""
 import asyncio
 import hashlib
 import importlib.metadata
@@ -142,6 +142,8 @@ async def run(spec):
         metadata_by_site = {}
         site_rows = {}
         request_count = 0
+        permit_count = 0
+        permit_lock = asyncio.Lock()
         request_limit = spec.get("max_requests")
         request_kind = "lookup"
         request_identifier = spec["username"]
@@ -151,18 +153,30 @@ async def run(spec):
             raise RuntimeError("Maigret HTTP request accounting unavailable")
 
         async def meter(request, handler):
-            nonlocal request_count
+            nonlocal request_count, permit_count
             if request_limit is not None and request_count >= request_limit:
                 raise aiohttp.ClientError("Network request budget exhausted")
-            request_count += 1
-            # Journal before dispatch: every retry, redirect and negative control enters here.
-            sequence = request_count
             host = request.url.host or "unknown"
             if request_identifier.casefold() in host.casefold():
                 host = "<identifier-host>"
-            write({"kind": "request", "sequence": sequence, "purpose": request_kind,
+            frame = {"kind": "request_permit", "purpose": request_kind,
                    "destination": host, "identifier_fingerprint": hmac.new(fingerprint_salt,
-                       json.dumps(("USERNAME", "", request_identifier)).encode(), hashlib.sha256).hexdigest()})
+                       json.dumps(("USERNAME", "", request_identifier)).encode(), hashlib.sha256).hexdigest()}
+            async with permit_lock:
+                # Serialise only the handshake, not the network response.
+                if request_limit is not None and request_count >= request_limit:
+                    raise aiohttp.ClientError("Network request budget exhausted")
+                permit_count += 1
+                sequence = permit_count
+                frame["sequence"] = sequence
+                if spec.get("parent_permits"):
+                    print(json.dumps(frame), flush=True)
+                    approved = await asyncio.to_thread(sys.stdin.readline)
+                    if approved.strip() != "1":
+                        raise aiohttp.ClientError("Parent request budget denied")
+                request_count += 1
+            # Every retry, redirect and negative control needs its own permit.
+            write({**frame, "kind": "request"})
             try:
                 response = await handler(request)
             except BaseException:
@@ -263,7 +277,7 @@ async def run(spec):
 if __name__ == "__main__":
     logging.disable(logging.CRITICAL)
     try:
-        asyncio.run(run(json.load(sys.stdin)))
+        asyncio.run(run(json.loads(sys.stdin.readline())))
     except Exception:
         # Exceptions may contain URLs, request headers or user data.
         sys.exit(1)

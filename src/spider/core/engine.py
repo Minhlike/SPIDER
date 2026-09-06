@@ -17,6 +17,7 @@ from spider.models.policy import PolicyContext
 from spider.capability.registry import CapabilityRegistry
 from spider.policy.engine import PolicyEngine
 from spider.scheduler.scheduler import DeterministicScheduler, ScheduledTask
+from spider.scheduler.commit_order import CommitOrder
 from spider.providers.manager import ProviderManager
 from spider.ingest.queue import IngestQueue
 from spider.storage.writer import SingleDBWriter
@@ -155,6 +156,7 @@ class SpiderEngine:
         failed_tasks = 0
         available_providers = set(self.provider_manager.adapters.keys())
 
+        deferred_candidates = False
         while frontier and not scheduler.ledger.is_exhausted(budget) and time.monotonic() < deadline:
             current_obs, seed_id, depth = frontier.pop(0)
 
@@ -189,77 +191,93 @@ class SpiderEngine:
                 },
             )
 
-            for cand in candidates:
-                # A shared observable can answer different seeds; never reuse unrelated evidence.
-                cand.execution_key.configuration_hash = seed_id
-                if cand.execution_key.key_string in executed_key_hashes:
+            for offset in range(0, len(candidates), budget.max_parallel_tasks):
+                batch = []
+                order = CommitOrder()
+                for cand in candidates[offset:offset + budget.max_parallel_tasks]:
+                    # A shared observable can answer different seeds; never reuse unrelated evidence.
+                    cand.execution_key.configuration_hash = seed_id
+                    if cand.execution_key.key_string in executed_key_hashes:
+                        continue
+                    if scheduler.ledger.is_exhausted(budget, current_depth=depth) or time.monotonic() >= deadline:
+                        deferred_candidates = True
+                        break
+
+                    task = TaskRun(
+                        case_id=case_id,
+                        run_id=run_id,
+                        execution_key_hash=cand.execution_key.key_string,
+                        provider_id=cand.provider_id,
+                        capability=cand.capability,
+                        target_observable_value=current_obs.canonical_value,
+                        status=ExecutionStatus.RUNNING,
+                        metadata={"seed_id": seed_id, "target_type": current_obs.type.value,
+                                    "target_namespace": current_obs.namespace}
+                    )
+
+                    lineage = SourceLineage(
+                        case_id=case_id,
+                        run_id=run_id,
+                        task_id=task.id,
+                        provider_id=cand.provider_id,
+                        provider_version=self.provider_manager.adapters[cand.provider_id].version(),
+                        adapter_version=self.provider_manager.adapters[cand.provider_id].adapter_version(),
+                        parent_observable_value=current_obs.canonical_value,
+                        parent_observable_type=current_obs.type,
+                        parent_namespace=current_obs.namespace,
+                        seed_id=seed_id,
+                        configuration_hash=cand.execution_key.configuration_hash
+                    )
+
+                    batch.append((cand, task, lineage))
+                    scheduler.ledger.provider_calls_count += 1
+                if not batch:
+                    # A batch of duplicate execution keys need not be the last batch.
+                    if deferred_candidates:
+                        break
                     continue
-                if scheduler.ledger.is_exhausted(budget, current_depth=depth) or time.monotonic() >= deadline:
-                    break
-
-                task = TaskRun(
-                    case_id=case_id,
-                    run_id=run_id,
-                    execution_key_hash=cand.execution_key.key_string,
-                    provider_id=cand.provider_id,
-                    capability=cand.capability,
-                    target_observable_value=current_obs.canonical_value,
-                    status=ExecutionStatus.RUNNING,
-                    metadata={"seed_id": seed_id, "target_type": current_obs.type.value,
-                                "target_namespace": current_obs.namespace}
-                )
-
-                lineage = SourceLineage(
-                    case_id=case_id,
-                    run_id=run_id,
-                    task_id=task.id,
-                    provider_id=cand.provider_id,
-                    provider_version=self.provider_manager.adapters[cand.provider_id].version(),
-                    adapter_version=self.provider_manager.adapters[cand.provider_id].adapter_version(),
-                    parent_observable_value=current_obs.canonical_value,
-                    parent_observable_type=current_obs.type,
-                    parent_namespace=current_obs.namespace,
-                    seed_id=seed_id,
-                    configuration_hash=cand.execution_key.configuration_hash
-                )
-
-                exec_result = await self.provider_manager.execute_task(
-                    task, current_obs, lineage,
-                    timeout_seconds=max(0.1, deadline-time.monotonic()),
+                jobs = [asyncio.create_task(self.provider_manager.execute_task(
+                    task, current_obs, lineage, timeout_seconds=max(0.1, deadline-time.monotonic()),
                     request_ledger=scheduler.ledger, execution_budget=budget,
                     derivation="DIRECT" if depth == 0 else "DERIVED",
                     username_site_limit=budget.username_site_limit,
-                    username_source_scope=budget.username_source_scope)
-                if exec_result.exit_code != 0 or exec_result.outcome in ("PARTIAL", "FAILED"):
-                    incomplete_tasks += 1
-                    if exec_result.outcome == "FAILED" or (not exec_result.outcome and exec_result.exit_code != 0):
-                        failed_tasks += 1
-                else:
-                    successful_tasks += 1
-                executed_key_hashes.add(cand.execution_key.key_string)
-                total_tasks_run += 1
-                scheduler.ledger.provider_calls_count += 1
-                scheduler.ledger.record_observation_yield(len(exec_result.observations))
+                    username_source_scope=budget.username_source_scope,
+                    commit_order=order, commit_index=index,
+                    resolve_batch=lambda session, observations: self.resolution_engine.resolve_observations(
+                        session, observations, case_id)))
+                    for index, (_, task, lineage) in enumerate(batch)]
+                try:
+                    results = await asyncio.gather(*jobs)
+                finally:
+                    for job in jobs:
+                        if not job.done() and not job.cancelling():
+                            job.cancel()
+                    await asyncio.gather(*jobs, return_exceptions=True)
+                for (cand, _, _), exec_result in zip(batch, results):
+                    if exec_result.exit_code != 0 or exec_result.outcome in ("PARTIAL", "FAILED"):
+                        incomplete_tasks += 1
+                        if exec_result.outcome == "FAILED" or (not exec_result.outcome and exec_result.exit_code != 0):
+                            failed_tasks += 1
+                    else:
+                        successful_tasks += 1
+                    executed_key_hashes.add(cand.execution_key.key_string)
+                    total_tasks_run += 1
+                    scheduler.ledger.record_observation_yield(len(exec_result.observations))
 
-                if exec_result.observations:
-                    total_observations += len(exec_result.observations)
+                    if exec_result.observations:
+                        total_observations += len(exec_result.observations)
                     
-                    # Resolve observations into knowledge graph
-                    async def _resolve_batch(session):
-                        await self.resolution_engine.resolve_observations(session, exec_result.observations, case_id)
-                    await self.db_writer.submit(_resolve_batch)
-
-                    # Add newly discovered observables to frontier if within depth budget
-                    if depth + 1 <= budget.max_depth:
-                        for obs in exec_result.observations:
-                            if obs.observable.identity != current_obs.identity:
-                                frontier.append((obs.observable, seed_id, depth + 1))
+                        # Add newly discovered observables to frontier if within depth budget
+                        if depth + 1 <= budget.max_depth:
+                            for obs in exec_result.observations:
+                                if obs.observable.identity != current_obs.identity:
+                                    frontier.append((obs.observable, seed_id, depth + 1))
 
         # Partial coverage must not be presented as a fully completed search.
         # Reaching a numeric limit on the final successful operation is complete
         # when no work remains. It is partial only when the limit truncated the
         # frontier or a provider reported incomplete work.
-        budget_exhausted = bool(frontier) and (
+        budget_exhausted = deferred_candidates or bool(frontier) and (
             time.monotonic() >= deadline or scheduler.ledger.is_exhausted(budget)
         )
         final_status = (ExecutionStatus.PARTIAL if budget_exhausted or incomplete_tasks else ExecutionStatus.COMPLETED)

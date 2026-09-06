@@ -187,7 +187,8 @@ def clean_request_journal(rows, engine: str, scope: str) -> list[dict]:
 
 
 async def run_engine(engine: str, keys: Mapping[str, str], *, mode: str = "check", query: str = "",
-                     limit: int = 10, binary: Path = PRIVATE_BINARY, timeout: float = 23) -> dict:
+                     limit: int = 10, binary: Path = PRIVATE_BINARY, timeout: float = 23,
+                     on_request=None) -> dict:
     scope = "account" if mode == "check" else "search"
     if engine not in REQUIREMENTS or mode not in ("check", "search"):
         raise ValueError("Unsupported Uncover operation")
@@ -195,21 +196,39 @@ async def run_engine(engine: str, keys: Mapping[str, str], *, mode: str = "check
         return result_state(engine, "MISSING_CREDENTIAL", "REQUIRED_FIELDS_MISSING", scope)
     if not verified_runtime(binary):
         return result_state(engine, "NETWORK_ERROR", "RUNTIME_UNAVAILABLE", scope)
-    command = [str(binary.resolve()), "-engine", engine, "-mode", mode, "-limit", str(max(1, min(limit, 100)))]
+    command = [str(binary.resolve()), "-engine", engine, "-mode", mode, "-limit", str(max(1, min(limit, 100))), "-request-permits"]
     if mode == "search":
         command += ["-q", query]
     env = child_environment(engine, keys)
     process = None
+    permit_denied = False
     try:
         try:
             process = await asyncio.create_subprocess_exec(*command, env=env, cwd=str(ROOT),
-                stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL)
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL, limit=256 * 1024 + 1)
         finally:
             env.clear()
         async def collect():
+            nonlocal permit_denied
             content = bytearray()
-            while chunk := await process.stdout.read(16384):
+            requested = False
+            while chunk := await process.stdout.readline():
+                if len(chunk) > 256 * 1024:
+                    raise ValueError("Invalid runner response")
+                frame = json.loads(chunk)
+                if isinstance(frame, dict) and frame.get("kind") == "request_permit":
+                    purpose = "account_validation" if scope == "account" else "internet_asset_search"
+                    if (requested or frame.get("sequence") != 1 or frame.get("method") not in ("GET", "POST")
+                            or frame.get("destination") != JOURNAL_DESTINATIONS[engine]
+                            or frame.get("purpose") != purpose):
+                        raise ValueError("Invalid request permit")
+                    requested = True
+                    allowed = await on_request(frame) if on_request is not None else True
+                    permit_denied = not allowed
+                    process.stdin.write(b"1\n" if allowed else b"0\n")
+                    await process.stdin.drain()
+                    continue
                 content.extend(chunk)
                 if len(content) > 256 * 1024:
                     raise ValueError("Invalid runner response")
@@ -222,7 +241,9 @@ async def run_engine(engine: str, keys: Mapping[str, str], *, mode: str = "check
         if not isinstance(data, dict) or data.get("state") not in STATES or data.get("reason") not in REASONS:
             return result_state(engine, "NETWORK_ERROR", "UNEXPECTED_RESPONSE", scope)
         result = result_state(engine, data["state"], data["reason"], scope)
-        if data["reason"] != "MALFORMED_CREDENTIAL":
+        if permit_denied:
+            result["request_budget_denied"] = True
+        elif data["reason"] != "MALFORMED_CREDENTIAL":
             result["request_journal"] = clean_request_journal(data.get("request_journal"), engine, scope)
         status = data.get("http_status")
         if isinstance(status, int) and 100 <= status <= 599:

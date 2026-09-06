@@ -31,7 +31,7 @@
   "security_gate": "PASS: current-user Windows DPAPI, masked API, ignored local settings",
   "launcher_gate": "PASS: exact backend PID, duplicate prevention, readiness, graceful stop",
   "blockers": [],
-  "next_action": "Atomic pre-I/O runner reservations, then bounded concurrency gates; M1/M4/M5/M6 remain incomplete.",
+  "next_action": "M1 stable snapshot/delta and history/graph continuation; then M4/M5/M6.",
   "web_ui": {
     "host": "127.0.0.1",
     "port": 8765,
@@ -41,22 +41,24 @@
   "handoff": "docs/RELEASE_V2_0_0.md",
   "current_development": {
     "baseline_head": "069fa49a2b9eb500f1fa150775547d3851d2b509",
-    "phase": "AGENT_INVESTIGATION_INCREMENT_2",
+    "phase": "AGENT_INVESTIGATION_INCREMENT_3",
     "status": "PARTIAL_PLAN_IMPLEMENTED",
     "plan": "docs/AGENT_INVESTIGATION_PLAN_VI.md",
-    "report": "docs/AGENT_INVESTIGATION_INCREMENT_2.md",
+    "report": "docs/AGENT_INVESTIGATION_INCREMENT_3.md",
     "offline_gate": {
-      "passed": 415,
+      "passed": 435,
       "deselected": 1,
-      "seconds": 105.37,
+      "seconds": 101.42,
       "chromium_ui_included": 14,
       "real_stdio_tests": 2
     },
     "live_phone_accuracy": "NOT_YET_VERIFIED",
-    "provider_concurrency_enabled": false,
+    "provider_concurrency_enabled": true,
     "note": "Top-level release fields are historical v2.0.0 snapshot; use this object and NEXT.md for current development.",
     "mcp_tools": 15,
     "m2_gate": "PASS_FIXTURE_NOT_LIVE_VERIFIED",
-    "reader_reports": "SHARED_VI_EN_IMPLEMENTED"
+    "reader_reports": "SHARED_VI_EN_IMPLEMENTED",
+    "default_parallel_providers": 2,
+    "m3_gate": "PASS_FIXTURE_NOT_LIVE_VERIFIED"
   }
 }

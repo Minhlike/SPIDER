@@ -11,7 +11,8 @@ class ExecutionBudget(SpiderBaseModel):
     max_runtime_seconds: int = 300
     username_site_limit: Literal[0, 50, 500] = 500
     username_source_scope: Literal["VN_COMMON_CORE", "GLOBAL_50", "GLOBAL_500", "GLOBAL_ALL"] = "VN_COMMON_CORE"
-    max_parallel_tasks: int = 4
+    # Conservative default after shared-cap/cancellation/deterministic-ingest gates.
+    max_parallel_tasks: int = Field(default=2, ge=1, le=4)
     max_provider_calls: int = 50
     max_branch_work: int = 20
     diminishing_returns_cutoff: int = 3
@@ -26,6 +27,7 @@ class BudgetLedger(SpiderBaseModel):
     request_events: list[dict] = Field(default_factory=list)
     _entities: set = PrivateAttr(default_factory=set)
     _task_request_counts: dict = PrivateAttr(default_factory=dict)
+    _task_cache_counts: dict = PrivateAttr(default_factory=dict)
     _lock: Lock = PrivateAttr(default_factory=Lock)
     _fingerprint_salt: bytes = PrivateAttr(default_factory=lambda: secrets.token_bytes(32))
 
@@ -71,9 +73,15 @@ class BudgetLedger(SpiderBaseModel):
         else:
             self.consecutive_zero_yield_runs = 0
 
-    def record_cache_hit(self):
+    def record_cache_hit(self, *, task_id=None):
         with self._lock:
             self.cache_hits_count += 1
+            if task_id is not None:
+                self._task_cache_counts[task_id] = self._task_cache_counts.get(task_id, 0) + 1
+
+    def cache_count_for_task(self, task_id):
+        with self._lock:
+            return self._task_cache_counts.get(task_id, 0)
 
     def is_exhausted(self, budget: ExecutionBudget, current_depth: int = 0) -> bool:
         if self.entities_count >= budget.max_entities:
@@ -108,3 +116,10 @@ class TaskBudgetLedger:
 
     def request(self, budget, provider_id, protocol="HTTP", kind="request"):
         self._shared.request(budget, provider_id, protocol, kind, task_id=self._task_id)
+
+    def record_cache_hit(self):
+        self._shared.record_cache_hit(task_id=self._task_id)
+
+    @property
+    def attributed_cache_hits_count(self):
+        return self._shared.cache_count_for_task(self._task_id)

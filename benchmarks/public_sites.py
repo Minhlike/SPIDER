@@ -13,7 +13,7 @@ TRUTH = {"Present": True, "Absent": False, "SoftAbsent": False,
 
 
 @contextmanager
-def public_sites(folder, names=None):
+def public_sites(folder, names=None, request_observer=None):
     names = list(names or TRUTH)
     requests = []
     class Handler(BaseHTTPRequestHandler):
@@ -21,6 +21,8 @@ def public_sites(folder, names=None):
         def do_GET(self):
             name = self.path.split("/")[1]
             requests.append(name)
+            if request_observer is not None:
+                request_observer(len(requests))
             code = {"Absent": 404, "Blocked": 403, "RateLimited": 429}.get(name, 200)
             if name == "Present" and self.path.rsplit("/", 1)[-1] != "fixture-user": code = 404
             body = (b'<html><head><meta property="og:title" content="Fixture Public Name">'

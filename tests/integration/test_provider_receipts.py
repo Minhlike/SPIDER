@@ -19,6 +19,8 @@ async def test_uncover_receipt_uses_verified_journal_and_credentialed_egress(tmp
     calls = []
     async def run_engine(engine, actual_keys, **kwargs):
         assert actual_keys[access.REQUIREMENTS[engine][0]] == keys[access.REQUIREMENTS[engine][0]]
+        assert await kwargs["on_request"]({"kind": "request_permit", "sequence": 1,
+            "destination": access.JOURNAL_DESTINATIONS[engine], "purpose": "internet_asset_search"})
         calls.append(engine)
         result = access.result_state(engine, "VALID", "SEARCH_VERIFIED", "search")
         result.update(results=[{"engine": engine, "ip": {
@@ -63,6 +65,8 @@ async def test_uncover_stops_before_engine_that_would_exceed_request_budget(monk
             "FOFA_KEY": "synthetic-fofa"}
     calls = []
     async def run_engine(engine, _keys, **kwargs):
+        assert await kwargs["on_request"]({"kind": "request_permit", "sequence": 1,
+            "destination": access.JOURNAL_DESTINATIONS[engine], "purpose": "internet_asset_search"})
         calls.append(engine)
         result = access.result_state(engine, "VALID", "SEARCH_VERIFIED", "search")
         result["request_journal"] = [{"sequence": 1, "method": "GET",
@@ -79,5 +83,6 @@ async def test_uncover_stops_before_engine_that_would_exceed_request_budget(monk
         request_ledger=ledger, execution_budget=budget)
     assert calls == ["shodan", "censys"]
     assert ledger.requests_count == result.metadata["request_count"] == 2
-    assert result.metadata["engines"]["fofa"]["reason"] == "PAGE_LIMIT"
+    assert result.metadata["engines"]["fofa"]["reason"] == "REQUEST_LIMIT"
+    assert result.metadata["engines"]["fofa"]["state"] == "SKIPPED_BUDGET"
     assert result.outcome == "PARTIAL"

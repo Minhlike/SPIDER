@@ -146,6 +146,7 @@ type guardedTransport struct {
 	status                int
 	requests, maxRequests int
 	journal               []requestJournalEntry
+	permit                func(requestJournalEntry) bool
 }
 
 func secureBase() *http.Transport {
@@ -164,9 +165,13 @@ func (g *guardedTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		}
 		return nil, errors.New("request budget reached")
 	}
-	g.requests++
-	entry := requestJournalEntry{Sequence: g.requests, Method: req.Method,
+	entry := requestJournalEntry{Sequence: g.requests + 1, Method: req.Method,
 		Destination: req.URL.Host, Purpose: g.purpose, Outcome: "DISPATCHED"}
+	if g.permit != nil && !g.permit(entry) {
+		g.state, g.reason = limited, "PAGE_LIMIT"
+		return nil, errors.New("parent request budget denied")
+	}
+	g.requests++
 	g.journal = append(g.journal, entry)
 	journalIndex := len(g.journal) - 1
 	response, err := g.base.RoundTrip(req)
@@ -439,6 +444,7 @@ func main() {
 	query := flag.String("q", "", "query")
 	limit := flag.Int("limit", 10, "result limit")
 	showVersion := flag.Bool("version", false, "version")
+	parentPermits := flag.Bool("request-permits", false, "parent request permits")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
@@ -472,6 +478,18 @@ func main() {
 	}
 	g := &guardedTransport{base: secureBase(), host: hosts[*engine], purpose: purpose,
 		state: network, reason: "NOT_REQUESTED", maxRequests: 1}
+	if *parentPermits {
+		g.permit = func(entry requestJournalEntry) bool {
+			frame := map[string]any{"kind": "request_permit", "sequence": entry.Sequence,
+				"method": entry.Method, "destination": entry.Destination, "purpose": entry.Purpose}
+			if json.NewEncoder(os.Stdout).Encode(frame) != nil {
+				return false
+			}
+			var allowed int
+			_, err := fmt.Fscanln(os.Stdin, &allowed)
+			return err == nil && allowed == 1
+		}
+	}
 	if *mode == "check" {
 		result.State, result.Reason, result.Warning = accountCheck(ctx, *engine, keys, secureClient(g))
 		result.HTTPStatus = g.status
