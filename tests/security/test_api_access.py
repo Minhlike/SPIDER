@@ -214,3 +214,16 @@ def test_untrusted_rows_and_raw_provider_fields_are_not_artifacts():
             {"engine":"fofa", "ip":"192.0.2.2", "url":"https://example.invalid/path?token=not-a-real-key"},
             {"engine":"censys", "ip":"invalid", "url":"https://user:pass@example.invalid"}]
     assert access.clean_rows(rows, KEYS) == [{"engine":"fofa", "ip":"192.0.2.2", "url":"https://example.invalid/path"}]
+
+
+def test_clean_rows_keeps_only_a_valid_public_service_port():
+    rows = [
+        {"engine": "shodan", "ip": "192.0.2.8", "port": 443, "raw": "discard"},
+        {"engine": "shodan", "host": "example.invalid", "port": 70000},
+        {"engine": "shodan", "host": "example.invalid", "port": True},
+    ]
+    assert access.clean_rows(rows, KEYS) == [
+        {"engine": "shodan", "ip": "192.0.2.8", "port": 443},
+        {"engine": "shodan", "host": "example.invalid"},
+        {"engine": "shodan", "host": "example.invalid"},
+    ]

@@ -13,6 +13,8 @@ from spider.providers.transport import MeteredTransport
 from spider.providers.http_plane import HTTPPlane
 from spider.providers.native.dns import NativeDnsAdapter
 from spider.providers.fake.provider_a import FakeProviderA
+from spider.providers.base import ProviderExecutionResult
+from spider.capability.definitions import CapabilityDefinition
 from spider.service.service import SpiderService
 from spider.storage.schema import ObservationRecord, ProviderRunRecord
 
@@ -126,6 +128,7 @@ async def test_dns_tcp_fallback_counted_and_stops_at_limit(monkeypatch):
     result = await NativeDnsAdapter().execute(target, lineage, request_ledger=ledger, execution_budget=budget)
     assert calls == ["UDP", "TCP"] and ledger.requests_count == 2
     assert len(result.observations) == 1 and result.outcome == "PARTIAL"
+    assert result.metadata["collection_reason"] == "DNS_PARTIAL_RESPONSE"
 
 
 @pytest.mark.asyncio
@@ -166,5 +169,49 @@ async def test_unmetered_provider_cannot_dispatch(tmp_path):
         await service.add_target(case["id"], "example.test", T.DOMAIN)
         run = await service.investigate(case["id"])
         assert run["status"] == "PARTIAL" and run["observations_collected"] == 0
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_root_domain_sources_are_not_cut_off_by_zero_yield_heuristic(tmp_path):
+    """Every independent root source is considered before pivot work is stopped."""
+    calls = []
+
+    class ZeroYieldProvider(FakeProviderA):
+        def __init__(self, provider_name, capability):
+            self._provider_name = provider_name
+            self._capability = capability
+
+        def provider_id(self):
+            return self._provider_name
+
+        def capabilities(self):
+            return [self._capability]
+
+        async def execute(self, target, lineage, **kwargs):
+            calls.append(self._provider_name)
+            return ProviderExecutionResult(raw_content=b"{}", observations=[], outcome="COMPLETED")
+
+    service = SpiderService(db_path=str(tmp_path / "root-coverage.db"),
+                            artifacts_dir=str(tmp_path / "runs"))
+    service.capability_registry.capabilities.clear()
+    names = ["zero_a", "zero_b", "zero_c", "zero_d"]
+    for name in names:
+        capability = f"ROOT_{name.upper()}"
+        service.provider_manager.register_adapter(ZeroYieldProvider(name, capability))
+        service.capability_registry.register_capability(CapabilityDefinition(
+            name=capability, description="Root coverage fixture", default_providers=[name],
+            input_types=[T.DOMAIN], output_types=[]))
+    await service.start()
+    try:
+        case = await service.create_case("Root source coverage fixture")
+        await service.add_target(case["id"], "example.test", T.DOMAIN)
+        run = await service.investigate(case["id"], budget=ExecutionBudget(
+            max_depth=0, max_parallel_tasks=2, max_provider_calls=10,
+            diminishing_returns_cutoff=3))
+        assert run["tasks_executed"] == len(names)
+        assert set(calls) == set(names)
+        assert run["budget_ledger"]["consecutive_zero_yield_runs"] == len(names)
     finally:
         await service.stop()

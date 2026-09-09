@@ -29,7 +29,10 @@ def investigate(page, base_url, target, target_type="DOMAIN", final_status="COMP
     expect(page.locator("#case-tab-content-live")).to_be_visible()
     expect(page.locator("#live-run-status")).to_have_text(
         re.compile(r"PENDING|RUNNING|COMPLETED|PARTIAL"), timeout=5000)
-    expect(page.locator("#case-status-badge")).to_have_text(final_status, timeout=15000)
+    # Status codes are intentionally rendered through the Vietnamese reader
+    # vocabulary.  The badge class is the stable machine-facing UI contract.
+    expect(page.locator("#case-status-badge")).to_have_class(
+        re.compile(rf"badge-{final_status.lower()}"), timeout=15000)
     assert any(event["event"] == "RUN_COMPLETED" for event in events)
     insights = page.request.get(f"{base_url}/api/cases/{queued['case_id']}/insights").json()
     assert insights["run_id"] == queued["run_id"]
@@ -46,7 +49,8 @@ def test_critical_investigation_flow(browser_app):
     expect(page.locator("#case-meta")).to_contain_text("example.com")
     expect(page.locator("#empty-reason-container")).not_to_be_visible()
     page.locator("#tab-btn-sources").click()
-    expect(page.locator("#sources-tbody tr").filter(has_text="native_dns")).to_contain_text("SUCCESS")
+    expect(page.locator("#sources-tbody tr").filter(has_text="native_dns").locator(".badge")).to_have_class(
+        re.compile(r"badge-success"))
     page.locator("#tab-btn-evidence").click()
     evidence = page.locator("#evidence-tbody tr").filter(has_text="192.0.2.10")
     expect(evidence).to_contain_text("dns_a")
@@ -88,7 +92,7 @@ def test_username_real_worker_profile_sources_evidence_graph(browser_app):
     expect(card.locator("script")).to_have_count(0)
     page.locator("#tab-btn-sources").click()
     source = page.locator("#sources-tbody tr").filter(has_text="maigret")
-    expect(source).to_contain_text("SUCCESS")
+    expect(source.locator(".badge")).to_have_class(re.compile(r"badge-success"))
     expect(source).to_contain_text("3/3 website")
     page.locator("#tab-btn-evidence").click()
     expect(page.locator("#evidence-tbody")).to_contain_text("maigret_present")
@@ -116,7 +120,7 @@ def test_partial_source_stays_partial_in_browser(browser_app):
     investigate(page, base_url, "fixture-user", "USERNAME", "PARTIAL")
     page.locator("#tab-btn-sources").click()
     source = page.locator("#sources-tbody tr").filter(has_text="maigret")
-    expect(source).to_contain_text("PARTIAL")
+    expect(source.locator(".badge")).to_have_class(re.compile(r"badge-partial"))
     expect(source).to_contain_text("1 chưa xác định")
     assert not errors
 

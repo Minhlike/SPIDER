@@ -6,6 +6,7 @@ from spider.service.service import SpiderService
 from spider.providers.native.dns import NativeDnsAdapter
 from spider.providers.native.rdap import NativeRdapAdapter
 from spider.providers.native.ct import NativeCertificateTransparencyAdapter
+from spider.providers.native.web import NativeWebMetadataAdapter
 from spider.providers.native.public_profiles import PublicProfilesAdapter
 from spider.providers.native.gravatar import GravatarPublicProfileAdapter
 from spider.providers.subfinder.adapter import SubfinderAdapter
@@ -38,6 +39,7 @@ def create_spider_service(
         service.provider_manager.register_adapter(NativeDnsAdapter())
         service.provider_manager.register_adapter(NativeRdapAdapter())
         service.provider_manager.register_adapter(NativeCertificateTransparencyAdapter())
+        service.provider_manager.register_adapter(NativeWebMetadataAdapter())
         service.provider_manager.register_adapter(SubfinderAdapter())
         service.provider_manager.register_adapter(MetabigorAdapter())
         service.provider_manager.register_adapter(SpiderFootAdapter())
@@ -55,6 +57,7 @@ def create_spider_service(
         service.provider_manager.register_adapter(NativeDnsAdapter())
         service.provider_manager.register_adapter(NativeRdapAdapter())
         service.provider_manager.register_adapter(NativeCertificateTransparencyAdapter())
+        service.provider_manager.register_adapter(NativeWebMetadataAdapter())
         service.provider_manager.register_adapter(SubfinderAdapter())
         service.provider_manager.register_adapter(MetabigorAdapter())
         service.provider_manager.register_adapter(SpiderFootAdapter())

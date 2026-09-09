@@ -168,6 +168,29 @@ def test_ip_report_renders_enrichment_and_source_provenance(offline_page):
     assert not errors
 
 
+def test_domain_report_renders_only_collected_security_and_service_facts(offline_page):
+    page, _, errors = offline_page
+    page.evaluate("""() => renderTypeSpecificInsights({
+      target_type: 'DOMAIN', entities_count: 4,
+      domain_insights: {
+        ip_addresses: ['192.0.2.8'], nameservers: ['ns1.example.test'],
+        mail_servers: [], subdomains: ['www.example.test'],
+        dns_security: {spf: ['v=spf1 -all'], dmarc: ['v=DMARC1; p=reject'],
+          caa: ['0 issue "ca.example"']},
+        certificates: [{issuer_name: 'Fixture CA', not_before: '2026-01-01', not_after: '2027-01-01'}],
+        public_services: [{engine: 'shodan', host: 'www.example.test', port: 443}],
+        technology_signals: ['nginx']
+      }
+    })""")
+    report = page.locator("#type-specific-container")
+    expect(report).to_contain_text("Bảo vệ DNS quan sát được")
+    expect(report).to_contain_text("v=DMARC1; p=reject")
+    expect(report).to_contain_text("Fixture CA")
+    expect(report).to_contain_text("shodan · www.example.test · 443")
+    expect(report).to_contain_text("nginx")
+    assert not errors
+
+
 @pytest.mark.parametrize("choice", ["USERNAME", "DOMAIN"])
 def test_ambiguous_input_requires_choice_before_dispatch(offline_page, choice):
     page, dispatches, errors = offline_page

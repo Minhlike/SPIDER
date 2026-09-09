@@ -68,9 +68,13 @@ class NativeCertificateTransparencyAdapter(BaseProviderAdapter):
             return ProviderExecutionResult(
                 raw_content=b"",
                 observations=[],
-                exit_code=1,
-                error_message="Certificate transparency response unavailable or invalid",
-                mime_type="text/plain"
+                # An unavailable CT index means coverage is unresolved, not
+                # that the domain has no certificates or subdomains.
+                exit_code=0,
+                outcome="PARTIAL",
+                error_message="Certificate log did not provide a usable response",
+                mime_type="text/plain",
+                metadata={"collection_reason": "CT_LOG_UNAVAILABLE"},
             )
 
     def parse(self, raw_content: bytes, lineage: SourceLineage) -> List[Observation]:

@@ -823,6 +823,9 @@ function coverageDescription(source) {
       ACCESS_DENIED: currentLanguage === "vi" ? "Chưa kết luận do nguồn từ chối truy cập" : "Unknown because the source denied access",
       UPSTREAM_ERROR: currentLanguage === "vi" ? "Chưa kết luận do dịch vụ nguồn bị lỗi" : "Unknown because the upstream service failed",
       NETWORK_OR_RESPONSE_ERROR: currentLanguage === "vi" ? "Chưa kết luận do lỗi mạng hoặc phản hồi không hợp lệ" : "Unknown because the network or response failed",
+      CT_LOG_UNAVAILABLE: currentLanguage === "vi" ? "Nhật ký chứng chỉ chưa trả lời được; chưa thể kết luận về tên miền phụ" : "The certificate log did not respond; subdomains remain unknown",
+      DNS_PARTIAL_RESPONSE: currentLanguage === "vi" ? "Một số loại bản ghi DNS chưa trả lời được; dữ liệu đang có vẫn được giữ" : "Some DNS record types did not respond; available records were retained",
+      UNMETERED_PROVIDER: currentLanguage === "vi" ? "Tạm dừng để không chạy nguồn không đếm được request; đây không phải kết quả rỗng" : "Paused because requests cannot be counted; this is not a negative result",
     };
     return reasons[source.collection_reason] || friendlyLabel(source.collection_reason || source.status);
   }
@@ -844,7 +847,7 @@ function executionReceiptDescription(source) {
   const messages = {
     NOT_APPLICABLE: vi ? "Không áp dụng cho loại mục tiêu này" : "Not applicable to this target type",
     NOT_SCHEDULED: vi ? "Có thể áp dụng nhưng chưa được lập lịch" : "Applicable but not scheduled",
-    BLOCKED_UNMETERED: vi ? "Bị chặn vì chưa đếm được request mạng an toàn" : "Blocked because network requests cannot be audited",
+      BLOCKED_UNMETERED: vi ? "Tạm dừng vì không thể đếm request mạng; các nguồn có kiểm soát vẫn tiếp tục" : "Paused because requests cannot be counted; audited sources can still continue",
     RUNNING: vi ? "Đang chạy; chưa phát request" : "Running; no request dispatched yet",
     EXECUTED_NO_NETWORK: vi ? "Đã thực thi nhưng không phát request mạng" : "Executed without a network request",
     CALLED: vi ? `Đã gọi ${requests} request; đóng góp ${observations} quan sát` : `Called with ${requests} requests; contributed ${observations} observations`,
@@ -1023,6 +1026,32 @@ function renderTypeSpecificInsights(insights) {
         <div class="chips-container" style="max-height:120px; overflow-y:auto;">
           ${(dom.subdomains && dom.subdomains.length) ? dom.subdomains.map(s => `<span class="chip">${escapeHtml(s)}</span>`).join("") : "<em>Chưa phát hiện tên miền phụ</em>"}
         </div>
+      </div>
+      <div class="card-grid-2" style="margin-top:16px;">
+        <div>
+          <div class="detail-key">Bảo vệ DNS quan sát được:</div>
+          <div class="detail-row"><span class="detail-key">SPF:</span><span class="detail-val"><small>${escapeHtml((dom.dns_security?.spf || []).join(" · ") || "Chưa thu thập được")}</small></span></div>
+          <div class="detail-row"><span class="detail-key">DMARC:</span><span class="detail-val"><small>${escapeHtml((dom.dns_security?.dmarc || []).join(" · ") || "Chưa thu thập được")}</small></span></div>
+          <div class="detail-row"><span class="detail-key">CAA:</span><span class="detail-val"><small>${escapeHtml((dom.dns_security?.caa || []).join(" · ") || "Chưa thu thập được")}</small></span></div>
+        </div>
+        <div>
+          <div class="detail-key">Chứng chỉ công khai đã quan sát:</div>
+          ${(dom.certificates || []).length ? `<ul class="detail-list">${dom.certificates.slice(0, 8).map(c => `<li>${escapeHtml(c.issuer_name || "Nhà phát hành chưa rõ")}<br><small>${escapeHtml(c.not_before || "")} → ${escapeHtml(c.not_after || "")}</small></li>`).join("")}</ul>` : "<em>Chưa thu thập được từ nhật ký chứng chỉ</em>"}
+        </div>
+      </div>
+      <div class="card-grid-2" style="margin-top:16px;">
+        <div>
+          <div class="detail-key">Dịch vụ Internet công khai từ nguồn đã cấu hình:</div>
+          ${(dom.public_services || []).length ? `<ul class="detail-list">${dom.public_services.slice(0, 10).map(s => `<li>${escapeHtml([s.engine, s.host || s.ip, s.port, s.protocol].filter(v => v !== undefined && v !== "").join(" · "))}</li>`).join("")}</ul>` : "<em>Chưa thu thập được; chỉ xuất hiện khi nguồn Internet intelligence có dữ liệu.</em>"}
+        </div>
+        <div>
+          <div class="detail-key">Dấu hiệu công nghệ do nguồn công khai ghi nhận:</div>
+          <div class="chips-container">${(dom.technology_signals || []).length ? dom.technology_signals.slice(0, 20).map(value => `<span class="chip">${escapeHtml(value)}</span>`).join("") : "<em>Chưa thu thập được; đây không phải kết quả suy đoán từ SPIDER.</em>"}</div>
+        </div>
+      </div>
+      <div style="margin-top:16px;">
+        <div class="detail-key">Quan sát HTTPS đã được ủy quyền:</div>
+        ${(dom.web_metadata || []).length ? `<ul class="detail-list">${dom.web_metadata.slice(0, 5).map(item => `<li><strong>${escapeHtml(String(item.http_status || ""))}</strong> · ${escapeHtml(item.url || "")}<br><small>${escapeHtml(item.title || "Không có tiêu đề")} · HSTS: ${item.has_hsts ? "có" : "chưa thấy"} · CSP: ${item.has_csp ? "có" : "chưa thấy"}</small></li>`).join("")}</ul>` : "<em>Chỉ chạy khi bạn xác nhận phạm vi được ủy quyền và chọn profile kiểm tra chủ động.</em>"}
       </div>
     `;
     container.appendChild(card);

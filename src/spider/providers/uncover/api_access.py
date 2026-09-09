@@ -161,6 +161,9 @@ def clean_rows(rows, keys: Mapping[str, str]) -> list[dict]:
                     item["url"] = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
             except ValueError:
                 pass
+        port = row.get("port")
+        if isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535:
+            item["port"] = port
         if any(name in item for name in ("ip", "host", "url")):
             clean.append(item)
     return clean

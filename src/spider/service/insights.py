@@ -34,6 +34,72 @@ def infer_phone_country(phone: str) -> str:
             return name
     return "Quốc tế / Chưa xác định"
 
+
+def _append_unique(values: list, value) -> None:
+    if value not in values:
+        values.append(value)
+
+
+def domain_evidence_profile(observations) -> Dict[str, Any]:
+    """Summarize observed domain facts without turning scanner hints into claims."""
+    profile = {
+        "dns_records": {kind: [] for kind in ("A", "AAAA", "MX", "NS", "TXT", "CNAME", "SOA", "CAA")},
+        "dns_security": {"spf": [], "dmarc": [], "caa": []},
+        "certificates": [],
+        "public_services": [],
+        "technology_signals": [],
+        "web_metadata": [],
+    }
+    for observation in observations:
+        raw = getattr(observation, "raw_data_json", None) or {}
+        if not isinstance(raw, dict):
+            continue
+        provider_id = getattr(observation, "provider_id", "")
+        if provider_id == "native_dns":
+            record_type, value = raw.get("type"), raw.get("value")
+            if not isinstance(value, str):
+                continue
+            if record_type in profile["dns_records"]:
+                _append_unique(profile["dns_records"][record_type], value)
+            lowered = value.lower()
+            if record_type == "TXT" and "v=spf1" in lowered:
+                _append_unique(profile["dns_security"]["spf"], value)
+            if record_type == "DMARC" or "v=dmarc1" in lowered:
+                _append_unique(profile["dns_security"]["dmarc"], value)
+            if record_type == "CAA":
+                _append_unique(profile["dns_security"]["caa"], value)
+        elif provider_id == "native_ct":
+            certificate = {key: raw.get(key) for key in (
+                "issuer_name", "not_before", "not_after", "serial_number", "id")
+                if isinstance(raw.get(key), (str, int, float))}
+            if certificate:
+                _append_unique(profile["certificates"], certificate)
+        elif provider_id == "uncover":
+            service = {key: raw.get(key) for key in ("engine", "ip", "host", "url", "port", "protocol")
+                       if isinstance(raw.get(key), (str, int, float))}
+            if service:
+                _append_unique(profile["public_services"], service)
+            for key in ("technology", "product", "server", "software"):
+                value = raw.get(key)
+                if isinstance(value, str) and value.strip():
+                    _append_unique(profile["technology_signals"], value.strip())
+            technologies = raw.get("technologies")
+            if isinstance(technologies, list):
+                for value in technologies:
+                    if isinstance(value, str) and value.strip():
+                        _append_unique(profile["technology_signals"], value.strip())
+        elif provider_id == "native_web" and raw.get("record_kind") == "authorized_web_metadata":
+            metadata = {key: raw.get(key) for key in (
+                "url", "http_status", "redirect_location", "title", "content_type", "has_hsts", "has_csp")
+                if isinstance(raw.get(key), (str, int, bool))}
+            if metadata:
+                _append_unique(profile["web_metadata"], metadata)
+            for key in ("server", "x_powered_by", "generator"):
+                value = raw.get(key)
+                if isinstance(value, str) and value.strip():
+                    _append_unique(profile["technology_signals"], value.strip())
+    return profile
+
 class CaseInsightsBuilder:
     @staticmethod
     async def build_insights(session, case_id: str, case_rec, target_id=None, question="all") -> Dict[str, Any]:
@@ -134,7 +200,12 @@ class CaseInsightsBuilder:
             "nameservers": [],
             "mail_servers": [],
             "certificates": [],
-            "emails": []
+            "emails": [],
+            "dns_records": {},
+            "dns_security": {},
+            "public_services": [],
+            "technology_signals": [],
+            "web_metadata": [],
         }
 
         # IP Insights
@@ -282,6 +353,10 @@ class CaseInsightsBuilder:
         if target_type == "EMAIL" and "@" in target_val:
             email_insights["extracted_domain"] = target_val.split("@")[1]
 
+        domain_profile = domain_evidence_profile(observations)
+        domain_insights.update(domain_profile)
+        domain_insights["certificates"] = domain_profile["certificates"]
+
         unique_ip_sources = {}
         for source in ip_insights["source_observations"]:
             key = (source["provider_id"], source["upstream_source"], source["record_kind"])
@@ -345,7 +420,7 @@ class CaseInsightsBuilder:
             pid = o.provider_id or "unknown"
             provider_obs_count[pid] = provider_obs_count.get(pid, 0) + 1
 
-        all_known_providers = ["native_dns", "native_rdap", "native_ct", "subfinder", "metabigor", "spiderfoot", "maigret", "github_public", "gravatar_public", "uncover", "coccoc_browser"]
+        all_known_providers = ["native_dns", "native_rdap", "native_ct", "native_web", "subfinder", "metabigor", "spiderfoot", "maigret", "github_public", "gravatar_public", "uncover", "coccoc_browser"]
         provider_ids = list(dict.fromkeys(all_known_providers + sorted(
             expected_sources | set(provider_stats) | set(provider_obs_count))))
         contributions = []
@@ -356,7 +431,9 @@ class CaseInsightsBuilder:
             request_count = st.get("request_count", 0) if st else 0
             if st:
                 status_str = "SUCCESS" if obs_cnt > 0 else "NO_FINDINGS"
-                if st["status"] in ("FAILED", "ERROR"):
+                if st.get("budget_reason") == "UNMETERED_PROVIDER":
+                    status_str = "BLOCKED"
+                elif st["status"] in ("FAILED", "ERROR"):
                     status_str = "ERROR"
                 elif st["status"] in ("PARTIAL", "RUNNING", "CANCELLED"):
                     status_str = st["status"]
@@ -407,7 +484,14 @@ class CaseInsightsBuilder:
                 })
 
         # --- C. Empty Result Explanation ---
-        total_enrichments = len(entities)
+        # A seed is retained as evidence for reproducibility, but it is not a
+        # discovery.  Empty-result guidance must therefore consider only
+        # entities beyond the selected input(s).
+        seed_identities = {(str(target.observable_type), target.namespace, target.canonical_value)
+                           for target in targets}
+        total_enrichments = sum(
+            (str(entity.observable_type), entity.namespace, entity.canonical_name) not in seed_identities
+            for entity in entities)
         is_empty = (total_enrichments == 0 and len(assertions) == 0)
 
         checked_count = sum(1 for c in contributions if c["tasks_count"] > 0)

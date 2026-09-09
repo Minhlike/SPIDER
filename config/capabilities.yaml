@@ -30,6 +30,12 @@ capabilities:
     input_types: ["DOMAIN"]
     output_types: ["HOSTNAME", "CERTIFICATE"]
 
+  WEB_METADATA:
+    description: "Single authorized HTTPS metadata request: status, redirect, declared server and security headers"
+    default_providers: ["native_web"]
+    input_types: ["DOMAIN", "HOSTNAME"]
+    output_types: ["URL"]
+
   REGISTRY_LOOKUP:
     description: "RDAP and BGP routing registry lookups for IP, ASN, and Domain ownership"
     default_providers: ["native_rdap", "metabigor"]

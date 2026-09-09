@@ -44,6 +44,8 @@ VOCABULARY = {
     "NOT_APPLICABLE": ("Không phù hợp với mục tiêu đang tìm", "Not relevant to this target"),
     "UNMETERED_PROVIDER": ("Tạm dừng vì chưa kiểm soát được số lượt truy cập", "Paused because request usage cannot be controlled"),
     "BLOCKED_UNMETERED": ("Tạm dừng vì chưa kiểm soát được số lượt truy cập", "Paused because request usage cannot be controlled"),
+    "CT_LOG_UNAVAILABLE": ("Nhật ký chứng chỉ chưa trả lời được; chưa thể kết luận về tên miền phụ", "The certificate log did not respond; subdomains remain unknown"),
+    "DNS_PARTIAL_RESPONSE": ("Một số loại bản ghi DNS chưa trả lời được; dữ liệu đang có vẫn được giữ", "Some DNS record types did not respond; available records were retained"),
     "REQUEST_LIMIT": ("Đã dùng hết số lượt truy cập cho phép", "The allowed request count has been used"),
     "ENTITY_LIMIT": ("Đã đạt giới hạn dữ liệu cho lượt này", "The data limit for this run was reached"),
     "QUARANTINED": ("Nguồn tạm ngừng vì chưa vượt qua kiểm tra chất lượng", "Source paused until quality checks pass"),

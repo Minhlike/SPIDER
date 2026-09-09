@@ -92,7 +92,10 @@ class BudgetLedger(SpiderBaseModel):
             return True
         if current_depth > budget.max_depth:
             return True
-        if self.consecutive_zero_yield_runs >= budget.diminishing_returns_cutoff:
+        # Minimum source coverage for a seed must not be cut short merely
+        # because earlier independent providers returned no rows.  Diminishing
+        # returns only controls derived/pivot branches after depth zero.
+        if current_depth > 0 and self.consecutive_zero_yield_runs >= budget.diminishing_returns_cutoff:
             return True
         return False
 

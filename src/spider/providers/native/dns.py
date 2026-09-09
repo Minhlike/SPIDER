@@ -95,8 +95,15 @@ class NativeDnsAdapter(BaseProviderAdapter):
             if event:
                 await recorder.finish(event, "DNS_" + dns.rcode.to_text(response.rcode()))
             return response
-        for rtype in (["PTR"] if reverse else ["A", "AAAA", "MX", "NS", "TXT", "CNAME", "SOA"]):
-            query = dns.message.make_query(query_name, rtype)
+        query_plan = ([(query_name, "PTR", "PTR")] if reverse else [
+            (query_name, "A", "A"), (query_name, "AAAA", "AAAA"),
+            (query_name, "MX", "MX"), (query_name, "NS", "NS"),
+            (query_name, "TXT", "TXT"), (query_name, "CNAME", "CNAME"),
+            (query_name, "SOA", "SOA"), (query_name, "CAA", "CAA"),
+            ("_dmarc." + query_domain, "TXT", "DMARC"),
+        ])
+        for lookup_name, rtype, record_type in query_plan:
+            query = dns.message.make_query(lookup_name, rtype)
             response = None
             try:
                 # Explicit attempts: no resolver cache, search suffixes, or hidden retries.
@@ -121,16 +128,17 @@ class NativeDnsAdapter(BaseProviderAdapter):
                         continue
                     for rdata in rrset:
                         if rtype == "MX":
-                            records.append({"type": rtype, "value": str(rdata.exchange).rstrip("."), "preference": rdata.preference})
+                            records.append({"type": record_type, "value": str(rdata.exchange).rstrip("."), "preference": rdata.preference})
                         else:
-                            records.append({"type": rtype, "value": str(rdata).rstrip(".") if rtype in ("NS", "PTR", "CNAME") else str(rdata)})
+                            records.append({"type": record_type, "value": str(rdata).rstrip(".") if rtype in ("NS", "PTR", "CNAME") else str(rdata)})
             except RequestBudgetExceeded:
                 incomplete = True
                 break
         raw_bytes = json.dumps({"target": val, "query_domain": query_domain, "records": records}).encode()
         return ProviderExecutionResult(raw_content=raw_bytes, observations=self.parse(raw_bytes, lineage),
             outcome="PARTIAL" if incomplete else "COMPLETED",
-            error_message="Some DNS requests could not complete within budget" if incomplete else None)
+            error_message="Some DNS record types could not be checked" if incomplete else None,
+            metadata={"collection_reason": "DNS_PARTIAL_RESPONSE"} if incomplete else {})
 
     def parse(self, raw_content: bytes, lineage: SourceLineage) -> List[Observation]:
         results: List[Observation] = []
@@ -182,6 +190,11 @@ class NativeDnsAdapter(BaseProviderAdapter):
                 results.append(Observation(observable=obs, lineage=item_lineage, confidence=0.95, raw_data=rec))
             elif rtype in ("MX", "NS", "PTR", "CNAME"):
                 obs = self.normalize({"type": ObservableType.HOSTNAME, "value": rval})
+                results.append(Observation(observable=obs, lineage=item_lineage, confidence=0.95, raw_data=rec))
+            elif rtype in ("TXT", "SOA", "CAA", "DMARC"):
+                # Keep domain-level DNS facts as evidence on the domain entity.
+                # They are not invented hosts or user-input findings.
+                obs = self.normalize({"type": ObservableType.DOMAIN, "value": query_domain})
                 results.append(Observation(observable=obs, lineage=item_lineage, confidence=0.95, raw_data=rec))
 
         return results
