@@ -29,6 +29,13 @@ def username_sites(tmp_path, request):
 
 @pytest.fixture
 def browser_app(tmp_path, monkeypatch, username_sites):
+    # UI tests restore the event-loop policy that was active before their
+    # Playwright fixture.  On Windows that can be Selector, which cannot start
+    # Playwright's Node driver.  Keep this real-browser fixture independent of
+    # collection order and restore the caller's policy after teardown.
+    previous_policy = asyncio.get_event_loop_policy()
+    if hasattr(asyncio, "WindowsProactorEventLoopPolicy"):
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     import spider.web.app as web_app
     service = SpiderService(db_path=str(tmp_path / "e2e.db"), artifacts_dir=str(tmp_path / "runs"))
     adapter = NativeDnsAdapter()
@@ -97,4 +104,7 @@ def browser_app(tmp_path, monkeypatch, username_sites):
         server.should_exit = True
         worker.join(timeout=10)
         listener.close()
-        assert not worker.is_alive(), "E2E backend did not stop cleanly"
+        try:
+            assert not worker.is_alive(), "E2E backend did not stop cleanly"
+        finally:
+            asyncio.set_event_loop_policy(previous_policy)
