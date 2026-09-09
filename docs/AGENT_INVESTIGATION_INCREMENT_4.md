@@ -12,6 +12,9 @@ labels, or the completed M3 scheduler/data plane.
 - `case_delta` reads observations recorded after a prior digest snapshot and
   freezes its own page set. An empty delta never means a source or account has
   disappeared.
+- `compare_runs` now exposes a paged, snapshot-scoped change list in addition
+  to its compatibility summary arrays. The observed/not-observed distinction
+  remains explicitly non-conclusive.
 - `graph_neighbors` has matching scoped snapshot pagination. The output stays
   limited to typed entity IDs, assertion IDs and transform contracts; no raw
   browser content, artifact, cookie, credential, or query URL is added.
@@ -38,7 +41,6 @@ This increment adds correctness regression coverage, not a speed claim.
 ## NOT YET VERIFIED / next work
 
 - M1 remains **PARTIAL**: a very large reachable branch can still require a
-  complete traversal, and run comparison has a truncation flag rather than
-  continuation. No claim of hard bounded full-projection cost is made.
+  complete traversal. No claim of hard bounded full-projection cost is made.
 - M4 browser workflow, M5 PHONE public candidates and M6 reasoning/UX remain
   planned. No real-person target, provider key or production listener was used.

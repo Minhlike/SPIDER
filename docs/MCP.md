@@ -126,6 +126,10 @@ lineage metadata and are excluded from findings/evidence. Graph transforms list
 contracts, not authorization to execute them. Reliability and useful
 evidence/request remain uncalibrated; telemetry does not control scheduling.
 
+`compare_runs` also returns a snapshot-scoped `changes` page with `next_cursor`;
+the original `added` and `not_observed_in_after_run` arrays remain compact
+compatibility summaries and may be truncated.
+
 Projection follows only children of typed identities reachable from the selected
 seed and fetches matching entities, rather than loading unrelated case branches.
 A very large reachable branch can still require complete traversal, so a small

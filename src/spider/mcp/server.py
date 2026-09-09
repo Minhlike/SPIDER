@@ -93,7 +93,8 @@ class SpiderMCPServer:
                                 arguments.get("after"), arguments.get("snapshot"))
                         if tool_name == "compare_runs":
                             return await api.compare_runs(*scope, arguments["before_id"],
-                                arguments["after_id"], arguments.get("limit", 20))
+                                arguments["after_id"], arguments.get("limit", 20), arguments.get("after"),
+                                arguments.get("snapshot"))
                         if tool_name == "run_coverage":
                             return await api.run_coverage(*scope, arguments["run_id"])
                         return await api.telemetry(*scope)

@@ -1,4 +1,5 @@
 """Agent/UI investigation reads; evidence scope is enforced before graph access."""
+import hashlib
 import math
 from sqlalchemy import select
 from spider.models.enums import ObservableType
@@ -97,7 +98,8 @@ async def graph_neighbors(session, service, case_id, target_id, entity_id, limit
                    (entity.observable_type, entity.namespace, entity.canonical_name)][:limit]}
 
 
-async def compare_runs(session, case_id, target_id, before_id, after_id, limit=20):
+async def compare_runs(session, case_id, target_id, before_id, after_id, limit=20,
+                       after=None, snapshot=None):
     if type(limit) is not int or not 1 <= limit <= 100:
         raise ValueError("Invalid limit")
     view = await project(session, case_id, target_id)
@@ -108,14 +110,37 @@ async def compare_runs(session, case_id, target_id, before_id, after_id, limit=2
         if (run is None or run.case_id != case_id or target_id not in
                 (run.metadata_json or {}).get("expected_sources", {})):
             raise ValueError("Run outside selected target")
+    if snapshot is None:
+        evidence = sorted(view.evidence_observations, key=lambda o: (_stamp(o.created_at), o.id))
+        snapshot = make_snapshot("compare_runs", case_id, view.seed.id, f"{before_id}:{after_id}", {
+            "evidence": [_stamp(evidence[-1].created_at), evidence[-1].id] if evidence else None})
+    bounds = read_snapshot(snapshot, "compare_runs", case_id, view.seed.id, f"{before_id}:{after_id}")
+    bound = bounds.get("evidence")
     def identities(run_id):
         return {(o.observable_type, o.namespace, o.canonical_value)
-                for o in view.evidence_observations if o.run_id == run_id}
-    before, after = identities(before_id), identities(after_id)
-    added, not_observed = sorted(after - before), sorted(before - after)
+                for o in view.evidence_observations if o.run_id == run_id and bound is not None
+                and (_stamp(o.created_at), o.id) <= tuple(bound)}
+    before, after_values = identities(before_id), identities(after_id)
+    added, not_observed = sorted(after_values - before), sorted(before - after_values)
+    changes = [("ADDED", value) for value in added] + [("NOT_OBSERVED_IN_AFTER_RUN", value) for value in not_observed]
+    changes.sort(key=lambda item: (item[0], item[1]))
+    start = 0
+    if after is not None:
+        marker = read_cursor(after, snapshot)
+        positions = {hashlib.sha256(repr(change).encode()).hexdigest(): i for i, change in enumerate(changes)}
+        if marker not in positions:
+            raise ValueError("Cursor does not belong to selected comparison")
+        start = positions[marker] + 1
+    page = changes[start:start + limit]
+    page_items = [{"change": kind, "type": value[0], "namespace": value[1][:128],
+                   "value": value[2][:512]} for kind, value in page]
+    next_cursor = (make_cursor(snapshot, hashlib.sha256(repr(page[-1]).encode()).hexdigest())
+                   if page and start + len(page) < len(changes) else None)
     return {"before_run": before_id, "after_run": after_id,
             "added": added[:limit], "not_observed_in_after_run": not_observed[:limit],
             "counts": {"added": len(added), "not_observed": len(not_observed)},
+            "snapshot": snapshot, "changes": page_items, "next_cursor": next_cursor,
+            "more": start + len(page) < len(changes),
             "truncated": max(len(added), len(not_observed)) > limit,
             "absence_verified": False}
 

@@ -134,9 +134,11 @@ def create_server(service):
         return await dispatcher.handle_tool_call("input_catalogue", {})
 
     @server.tool(annotations=read)
-    async def compare_runs(case_id: str, target_id: str, before_id: str, after_id: str, limit: int = 20) -> dict:
-        """Compare observed identities; absence from a run does not prove disappearance."""
-        return await dispatcher.handle_tool_call("compare_runs", {"case_id": case_id, "target_id": target_id, "before_id": before_id, "after_id": after_id, "limit": limit})
+    async def compare_runs(case_id: str, target_id: str, before_id: str, after_id: str, limit: int = 20,
+                           after: str | None = None, snapshot: str | None = None) -> dict:
+        """Compare observed identities with stable continuation; absence never proves disappearance."""
+        return await dispatcher.handle_tool_call("compare_runs", {"case_id": case_id, "target_id": target_id,
+            "before_id": before_id, "after_id": after_id, "limit": limit, "after": after, "snapshot": snapshot})
 
     @server.tool(annotations=read)
     async def run_coverage(case_id: str, target_id: str, run_id: str) -> dict:

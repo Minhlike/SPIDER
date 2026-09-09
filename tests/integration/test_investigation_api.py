@@ -79,6 +79,14 @@ async def test_scoped_run_comparison_telemetry_and_graph(investigation):
     diff = await server.handle_tool_call("compare_runs", {**scope, "before_id": "before", "after_id": "after"})
     assert diff["counts"] == {"added": 1, "not_observed": 1}
     assert not diff["absence_verified"]
+    first_change = await server.handle_tool_call("compare_runs", {
+        **scope, "before_id": "before", "after_id": "after", "limit": 1})
+    second_change = await server.handle_tool_call("compare_runs", {
+        **scope, "before_id": "before", "after_id": "after", "limit": 1,
+        "snapshot": first_change["snapshot"], "after": first_change["next_cursor"]})
+    assert first_change["more"] and not second_change["more"]
+    assert {item["change"] for item in first_change["changes"] + second_change["changes"]} == {
+        "ADDED", "NOT_OBSERVED_IN_AFTER_RUN"}
     assert "error" in await server.handle_tool_call("compare_runs", {**scope, "before_id": "before", "after_id": "foreign"})
     coverage = await server.handle_tool_call("run_coverage", {**scope, "run_id": "before"})
     assert "error" not in coverage
