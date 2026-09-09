@@ -59,6 +59,9 @@
     "m2_gate": "PASS_FIXTURE_NOT_LIVE_VERIFIED",
     "reader_reports": "SHARED_VI_EN_IMPLEMENTED",
     "default_parallel_providers": 2,
-    "m3_gate": "PASS_FIXTURE_NOT_LIVE_VERIFIED"
+    "m3_gate": "PASS_FIXTURE_NOT_LIVE_VERIFIED",
+    "m1_gate": "PARTIAL_STABLE_SNAPSHOTS_AND_SCOPED_CONTINUATION",
+    "m1_remaining": "HARD_BOUND_REACHABLE_PROJECTION_NOT_YET_VERIFIED",
+    "latest_development_head": "a1ead8de03cb86d860dfef37e53ec4509805bec2"
   }
 }
