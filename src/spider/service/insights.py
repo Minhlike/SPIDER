@@ -166,7 +166,7 @@ class CaseInsightsBuilder:
                 continue
             if raw.get("match_basis") not in ("exact_public_email", "email_hash_public_profile",
                                                "verified_account_from_email_profile", "username_only",
-                                               "signed_in_browser_candidate"):
+                                               "signed_in_browser_candidate", "coccoc_search_candidate"):
                 continue
             url = raw.get("profile_url")
             if not isinstance(url, str) or not url.startswith(("https://", "http://")):

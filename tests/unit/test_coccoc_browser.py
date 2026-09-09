@@ -7,7 +7,8 @@ from spider.models.enums import ObservableType
 from spider.models.provenance import SourceLineage
 from spider.providers.browser.coccoc import (
     CocCocBrowserAdapter, apply_negative_control, classify_direct_candidate, classify_direct_result,
-    browser_start_reason, coccoc_profile, host_matches,
+    apply_indexed_profile_candidates, browser_start_reason, candidate_has_username, coccoc_profile,
+    coccoc_search_url, host_matches, indexed_profile_candidates,
     safe_result_url,
 )
 
@@ -40,6 +41,29 @@ def test_direct_classifier_uses_declared_profile_url_and_preserves_access_failur
         "https://www.tiktok.com/@alice", "TikTok", "Too many requests")[0] == "RATE_LIMITED"
     assert classify_direct_result("tiktok.com", "alice", 403,
         "https://www.tiktok.com/@alice", "Security check", "captcha")[0] == "BLOCKED"
+
+
+def test_coccoc_search_url_encodes_query_and_account_requires_path_match():
+    assert coccoc_search_url('site:zalo.me "alice doe"') == \
+        "https://coccoc.com/search?query=site%3Azalo.me+%22alice+doe%22"
+    assert candidate_has_username("https://www.instagram.com/alice/", "alice")
+    assert not candidate_has_username("https://zalo.me/s/article-123", "alice")
+
+
+def test_indexed_profile_fallback_keeps_explicit_absence_and_marks_search_candidate():
+    rows = [
+        {"source": "Instagram", "state": "LOGIN_REQUIRED", "reason": "LOGIN_WALL"},
+        {"source": "Threads", "state": "NOT_FOUND", "reason": "HTTP_NOT_FOUND"},
+    ]
+    links = ["https://www.instagram.com/alice/", "https://www.threads.com/@alice"]
+
+    candidates = indexed_profile_candidates(links, "alice")
+    merged = apply_indexed_profile_candidates(rows, candidates, "COCCOC_SEARCH_RESULT")
+
+    assert merged[0]["state"] == "CANDIDATE"
+    assert merged[0]["reason"] == "COCCOC_SEARCH_RESULT"
+    assert merged[0]["direct_outcome"] == "LOGIN_REQUIRED"
+    assert merged[1]["state"] == "NOT_FOUND"
 
 
 def test_negative_control_can_promote_only_a_differential_response():
@@ -94,6 +118,26 @@ def test_parser_keeps_candidates_unverified_and_rejects_unlisted_hosts():
     assert len(observations) == 2
     assert all(obs.raw_data["identity_verified"] is False for obs in observations)
     assert {obs.confidence for obs in observations} == {0.55}
+
+
+def test_search_result_creates_account_only_for_a_profile_shaped_url():
+    raw = b'\n'.join([
+        json.dumps({"source": "Instagram", "state": "CANDIDATE",
+                    "reason": "COCCOC_SEARCH_RESULT", "account_candidate": True,
+                    "url": "https://www.instagram.com/alice/"}).encode(),
+        json.dumps({"source": "Zalo", "state": "CANDIDATE",
+                    "reason": "COCCOC_SEARCH_RESULT", "account_candidate": False,
+                    "url": "https://zalo.me/s/public-article"}).encode(),
+    ])
+    lineage = SourceLineage(case_id="c", run_id="r", task_id="t",
+        provider_id="coccoc_browser", provider_version="local-coccoc",
+        parent_observable_value="alice", parent_observable_type=ObservableType.USERNAME)
+
+    observations = CocCocBrowserAdapter().parse(raw, lineage)
+
+    assert {obs.observable.type for obs in observations} == {ObservableType.ACCOUNT, ObservableType.URL}
+    assert sum(obs.observable.type == ObservableType.ACCOUNT for obs in observations) == 1
+    assert all(obs.raw_data["match_basis"] == "coccoc_search_candidate" for obs in observations)
 
 
 @pytest.mark.asyncio

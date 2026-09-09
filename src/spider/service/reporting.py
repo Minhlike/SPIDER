@@ -37,6 +37,8 @@ VOCABULARY = {
     "TIMEOUT": ("Nguồn chưa trả lời trong thời gian cho phép", "The source did not respond in time"),
     "NETWORK_ERROR": ("Chưa kết nối được tới nguồn", "Could not connect to the source"),
     "BROWSER_NETWORK_UNAVAILABLE": ("Phiên Cốc Cốc không truy cập được Internet; chưa kiểm tra bất kỳ website nào", "The Cốc Cốc session could not reach the Internet; no websites were checked"),
+    "SEARCH_ENGINE_UNAVAILABLE": ("Cốc Cốc Search chưa trả lời; kết quả trên website này chưa xác định", "Cốc Cốc Search did not respond; this website remains unknown"),
+    "COCCOC_SEARCH_RESULT": ("Ứng viên từ kết quả tìm kiếm Cốc Cốc; cần mở và đối chiếu", "Candidate from Cốc Cốc Search; open and corroborate"),
     "UNSUPPORTED": ("Nguồn này chưa hỗ trợ cách kiểm tra cần thiết", "This source does not support the required check"),
     "BROKEN_PROVIDER": ("Công cụ thu thập chưa hoạt động đúng", "The collection tool did not work correctly"),
     "SKIPPED_BUDGET": ("Chưa kiểm tra tiếp trong lượt này", "Not checked further in this run"),

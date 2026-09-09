@@ -836,8 +836,12 @@ function coverageDescription(source) {
     const outcome = friendlyLabel(code);
     return `${name}: ${outcome}`;
   }).join(" · ");
+  const search = c.search_discovery;
+  const searchCandidates = search?.candidate_profiles ? (currentLanguage === "vi"
+    ? ` (${search.candidate_profiles} ứng viên)` : ` (${search.candidate_profiles} candidates)`) : "";
+  const searchNote = search && search.engine ? `${search.engine}: ${friendlyLabel(search.outcome || "UNKNOWN")}${searchCandidates}` : "";
   const summary = `${c.checked || 0}/${c.selected || 0} website đã thử kiểm tra · ${c.found || 0} ứng viên tài khoản · ${c.not_found || 0} không thấy · ${c.unknown || 0} chưa xác định · ${c.invalid || 0} username không hợp lệ · ${c.unprocessed || 0} chưa xử lý · ${c.non_unique_detections || 0} kết quả không phân biệt được với đối chứng · ${(c.controls_pending || 0) + (c.controls_unknown || 0)} đối chứng chưa kết luận`;
-  return priority ? `${priority} · ${summary}` : summary;
+  return [priority, searchNote, summary].filter(Boolean).join(" · ");
 }
 
 function executionReceiptDescription(source) {
@@ -884,6 +888,7 @@ function renderTypeSpecificInsights(insights) {
         verified_account_from_email_profile: currentLanguage === "vi" ? "Tài khoản được hồ sơ Gravatar xác minh liên kết" : "Account link verified by the Gravatar profile",
         username_only: currentLanguage === "vi" ? "Trùng username — chưa xác minh chủ sở hữu" : "Shared username — owner unverified",
         signed_in_browser_candidate: currentLanguage === "vi" ? "Ứng viên từ Cốc Cốc đã đăng nhập — cần mở và đối chiếu" : "Candidate from signed-in Cốc Cốc — open and corroborate",
+        coccoc_search_candidate: currentLanguage === "vi" ? "Ứng viên từ Cốc Cốc Search — cần mở và đối chiếu" : "Candidate from Cốc Cốc Search — open and corroborate",
       };
       const basis = bases[profile.match_basis] || (currentLanguage === "vi" ? "Liên hệ công khai — cần đối chiếu" : "Public linkage — corroboration required");
       const work = [profile.job_title, profile.company].filter(Boolean).join(" · ");

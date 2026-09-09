@@ -27,6 +27,9 @@ DIRECT_USERNAME_SOURCES = (
     ("X/Twitter", "x.com", "https://x.com/{username}"),
 )
 SEARCH_SOURCES = (("Zalo", "zalo.me"), ("Tinhte", "tinhte.vn"), ("VOZ", "voz.vn"))
+SEARCH_ENGINE_NAME = "Cốc Cốc Search"
+SEARCH_ENGINE_URL = "https://coccoc.com/search?query={query}"
+SEARCH_FALLBACK_SOURCES = frozenset({"Instagram", "Threads", "TikTok"})
 ALLOWED_RESULT_HOSTS = frozenset(
     [host for _, host, _ in DIRECT_USERNAME_SOURCES] + [host for _, host in SEARCH_SOURCES]
 )
@@ -88,6 +91,52 @@ def safe_result_url(url):
         return urlunsplit((parsed.scheme, netloc, parsed.path or "/", "", ""))
     except (ValueError, TypeError):
         return None
+
+
+def coccoc_search_url(query: str) -> str:
+    """Build the public Cốc Cốc Search URL without retaining the query in evidence."""
+    return SEARCH_ENGINE_URL.format(query=quote_plus(query))
+
+
+def candidate_has_username(url: str, username: str) -> bool:
+    """Require the canonical username in the public result path before creating ACCOUNT."""
+    try:
+        return username.casefold() in unquote(urlsplit(url).path).casefold()
+    except (TypeError, ValueError):
+        return False
+
+
+def indexed_profile_candidates(links, username: str) -> dict[str, str]:
+    """Keep only public profile-shaped URLs for the priority social sites."""
+    candidates = {}
+    for source, host, _ in DIRECT_USERNAME_SOURCES:
+        if source not in SEARCH_FALLBACK_SOURCES:
+            continue
+        for link in links:
+            safe = safe_result_url(link)
+            if safe and host_matches(safe, host) and candidate_has_username(safe, username):
+                candidates.setdefault(source, safe)
+                break
+    return candidates
+
+
+def apply_indexed_profile_candidates(rows, candidates, search_outcome):
+    """Use search only as a lower-confidence fallback, never to erase a definite absence."""
+    merged = []
+    for row in rows:
+        result = dict(row)
+        source = result.get("source")
+        candidate = candidates.get(source)
+        if (candidate and result.get("state") != "NOT_FOUND"
+                and source in SEARCH_FALLBACK_SOURCES):
+            result.update(state="CANDIDATE", reason="COCCOC_SEARCH_RESULT", url=candidate,
+                          account_candidate=True, search_engine=SEARCH_ENGINE_NAME,
+                          direct_outcome=row.get("state"),
+                          direct_reason=row.get("reason"))
+        elif source in SEARCH_FALLBACK_SOURCES:
+            result["search_fallback_outcome"] = search_outcome
+        merged.append(result)
+    return merged
 
 
 def classify_direct_candidate(expected_host: str, username: str, status: int | None,
@@ -152,7 +201,7 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
 
     def provider_id(self): return "coccoc_browser"
     def version(self): return "local-coccoc"
-    def adapter_version(self): return "1.1.0"
+    def adapter_version(self): return "1.2.0"
     def capabilities(self): return ["BROWSER_PERSONAL_DISCOVERY"]
     def network_class(self): return NetworkClass.THIRD_PARTY_ONLY
     def accepts(self): return [ObservableType.EMAIL, ObservableType.USERNAME]
@@ -265,15 +314,21 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 if target.type == ObservableType.USERNAME:
                     username = target.canonical_value.lstrip("@")
                     parallel_tabs = min(3, max(1, int(options.get("browser_parallel_tabs", 3))))
-                    rows.extend(await self._collect_direct_sources(
+                    direct_rows = await self._collect_direct_sources(
                         context, username, timeout_ms, lambda: exhausted, parallel_tabs
-                    ))
+                    )
                     if not exhausted:
                         page = await context.new_page()
                         try:
+                            direct_rows = await self._search_direct_fallbacks(
+                                page, username, direct_rows, lambda: exhausted, timeout_ms
+                            )
+                            rows.extend(direct_rows)
                             rows.extend(await self._search_sources(page, username, lambda: exhausted, timeout_ms))
                         finally:
                             await page.close()
+                    else:
+                        rows.extend(direct_rows)
                 else:
                     page = await context.new_page()
                     sources = tuple((source, host) for source, host, _ in DIRECT_USERNAME_SOURCES) + SEARCH_SOURCES
@@ -316,7 +371,7 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
         page = None
         try:
             page = await context.new_page()
-            response = await page.goto("https://www.bing.com/", wait_until="domcontentloaded",
+            response = await page.goto("https://example.com/", wait_until="domcontentloaded",
                                        timeout=timeout_ms)
             return bool(response and 200 <= response.status < 500)
         except Exception:
@@ -414,23 +469,51 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
             rows.append(await self._search_one(page, source, host, identifier, timeout_ms))
         return rows
 
-    async def _search_one(self, page, source, host, identifier, timeout_ms, require_text=False):
-        query = quote_plus(f'site:{host} "{identifier}"')
+    async def _search_direct_fallbacks(self, page, username, direct_rows, is_exhausted, timeout_ms):
+        """Recover index-visible social profiles when a direct platform page is unreadable.
+
+        The search result is deliberately a candidate, not proof that the same
+        person owns the account.  It is safe to retain a platform's explicit
+        NOT_FOUND result over an index entry, which may be stale.
+        """
+        if is_exhausted():
+            return apply_indexed_profile_candidates(direct_rows, {}, "REQUEST_LIMIT")
         try:
-            await page.goto(f"https://www.bing.com/search?q={query}",
+            await page.goto(coccoc_search_url(f'"{username}"'), wait_until="domcontentloaded",
+                            timeout=min(timeout_ms, 8000))
+            links = await page.locator("a[href]").evaluate_all(
+                "els => els.slice(0, 500).map(a => a.href)"
+            )
+        except Exception:
+            return apply_indexed_profile_candidates(direct_rows, {}, "SEARCH_ENGINE_UNAVAILABLE")
+        candidates = indexed_profile_candidates(links, username)
+        return apply_indexed_profile_candidates(
+            direct_rows, candidates, "COCCOC_SEARCH_RESULT" if candidates else "NO_EXACT_SEARCH_RESULT"
+        )
+
+    async def _search_one(self, page, source, host, identifier, timeout_ms, require_text=False):
+        query = f'site:{host} "{identifier}"'
+        try:
+            await page.goto(coccoc_search_url(query),
                             wait_until="domcontentloaded", timeout=timeout_ms)
             page_text = (await page.locator("body").inner_text(timeout=2000)).casefold()
             links = await page.locator("a[href]").evaluate_all(
                 "els => els.slice(0, 500).map(a => a.href)"
             )
         except Exception:
-            page_text, links = "", []
-        candidate = next((url for url in links if host_matches(url, host)), None)
+            return {"kind": "site", "source": source, "state": "UNKNOWN",
+                    "reason": "SEARCH_ENGINE_UNAVAILABLE", "url": None,
+                    "search_engine": SEARCH_ENGINE_NAME,
+                    "content_sha256": hashlib.sha256(b"").hexdigest()}
+        candidate = next((safe for url in links if (safe := safe_result_url(url))
+                          and host_matches(safe, host)), None)
         valid = bool(candidate and (not require_text or identifier.casefold() in page_text))
         return {"kind": "site", "source": source,
                 "state": "CANDIDATE" if valid else "UNKNOWN",
-                "reason": "EXACT_SEARCH_RESULT" if valid else "NO_EXACT_SEARCH_RESULT",
+                "reason": "COCCOC_SEARCH_RESULT" if valid else "NO_EXACT_SEARCH_RESULT",
                 "url": safe_result_url(candidate) if valid else None,
+                "account_candidate": bool(valid and candidate_has_username(candidate, identifier)),
+                "search_engine": SEARCH_ENGINE_NAME,
                 "content_sha256": hashlib.sha256(page_text.encode("utf-8", "replace")).hexdigest()}
 
     @staticmethod
@@ -438,7 +521,8 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
         """Trace only SPIDER-owned browser work; no cookies, query string or page text."""
         timestamp = utc_now().isoformat()
         return [{"action_id": (action_id or lineage.configuration_hash)[:128], "parent_observation_id": parent_observation_id,
-                 "step": "READ_PROFILE" if row.get("source") in {name for name, _, _ in DIRECT_USERNAME_SOURCES}
+                "step": "SEARCH_INDEX" if row.get("reason") == "COCCOC_SEARCH_RESULT"
+                         else "READ_PROFILE" if row.get("source") in {name for name, _, _ in DIRECT_USERNAME_SOURCES}
                          else "SEARCH_INDEX", "source": row.get("source", "unknown")[:64],
                  "sanitized_url": safe_result_url(row.get("url")) if row.get("url") else None,
                  "observed_at": timestamp,
@@ -460,6 +544,13 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
         undecided = len(rows) - candidates - not_found - sum(
             row.get("state") == "UNPROCESSED" for row in rows)
         controls = [row.get("control_state") for row in rows if "control_state" in row]
+        fallback_outcomes = [row.get("search_fallback_outcome") for row in rows
+                             if row.get("source") in SEARCH_FALLBACK_SOURCES]
+        fallback_outcome = ("COCCOC_SEARCH_RESULT" if any(
+                                row.get("reason") == "COCCOC_SEARCH_RESULT"
+                                and row.get("source") in SEARCH_FALLBACK_SOURCES for row in rows)
+                            else "SEARCH_ENGINE_UNAVAILABLE" if "SEARCH_ENGINE_UNAVAILABLE" in fallback_outcomes
+                            else "NO_EXACT_SEARCH_RESULT" if fallback_outcomes else "NOT_RUN")
         coverage = {"selected": selected, "checked": len(rows), "found": candidates,
                     "not_found": not_found, "unknown": undecided,
                     "unprocessed": unprocessed,
@@ -470,6 +561,9 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                                                  for row in rows),
                     "parallel_tabs": min(3, max(1, int(kwargs.get("browser_parallel_tabs", 3)))),
                     "source_scope": "VN_COMMON_BROWSER",
+                    "search_discovery": {"engine": SEARCH_ENGINE_NAME, "outcome": fallback_outcome,
+                                         "candidate_profiles": sum(row.get("reason") == "COCCOC_SEARCH_RESULT"
+                                                                   for row in rows)},
                     "priority_sites": {row.get("source", "unknown"): {
                         "outcome": row.get("state", "UNKNOWN"),
                         "reason": row.get("reason", "NOT_YET_VERIFIED")
@@ -510,13 +604,18 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 continue
             if not any(host_matches(url, host) for host in ALLOWED_RESULT_HOSTS):
                 continue
+            is_search_result = row.get("reason") == "COCCOC_SEARCH_RESULT"
             evidence = {"platform": row.get("source"), "profile_url": url,
-                        "match_basis": "signed_in_browser_candidate", "identity_verified": False,
+                        "match_basis": "coccoc_search_candidate" if is_search_result
+                                       else "signed_in_browser_candidate",
+                        "identity_verified": False,
                         "verification_state": "CANDIDATE_REVIEW_REQUIRED",
-                        "browser": "Cốc Cốc"}
+                        "browser": "Cốc Cốc",
+                        "search_engine": row.get("search_engine") if is_search_result else None}
             item_lineage = lineage.model_copy(update={"upstream_source": "coccoc_browser",
                 "upstream_family": "BROWSER_ASSISTED"})
-            if lineage.parent_observable_type == ObservableType.USERNAME:
+            if (lineage.parent_observable_type == ObservableType.USERNAME
+                    and (not is_search_result or row.get("account_candidate") is True)):
                 account = f"{lineage.parent_observable_value}@{str(row.get('source', '')).casefold()}"
                 results.append(Observation(
                     observable=self.normalize({"type": ObservableType.ACCOUNT, "value": account,
