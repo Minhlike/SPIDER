@@ -90,6 +90,21 @@ def test_dotted_username_and_explicit_marker(offline_page):
     assert not errors
 
 
+def test_personal_preflight_explains_that_primary_run_uses_browser(offline_page, monkeypatch):
+    page, _, errors = offline_page
+    import spider.web.app as web_app
+    monkeypatch.setattr(web_app, "source_preflight", lambda *_args: {
+        "investigation_mode": "PERSONAL_FOOTPRINT",
+        "sources": [{"provider_id": "coccoc_browser", "capability": "BROWSER_PERSONAL_DISCOVERY",
+                     "network_class": "THIRD_PARTY_ONLY", "request_accounting": "SUPPORTED",
+                     "credential_scope": "SIGNED_IN_BROWSER_SESSION", "applicability": "APPLICABLE"}],
+        "internet_api_keys_applicable": False,
+    })
+    page.locator("#target-input").fill("fixture-user")
+    expect(page.locator("#source-preflight")).to_contain_text("sẽ mở Cốc Cốc")
+    assert not errors
+
+
 def test_passive_button_does_not_request_signed_in_coccoc(offline_page):
     page, dispatches, errors = offline_page
     page.locator("#target-input").fill("fixture-user")

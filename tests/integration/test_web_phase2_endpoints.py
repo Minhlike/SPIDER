@@ -37,6 +37,11 @@ def test_api_classify_endpoint(client):
     assert {s["provider_id"] for s in username_plan["sources"]} == {"github_public", "maigret"}
     assert not username_plan["internet_api_keys_applicable"]
 
+    browser_res = client.post("/api/classify", json={"target": "john_doe99", "browser_assisted": True})
+    assert browser_res.status_code == 200
+    browser_sources = {s["provider_id"] for s in browser_res.json()["source_preflight"]["sources"]}
+    assert {"github_public", "maigret", "coccoc_browser"} <= browser_sources
+
     res = client.post("/api/classify", json={"target": "example.com", "target_type": "DOMAIN"})
     assert res.status_code == 200
     domain_plan = res.json()["source_preflight"]

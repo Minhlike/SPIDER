@@ -5,11 +5,19 @@ Increment baseline: `7e92711`. Report: `docs/AGENT_INVESTIGATION_INCREMENT_3.md`
 Plan: `docs/AGENT_INVESTIGATION_PLAN_VI.md`. User authorized implementation,
 commit and push; verify live HEAD/remote before continuing.
 
-Final offline gate: **435 passed, 1 deselected in 101.42s** with default concurrency 2.
+Final offline gate after the browser-report regression fix: **441 passed, 1 deselected in 132.36s**.
 Includes 14 Chromium in-process UI tests and two official MCP stdio client tests.
 Go private-runner tests/build, pip check, compile and diff whitespace: PASS.
 No production listener, real-person investigation or real-credential test started.
 Credential/settings schema unchanged; local runtime binary rebuilt and stays ignored.
+
+Browser/report regression fixed: coverage now accepts legacy list-valued provider
+outcomes instead of crashing the case-insights endpoint. Personal-target preflight
+states that the primary action opens Cốc Cốc. Browser launch failures now distinguish
+profile-in-use, missing runtime, browser closed and generic startup failure without
+exposing profile paths or Playwright diagnostics. A controlled local browser check
+for a user-supplied public username returned Instagram and Threads candidates; this
+is a candidate result, not identity verification.
 
 Implemented M3: parent permits before every Maigret/Uncover HTTP attempt,
 shared per-run atomic cap, task attribution, global/provider/origin limits,

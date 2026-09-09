@@ -516,7 +516,7 @@ async function onTargetTypeChanged() {
   onTargetInputDebounced(false);
 }
 
-async function classifyCurrentTarget(browserAssisted = false) {
+async function classifyCurrentTarget(browserAssisted = true) {
   clearTimeout(classifyTimeout);
   const sequence = ++classificationSequence;
   if (classificationController) classificationController.abort();
@@ -559,6 +559,11 @@ async function classifyCurrentTarget(browserAssisted = false) {
     if (inapplicable.length) parts.push(vi ? `Không chạy do sai loại đầu vào: ${inapplicable.join(", ")}.` : `Skipped for this input type: ${inapplicable.join(", ")}.`);
     if (!sourcePlan.internet_api_keys_applicable && ["USERNAME", "EMAIL"].includes(data.type)) {
       parts.push(vi ? "Shodan/Censys/FOFA không áp dụng cho tìm tài khoản cá nhân." : "Shodan/Censys/FOFA do not apply to personal-account discovery.");
+    }
+    if ((sourcePlan.sources || []).some(s => s.provider_id === "coccoc_browser" && s.applicability === "APPLICABLE")) {
+      parts.push(vi
+        ? "Bấm ‘Bắt đầu điều tra tự động’ sẽ mở Cốc Cốc để kiểm tra các trang công khai; nếu Cốc Cốc đang mở bằng profile này, hãy đóng nó rồi chạy lại."
+        : "Clicking ‘Start automated investigation’ will open Cốc Cốc for public-page checks; if that profile is already open, close Cốc Cốc and run again.");
     }
     preflight.textContent = parts.join(" ");
     return data;

@@ -129,12 +129,24 @@ def apply_negative_control(row, control_state):
     return result
 
 
+def browser_start_reason(exc: BaseException) -> str:
+    """Return a fixed, non-sensitive browser start state for the UI and audit."""
+    text = str(exc).casefold()
+    if any(marker in text for marker in ("already in use", "singleton", "user data directory", "profile in use")):
+        return "PROFILE_IN_USE"
+    if any(marker in text for marker in ("executable doesn't exist", "executable not found")):
+        return "MISSING_RUNTIME"
+    if "browser has been closed" in text or "target page, context or browser has been closed" in text:
+        return "BROWSER_CLOSED"
+    return "BROWSER_START_FAILED"
+
+
 class CocCocBrowserAdapter(BaseProviderAdapter):
     request_budget_supported = True
 
     def provider_id(self): return "coccoc_browser"
     def version(self): return "local-coccoc"
-    def adapter_version(self): return "1.0.0"
+    def adapter_version(self): return "1.1.0"
     def capabilities(self): return ["BROWSER_PERSONAL_DISCOVERY"]
     def network_class(self): return NetworkClass.THIRD_PARTY_ONLY
     def accepts(self): return [ObservableType.EMAIL, ObservableType.USERNAME]
@@ -248,8 +260,10 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                             page, source, host, target.canonical_value, timeout_ms, require_text=True
                         ))
                 return rows, "REQUEST_LIMIT" if exhausted else None
-            except Exception:
-                return [], "PROFILE_UNAVAILABLE"
+            except Exception as exc:
+                # Do not put Playwright/profile paths or browser diagnostics in
+                # a case report, an API response, or a log artifact.
+                return [], browser_start_reason(exc)
             finally:
                 if context is not None:
                     try:
@@ -397,8 +411,10 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
         complete = reason is None and len(rows) == selected and undecided == 0
         if reason is None and not complete:
             reason = "UNRESOLVED_SOURCES"
-        errors = {"PROFILE_UNAVAILABLE": "Cốc Cốc profile is unavailable or already open",
+        errors = {"PROFILE_IN_USE": "Cốc Cốc đang mở với profile này; hãy đóng Cốc Cốc rồi chạy lại để SPIDER mở các tab điều tra.",
                   "MISSING_RUNTIME": "Cốc Cốc runtime unavailable",
+                  "BROWSER_CLOSED": "Cốc Cốc đã đóng trước khi hoàn tất kiểm tra.",
+                  "BROWSER_START_FAILED": "Không thể khởi động phiên Cốc Cốc cho lượt kiểm tra này.",
                   "REQUEST_LIMIT": "Browser request budget exhausted",
                   "UNRESOLVED_SOURCES": "Some browser sources could not be decided automatically"}
         return ProviderExecutionResult(

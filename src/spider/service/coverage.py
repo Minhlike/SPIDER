@@ -6,7 +6,9 @@ STATES = {"ATTEMPTED", "CONFIRMED", "NOT_FOUND", "RATE_LIMITED", "BLOCKED", "TIM
 def collection_state(task, observation_count):
     metadata = task.metadata_json or {}
     reason = metadata.get("budget_reason")
-    if reason in {"ENTITY_LIMIT", "REQUEST_LIMIT"}:
+    # Historical providers may keep a list of per-query outcomes here.  A
+    # presentation failure must never hide an otherwise valid case report.
+    if isinstance(reason, str) and reason in {"ENTITY_LIMIT", "REQUEST_LIMIT"}:
         return "SKIPPED_BUDGET"
     if reason == "UNMETERED_PROVIDER":
         return "UNSUPPORTED"

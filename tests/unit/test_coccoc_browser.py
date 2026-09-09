@@ -7,7 +7,7 @@ from spider.models.enums import ObservableType
 from spider.models.provenance import SourceLineage
 from spider.providers.browser.coccoc import (
     CocCocBrowserAdapter, apply_negative_control, classify_direct_candidate, classify_direct_result,
-    coccoc_profile, host_matches,
+    browser_start_reason, coccoc_profile, host_matches,
     safe_result_url,
 )
 
@@ -49,6 +49,16 @@ def test_negative_control_can_promote_only_a_differential_response():
     assert promoted["reason"] == "NEGATIVE_CONTROL_DIFFERENTIAL"
     generic = apply_negative_control(row, "CANDIDATE")
     assert generic["state"] == "UNKNOWN" and generic["reason"] == "NON_UNIQUE_RESPONSE"
+
+
+@pytest.mark.parametrize(("message", "state"), [
+    ("User data directory is already in use", "PROFILE_IN_USE"),
+    ("Executable doesn't exist", "MISSING_RUNTIME"),
+    ("Target page, context or browser has been closed", "BROWSER_CLOSED"),
+    ("opaque Playwright failure", "BROWSER_START_FAILED"),
+])
+def test_browser_start_failure_has_a_fixed_safe_reason(message, state):
+    assert browser_start_reason(RuntimeError(message)) == state
 
 
 @pytest.mark.asyncio

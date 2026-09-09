@@ -46,9 +46,9 @@
     "plan": "docs/AGENT_INVESTIGATION_PLAN_VI.md",
     "report": "docs/AGENT_INVESTIGATION_INCREMENT_3.md",
     "offline_gate": {
-      "passed": 435,
+      "passed": 441,
       "deselected": 1,
-      "seconds": 101.42,
+      "seconds": 132.36,
       "chromium_ui_included": 14,
       "real_stdio_tests": 2
     },
