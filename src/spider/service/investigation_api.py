@@ -5,6 +5,7 @@ from spider.models.enums import ObservableType
 from spider.capability.applicability import assess_provider
 from spider.service.projection import project
 from spider.service.coverage import coverage_report
+from spider.service.read_snapshot import make_cursor, make_snapshot, read_cursor, read_snapshot
 from spider.storage.schema import TaskRunRecord, ProviderRunRecord, CaseRecord, TargetRecord
 
 
@@ -45,7 +46,12 @@ def input_catalogue(service):
     return result
 
 
-async def graph_neighbors(session, service, case_id, target_id, entity_id, limit=20):
+def _stamp(value):
+    return value.isoformat() if value is not None else ""
+
+
+async def graph_neighbors(session, service, case_id, target_id, entity_id, limit=20,
+                          after=None, snapshot=None):
     if type(limit) is not int or not 1 <= limit <= 100:
         raise ValueError("Invalid limit")
     view = await project(session, case_id, target_id)
@@ -53,8 +59,21 @@ async def graph_neighbors(session, service, case_id, target_id, entity_id, limit
     if entity is None:
         raise ValueError("Entity outside target scope")
     edges = sorted((a for a in view.assertions if entity_id in
-                    (a.source_entity_id, a.target_entity_id)), key=lambda a: a.id)
-    page = edges[:limit]
+                    (a.source_entity_id, a.target_entity_id)), key=lambda a: (_stamp(a.first_observed), a.id))
+    if snapshot is None:
+        snapshot = make_snapshot("graph_neighbors", case_id, view.seed.id, entity_id, {
+            "edges": [_stamp(edges[-1].first_observed), edges[-1].id] if edges else None})
+    bounds = read_snapshot(snapshot, "graph_neighbors", case_id, view.seed.id, entity_id)
+    bound = bounds.get("edges")
+    edges = [a for a in edges if bound is not None and (_stamp(a.first_observed), a.id) <= tuple(bound)]
+    start = 0
+    if after is not None:
+        after_id = read_cursor(after, snapshot)
+        positions = {a.id: i for i, a in enumerate(edges)}
+        if after_id not in positions:
+            raise ValueError("Cursor does not belong to selected graph")
+        start = positions[after_id] + 1
+    page = edges[start:start + limit]
     ids = {x for a in page for x in (a.source_entity_id, a.target_entity_id)}
     kind = ObservableType(entity.observable_type)
     transforms = []
@@ -67,9 +86,12 @@ async def graph_neighbors(session, service, case_id, target_id, entity_id, limit
     return {"entity_id": entity_id, "target_id": view.seed.id,
             "entities": [{"id": e.id, "type": e.observable_type,
                           "value": e.canonical_name[:512], "namespace": e.namespace[:128]} for e in view.entities if e.id in ids],
+            "snapshot": snapshot,
             "edges": [{"id": a.id, "source": a.source_entity_id, "target": a.target_entity_id,
                        "type": a.assertion_type} for a in page],
-            "more": len(edges) > limit, "transforms": transforms,
+            "more": start + len(page) < len(edges),
+            "next_cursor": make_cursor(snapshot, page[-1].id) if page and start + len(page) < len(edges) else None,
+            "transforms": transforms,
             "evidence_ids": [o.id for o in view.evidence_observations
                 if (o.observable_type, o.namespace, o.canonical_value) ==
                    (entity.observable_type, entity.namespace, entity.canonical_name)][:limit]}

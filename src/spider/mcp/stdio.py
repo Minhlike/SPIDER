@@ -102,9 +102,19 @@ def create_server(service):
         return await dispatcher.handle_tool_call("list_hypotheses", {"case_id": case_id, "target_id": target_id, "limit": limit})
 
     @server.tool(annotations=read)
-    async def case_digest(case_id: str, target_id: str, question: str = "all", limit: int = 20, after: str | None = None) -> dict:
-        """Read compact scoped evidence and recent task history; follow next_cursor."""
-        return await dispatcher.handle_tool_call("case_digest", {"case_id": case_id, "target_id": target_id, "question": question, "limit": limit, "after": after})
+    async def case_digest(case_id: str, target_id: str, question: str = "all", limit: int = 20,
+                          after: str | None = None, snapshot: str | None = None,
+                          history_after: str | None = None) -> dict:
+        """Read compact scoped evidence and history from one stable snapshot; follow both cursors."""
+        return await dispatcher.handle_tool_call("case_digest", {"case_id": case_id, "target_id": target_id, "question": question, "limit": limit, "after": after, "snapshot": snapshot, "history_after": history_after})
+
+    @server.tool(annotations=read)
+    async def case_delta(case_id: str, target_id: str, since_snapshot: str, question: str = "all",
+                         limit: int = 20, after: str | None = None, snapshot: str | None = None) -> dict:
+        """Read only evidence recorded after a prior case_digest snapshot; no absence inference."""
+        return await dispatcher.handle_tool_call("case_delta", {"case_id": case_id, "target_id": target_id,
+            "since_snapshot": since_snapshot, "question": question, "limit": limit, "after": after,
+            "snapshot": snapshot})
 
     @server.tool(annotations=read)
     async def get_evidence(case_id: str, target_id: str, observation_id: str) -> dict:
@@ -112,9 +122,11 @@ def create_server(service):
         return await dispatcher.handle_tool_call("get_evidence", {"case_id": case_id, "target_id": target_id, "observation_id": observation_id})
 
     @server.tool(annotations=read)
-    async def graph_neighbors(case_id: str, target_id: str, entity_id: str, limit: int = 20) -> dict:
-        """Read scoped edges and applicable transforms; no network dispatch."""
-        return await dispatcher.handle_tool_call("graph_neighbors", {"case_id": case_id, "target_id": target_id, "entity_id": entity_id, "limit": limit})
+    async def graph_neighbors(case_id: str, target_id: str, entity_id: str, limit: int = 20,
+                              after: str | None = None, snapshot: str | None = None) -> dict:
+        """Read scoped graph edges from a stable snapshot; no network dispatch."""
+        return await dispatcher.handle_tool_call("graph_neighbors", {"case_id": case_id, "target_id": target_id,
+            "entity_id": entity_id, "limit": limit, "after": after, "snapshot": snapshot})
 
     @server.tool(annotations=read)
     async def input_catalogue() -> dict:

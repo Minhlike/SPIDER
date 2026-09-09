@@ -32,7 +32,10 @@ This is not Internet speed, UI latency or identification-accuracy evidence.
 Full metrics and restrictions are in the increment report. M3 PASS FIXTURE;
 not a universal graph-equality claim when sources compete for the final permits.
 
-Next P0: M1 stable snapshot/delta, history/graph continuation and projection cost.
+M1 snapshot/delta and history/graph continuation are implemented in increment 4;
+their cursors are scope-bound and process-local. Next P0: bounded reachability
+projection and run-comparison continuation. Then M4 owned browser workflow, M5
+PHONE public candidates/consented holdout, M6 evidence reasoning/telemetry/graph UX.
 Then M4 owned browser workflow, M5 PHONE public candidates/consented holdout,
 M6 evidence reasoning/telemetry/graph UX. Full M1-M6 remains incomplete.
 Keep seed input excluded from findings/evidence, deterministic core independent

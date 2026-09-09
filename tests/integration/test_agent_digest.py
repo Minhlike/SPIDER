@@ -41,6 +41,24 @@ async def test_digest_pagination_scope_and_shared_lifecycle(tmp_path):
         tail = await server.handle_tool_call("case_digest", {**args, "after": page["next_cursor"]})
         assert len(tail["evidence"]) == 1 and not tail["more"]
         assert not {o["id"] for o in page["evidence"]} & {o["id"] for o in tail["evidence"]}
+        # Later ingest must not leak into a cursor that represents the first snapshot.
+        later = Observation(
+            observable=NormalizedObservable(type=T.ACCOUNT, value="later@fixture"),
+            lineage=SourceLineage(case_id=case["id"], seed_id=first["id"], run_id="later-run",
+                task_id="later-task", provider_id="fixture", provider_version="1",
+                parent_observable_value="first", parent_observable_type=T.USERNAME),
+            raw_data={"secret": "must-not-export"})
+        await service.db_writer.submit(lambda session:
+            ObservationRepository.append_observation(session, later))
+        stable_tail = await server.handle_tool_call("case_digest", {
+            **args, "snapshot": page["snapshot"], "after": page["next_cursor"]})
+        assert [item["id"] for item in stable_tail["evidence"]] == [item["id"] for item in tail["evidence"]]
+        delta = await server.handle_tool_call("case_delta", {
+            **args, "since_snapshot": page["snapshot"]})
+        assert delta["counts"]["new_evidence"] == 1
+        assert delta["evidence"][0]["id"] == later.id and not delta["absence_verified"]
+        assert "error" in await server.handle_tool_call("case_delta", {
+            **args, "target_id": other["id"], "since_snapshot": page["snapshot"]})
         wrong = await server.handle_tool_call("get_evidence", {
             **args, "target_id": other["id"], "observation_id": observations[0].id})
         assert wrong["error"]["code"] == "INVALID_SCOPE_OR_ARGUMENT"

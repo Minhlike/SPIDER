@@ -30,7 +30,7 @@ async def test_official_client_initialize_discover_and_call(tmp_path):
             assert result.serverInfo.name == "SPIDER"
             tools = await session.list_tools()
             names = {t.name for t in tools.tools}
-            assert {"case_digest", "get_evidence", "graph_neighbors", "compare_runs",
+            assert {"case_digest", "case_delta", "get_evidence", "graph_neighbors", "compare_runs",
                     "run_coverage", "telemetry", "input_catalogue", "run_capability",
                     "action_status", "cancel_run", "annotate_evidence", "list_cases", "list_targets"} <= names
             call = await session.call_tool("input_catalogue", {})

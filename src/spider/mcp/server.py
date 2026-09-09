@@ -28,7 +28,7 @@ class SpiderMCPServer:
 
     async def _handle_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         if tool_name not in {"collect", "explain_assertion", "query_case", "rebuild_case",
-                             "case_digest", "get_evidence", "input_catalogue", "graph_neighbors",
+                             "case_digest", "case_delta", "get_evidence", "input_catalogue", "graph_neighbors",
                              "compare_runs", "run_coverage", "telemetry", "create_hypothesis", "list_hypotheses",
                              "run_capability", "action_status", "cancel_run", "annotate_evidence",
                              "list_cases", "list_targets"}:
@@ -89,7 +89,8 @@ class SpiderMCPServer:
                         scope = (session, arguments["case_id"], arguments["target_id"])
                         if tool_name == "graph_neighbors":
                             return await api.graph_neighbors(session, self.service, arguments["case_id"],
-                                arguments["target_id"], arguments["entity_id"], arguments.get("limit", 20))
+                                arguments["target_id"], arguments["entity_id"], arguments.get("limit", 20),
+                                arguments.get("after"), arguments.get("snapshot"))
                         if tool_name == "compare_runs":
                             return await api.compare_runs(*scope, arguments["before_id"],
                                 arguments["after_id"], arguments.get("limit", 20))
@@ -98,14 +99,19 @@ class SpiderMCPServer:
                         return await api.telemetry(*scope)
                 except (ValueError, KeyError, TypeError):
                     return {"error": {"code": "INVALID_SCOPE_OR_ARGUMENT"}}
-            if tool_name in {"case_digest", "get_evidence"}:
-                from spider.service.digest import case_digest, get_evidence
+            if tool_name in {"case_digest", "case_delta", "get_evidence"}:
+                from spider.service.digest import case_delta, case_digest, get_evidence
                 try:
                     async with self.service.db_manager.session_factory() as session:
                         if tool_name == "case_digest":
                             return await case_digest(session, arguments["case_id"],
                                 arguments.get("target_id"), arguments.get("question", "all"),
-                                arguments.get("limit", 20), arguments.get("after"))
+                                arguments.get("limit", 20), arguments.get("after"),
+                                arguments.get("snapshot"), arguments.get("history_after"))
+                        if tool_name == "case_delta":
+                            return await case_delta(session, arguments["case_id"], arguments.get("target_id"),
+                                arguments["since_snapshot"], arguments.get("question", "all"),
+                                arguments.get("limit", 20), arguments.get("after"), arguments.get("snapshot"))
                         return await get_evidence(session, arguments["case_id"],
                             arguments.get("target_id"), arguments["observation_id"])
                 except (ValueError, KeyError):

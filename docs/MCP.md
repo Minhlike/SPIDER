@@ -27,12 +27,13 @@ provider wait, execution and commit wait; run-scoped anonymous HTTP replay recor
 cache hits without charging another network request. See increment 3 for the
 controlled benchmark and limits; these measurements do not verify live sources.
 
-## Tools exposed over stdio (schema version 1)
+## Tools exposed over stdio (schema version 2)
 
 | Tool | Effect |
 | --- | --- |
 | `input_catalogue` | Registered, metered input contracts; not proof of live availability |
 | `case_digest` | Scoped evidence page, counts, unknowns, recent task history |
+| `case_delta` | Evidence recorded after a prior digest snapshot; never an absence claim |
 | `get_evidence` | Scoped provenance, versions and artifact hash; no raw page payload |
 | `graph_neighbors` | Scoped edges, typed entities and potential transforms; no dispatch |
 | `compare_runs` | Added identities and identities not observed in the later run |
@@ -46,7 +47,7 @@ controlled benchmark and limits; these measurements do not verify live sources.
 | `cancel_run` | Cancel an attached capability action owned by this service session |
 | `annotate_evidence` | Idempotent scoped evidence review; never overwrites source evidence |
 
-New tools return `schema_version: "1"`; errors have a stable code. The SDK
+New tools return `schema_version: "2"`; errors have a stable code. The SDK
 publishes typed argument schemas and read/write annotations. Hypotheses require
 a UUID `action_id`: an identical retry returns the same receipt; a conflicting
 retry is rejected. Evidence IDs must belong to the selected seed. Hypotheses
@@ -110,22 +111,26 @@ the official stdio session owns this lifecycle automatically.
 ## Scope and bounded output
 
 `case_digest` accepts `case_id`, `target_id`, `question` (`all`,
-`public_profiles`, `infrastructure`), `limit` (1–100, default 20), and `after`
-(the final evidence ID of the previous page). Follow `next_cursor` while `more`
-is true. A foreign seed's evidence/cursor is rejected. User seed observations
-are lineage metadata and are excluded from findings/evidence. The HTTP read is
-`GET /api/cases/{case_id}/digest` with the same query parameters.
+`public_profiles`, `infrastructure`), `limit` (1–100, default 20), and an
+optional `snapshot`. Its returned opaque `snapshot`, `next_cursor` and
+`history_next_cursor` must be passed back unchanged for continuation. Cursors
+are integrity protected and reject another case, target, question or read
+surface. They contain no raw evidence or source content and expire on a service
+restart; request a fresh digest when that happens. `graph_neighbors` has the
+same snapshot/continuation contract for edges.
 
-This is pagination, not a snapshot or change feed: concurrent insertions and
-review edits are not a supported delta protocol. History, graph edges, run
-comparison and hypotheses explicitly flag truncation; they have no continuation
-cursor yet. Graph transforms list contracts, not authorization to execute them.
-Missing observations are never labelled disappeared. Reliability and useful
+`case_delta` takes a previous `case_digest` snapshot and returns only evidence
+recorded after that baseline. It has its own frozen page cursor. Empty delta and
+absence from a run never establish disappearance. User seed observations are
+lineage metadata and are excluded from findings/evidence. Graph transforms list
+contracts, not authorization to execute them. Reliability and useful
 evidence/request remain uncalibrated; telemetry does not control scheduling.
 
-Projection filters observations by seed in SQL, but still traverses that seed's
-complete evidence and reads case entities. A small response is not proof of
-bounded database cost. See `AGENT_INVESTIGATION_INCREMENT_1.md` for measurements.
+Projection filters observations by seed in SQL, but reachability currently still
+traverses that seed's complete evidence and reads matching case entities. A small
+response is not proof of bounded database cost. Snapshotting removes repeated
+old pages for an Agent; a fully bounded reachability projection remains tracked
+as P0 follow-up. See `AGENT_INVESTIGATION_INCREMENT_1.md` for measurements.
 
 ## References
 
