@@ -1053,6 +1053,10 @@ function renderTypeSpecificInsights(insights) {
         <div class="detail-key">Quan sát HTTPS đã được ủy quyền:</div>
         ${(dom.web_metadata || []).length ? `<ul class="detail-list">${dom.web_metadata.slice(0, 5).map(item => `<li><strong>${escapeHtml(String(item.http_status || ""))}</strong> · ${escapeHtml(item.url || "")}<br><small>${escapeHtml(item.title || "Không có tiêu đề")} · HSTS: ${item.has_hsts ? "có" : "chưa thấy"} · CSP: ${item.has_csp ? "có" : "chưa thấy"}</small></li>`).join("")}</ul>` : "<em>Chỉ chạy khi bạn xác nhận phạm vi được ủy quyền và chọn profile kiểm tra chủ động.</em>"}
       </div>
+      <div style="margin-top:16px;">
+        <div class="detail-key">Mạng và vị trí ước lượng của IP quan sát được:</div>
+        ${(dom.network_profiles || []).length ? `<ul class="detail-list">${dom.network_profiles.slice(0, 12).map(item => `<li><strong>${escapeHtml(item.ip || "IP theo nguồn")}</strong> · ${escapeHtml(item.asn || "ASN chưa rõ")} · ${escapeHtml(item.organization || item.isp || item.network_name || "Tổ chức chưa rõ")}<br><small>${escapeHtml([item.city, item.region, item.country].filter(Boolean).join(", ") || "Vị trí chưa có nguồn")}${item.prefix || item.cidr ? ` · ${escapeHtml(item.prefix || item.cidr)}` : ""} · Đây có thể là CDN/edge, không khẳng định máy chủ gốc.</small></li>`).join("")}</ul>` : "<em>Chưa có phản hồi registry/IP intelligence cho các IP đã quan sát.</em>"}
+      </div>
     `;
     container.appendChild(card);
   }

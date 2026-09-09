@@ -18,6 +18,9 @@ def test_domain_profile_only_reports_observed_dns_certificate_and_scanner_fields
         SimpleNamespace(provider_id="native_web", raw_data_json={"record_kind": "authorized_web_metadata",
             "url": "https://example.test/", "http_status": 200, "title": "Fixture", "server": "nginx",
             "has_hsts": True, "has_csp": False}),
+        SimpleNamespace(provider_id="native_rdap", parent_observable_value="192.0.2.8",
+            raw_data_json={"record_kind": "bgp_prefix", "asn": "AS64500", "prefix": "192.0.2.0/24",
+                           "organization": "Fixture Network", "country": "VN"}),
         SimpleNamespace(provider_id="uncover", raw_data_json={"owner": "must-not-be-present"}),
     ]
 
@@ -31,6 +34,9 @@ def test_domain_profile_only_reports_observed_dns_certificate_and_scanner_fields
     assert profile["technology_signals"] == ["nginx"]
     assert profile["web_metadata"] == [{"url": "https://example.test/", "http_status": 200,
                                          "title": "Fixture", "has_hsts": True, "has_csp": False}]
+    assert profile["network_profiles"] == [{"asn": "AS64500", "prefix": "192.0.2.0/24",
+                                             "organization": "Fixture Network", "country": "VN",
+                                             "ip": "192.0.2.8"}]
 
 
 def test_dns_parser_retains_domain_level_security_records_as_evidence():

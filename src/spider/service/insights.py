@@ -49,6 +49,7 @@ def domain_evidence_profile(observations) -> Dict[str, Any]:
         "public_services": [],
         "technology_signals": [],
         "web_metadata": [],
+        "network_profiles": [],
     }
     for observation in observations:
         raw = getattr(observation, "raw_data_json", None) or {}
@@ -98,6 +99,16 @@ def domain_evidence_profile(observations) -> Dict[str, Any]:
                 value = raw.get(key)
                 if isinstance(value, str) and value.strip():
                     _append_unique(profile["technology_signals"], value.strip())
+        elif raw.get("record_kind") in {"rdap_network", "bgp_prefix", "whatismyip_ip_intelligence"}:
+            network = {key: raw.get(key) for key in (
+                "asn", "cidr", "prefix", "organization", "isp", "network_name", "rir",
+                "country", "region", "city", "start_address", "end_address")
+                if isinstance(raw.get(key), (str, int, float)) and raw.get(key) not in ("", None)}
+            observed_ip = getattr(observation, "parent_observable_value", None)
+            if isinstance(observed_ip, str) and observed_ip:
+                network["ip"] = observed_ip
+            if network:
+                _append_unique(profile["network_profiles"], network)
     return profile
 
 class CaseInsightsBuilder:
@@ -206,6 +217,7 @@ class CaseInsightsBuilder:
             "public_services": [],
             "technology_signals": [],
             "web_metadata": [],
+            "network_profiles": [],
         }
 
         # IP Insights

@@ -179,7 +179,9 @@ def test_domain_report_renders_only_collected_security_and_service_facts(offline
           caa: ['0 issue "ca.example"']},
         certificates: [{issuer_name: 'Fixture CA', not_before: '2026-01-01', not_after: '2027-01-01'}],
         public_services: [{engine: 'shodan', host: 'www.example.test', port: 443}],
-        technology_signals: ['nginx']
+        technology_signals: ['nginx'],
+        network_profiles: [{ip: '192.0.2.8', asn: 'AS64500', organization: 'Fixture Network',
+          city: 'Hanoi', country: 'VN', prefix: '192.0.2.0/24'}]
       }
     })""")
     report = page.locator("#type-specific-container")
@@ -188,6 +190,8 @@ def test_domain_report_renders_only_collected_security_and_service_facts(offline
     expect(report).to_contain_text("Fixture CA")
     expect(report).to_contain_text("shodan · www.example.test · 443")
     expect(report).to_contain_text("nginx")
+    expect(report).to_contain_text("Fixture Network")
+    expect(report).to_contain_text("có thể là CDN/edge")
     assert not errors
 
 
