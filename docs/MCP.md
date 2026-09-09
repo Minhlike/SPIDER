@@ -126,11 +126,12 @@ lineage metadata and are excluded from findings/evidence. Graph transforms list
 contracts, not authorization to execute them. Reliability and useful
 evidence/request remain uncalibrated; telemetry does not control scheduling.
 
-Projection filters observations by seed in SQL, but reachability currently still
-traverses that seed's complete evidence and reads matching case entities. A small
-response is not proof of bounded database cost. Snapshotting removes repeated
-old pages for an Agent; a fully bounded reachability projection remains tracked
-as P0 follow-up. See `AGENT_INVESTIGATION_INCREMENT_1.md` for measurements.
+Projection follows only children of typed identities reachable from the selected
+seed and fetches matching entities, rather than loading unrelated case branches.
+A very large reachable branch can still require complete traversal, so a small
+response is not proof of hard bounded database cost. Snapshotting removes repeated
+old pages for an Agent; fully bounded reachability remains tracked as P0 follow-up.
+See `AGENT_INVESTIGATION_INCREMENT_1.md` for measurements.
 
 ## References
 

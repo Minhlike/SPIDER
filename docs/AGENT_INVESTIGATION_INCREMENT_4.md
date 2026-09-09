@@ -15,6 +15,9 @@ labels, or the completed M3 scheduler/data plane.
 - `graph_neighbors` has matching scoped snapshot pagination. The output stays
   limited to typed entity IDs, assertion IDs and transform contracts; no raw
   browser content, artifact, cookie, credential, or query URL is added.
+- Seed reachability now queries only children of already reachable typed
+  identities and fetches only matching entities, instead of loading unrelated
+  case entities or unreachable seed branches before filtering.
 - Cursors are process-local and deliberately expire after service restart. This
   prevents a stale cursor from silently mixing different in-memory key epochs;
   callers request a new digest instead.
@@ -34,8 +37,8 @@ This increment adds correctness regression coverage, not a speed claim.
 
 ## NOT YET VERIFIED / next work
 
-- M1 remains **PARTIAL**: reachability still traverses a selected seed's complete
-  evidence, and run comparison has a truncation flag rather than continuation.
-  No claim of bounded full projection cost is made.
+- M1 remains **PARTIAL**: a very large reachable branch can still require a
+  complete traversal, and run comparison has a truncation flag rather than
+  continuation. No claim of hard bounded full-projection cost is made.
 - M4 browser workflow, M5 PHONE public candidates and M6 reasoning/UX remain
   planned. No real-person target, provider key or production listener was used.
