@@ -400,10 +400,10 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 "content_sha256": hashlib.sha256(page_text.encode("utf-8", "replace")).hexdigest()}
 
     @staticmethod
-    def _workflow_steps(rows, lineage, parent_observation_id=None):
+    def _workflow_steps(rows, lineage, parent_observation_id=None, action_id=None):
         """Trace only SPIDER-owned browser work; no cookies, query string or page text."""
         timestamp = utc_now().isoformat()
-        return [{"action_id": lineage.configuration_hash[:128], "parent_observation_id": parent_observation_id,
+        return [{"action_id": (action_id or lineage.configuration_hash)[:128], "parent_observation_id": parent_observation_id,
                  "step": "READ_PROFILE" if row.get("source") in {name for name, _, _ in DIRECT_USERNAME_SOURCES}
                          else "SEARCH_INDEX", "source": row.get("source", "unknown")[:64],
                  "sanitized_url": safe_result_url(row.get("url")) if row.get("url") else None,
@@ -415,7 +415,8 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
     async def execute(self, target, lineage, **kwargs):
         started = time.perf_counter()
         rows, reason = await self._collect(target, kwargs)
-        workflow_steps = self._workflow_steps(rows, lineage, kwargs.get("browser_parent_observation_id"))
+        workflow_steps = self._workflow_steps(rows, lineage, kwargs.get("browser_parent_observation_id"),
+                                              kwargs.get("browser_action_id"))
         raw = "\n".join(json.dumps(row, ensure_ascii=False) for row in rows).encode("utf-8")
         observations = self.parse(raw, lineage)
         selected = len(DIRECT_USERNAME_SOURCES) + len(SEARCH_SOURCES)
