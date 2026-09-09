@@ -213,6 +213,7 @@ class InvestigationActions:
                 result = await self.service.provider_manager.execute_task(task, observable, lineage,
                     timeout_seconds=request.timeout_seconds, request_ledger=ledger, execution_budget=budget,
                     derivation="DIRECT" if direct else "DERIVED",
+                    browser_parent_observation_id=request.observation_id,
                     username_site_limit=budget.username_site_limit,
                     username_source_scope=budget.username_source_scope,
                     resolve_batch=lambda session, observations: self.service.resolution_engine.resolve_observations(

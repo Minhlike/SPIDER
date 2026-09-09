@@ -29,7 +29,7 @@ class SpiderMCPServer:
     async def _handle_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         if tool_name not in {"collect", "explain_assertion", "query_case", "rebuild_case",
                              "case_digest", "case_delta", "get_evidence", "input_catalogue", "graph_neighbors",
-                             "compare_runs", "run_coverage", "telemetry", "create_hypothesis", "list_hypotheses",
+                             "compare_runs", "run_coverage", "browser_trace", "phone_candidate_digest", "telemetry", "create_hypothesis", "list_hypotheses",
                              "run_capability", "action_status", "cancel_run", "annotate_evidence",
                              "list_cases", "list_targets"}:
             return {"error": "Unknown tool"}
@@ -75,7 +75,7 @@ class SpiderMCPServer:
                         return await list_hypotheses(session, arguments["case_id"], arguments["target_id"], limit)
                 except (ValueError, KeyError):
                     return {"error": {"code": "INVALID_HYPOTHESIS_OR_SCOPE"}}
-            if tool_name in {"input_catalogue", "graph_neighbors", "compare_runs", "run_coverage", "telemetry",
+            if tool_name in {"input_catalogue", "graph_neighbors", "compare_runs", "run_coverage", "browser_trace", "phone_candidate_digest", "telemetry",
                              "list_cases", "list_targets"}:
                 from spider.service import investigation_api as api
                 try:
@@ -97,6 +97,10 @@ class SpiderMCPServer:
                                 arguments.get("snapshot"))
                         if tool_name == "run_coverage":
                             return await api.run_coverage(*scope, arguments["run_id"])
+                        if tool_name == "browser_trace":
+                            return await api.browser_trace(*scope, arguments["run_id"])
+                        if tool_name == "phone_candidate_digest":
+                            return await api.phone_candidate_digest(*scope)
                         return await api.telemetry(*scope)
                 except (ValueError, KeyError, TypeError):
                     return {"error": {"code": "INVALID_SCOPE_OR_ARGUMENT"}}

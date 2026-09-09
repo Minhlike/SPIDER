@@ -7,6 +7,8 @@ from spider.capability.applicability import assess_provider
 from spider.service.projection import project
 from spider.service.coverage import coverage_report
 from spider.service.read_snapshot import make_cursor, make_snapshot, read_cursor, read_snapshot
+from spider.service.evidence_analysis import public_url
+from spider.service.phone_candidates import public_phone_candidates
 from spider.storage.schema import TaskRunRecord, ProviderRunRecord, CaseRecord, TargetRecord
 
 
@@ -157,6 +159,54 @@ async def run_coverage(session, case_id, target_id, run_id):
         TaskRunRecord.case_id == case_id, TaskRunRecord.run_id == run_id))).all())
     tasks = [t for t in tasks if (t.metadata_json or {}).get("seed_id") == target_id]
     return coverage_report(tasks, [o for o in view.evidence_observations if o.run_id == run_id], expected[target_id])
+
+
+async def browser_trace(session, case_id, target_id, run_id):
+    """Read a bounded, sanitized trace of browser tabs owned by this run only."""
+    view = await project(session, case_id, target_id)
+    run = await session.get(ProviderRunRecord, run_id)
+    if run is None or run.case_id != case_id or view.seed is None:
+        raise ValueError("Invalid browser trace scope")
+    expected = (run.metadata_json or {}).get("expected_sources", {})
+    if target_id not in expected:
+        raise ValueError("Run outside target scope")
+    tasks = list((await session.scalars(select(TaskRunRecord).where(
+        TaskRunRecord.case_id == case_id, TaskRunRecord.run_id == run_id,
+        TaskRunRecord.provider_id == "coccoc_browser").order_by(TaskRunRecord.id))).all())
+    tasks = [task for task in tasks if (task.metadata_json or {}).get("seed_id") == target_id]
+    if not tasks:
+        raise ValueError("Browser trace unavailable")
+    steps = []
+    for task in tasks:
+        workflow = (task.metadata_json or {}).get("browser_workflow", {})
+        for step in workflow.get("steps", [])[:100]:
+            if not isinstance(step, dict):
+                continue
+            steps.append({"action_id": str(step.get("action_id", ""))[:128],
+                          "parent_observation_id": step.get("parent_observation_id"),
+                          "step": str(step.get("step", "UNKNOWN"))[:64],
+                          "source": str(step.get("source", "unknown"))[:64],
+                          "sanitized_url": public_url(step.get("sanitized_url")),
+                          "observed_at": step.get("observed_at"),
+                          "content_sha256": str(step.get("content_sha256", ""))[:64] or None,
+                          "state": str(step.get("state", "UNKNOWN"))[:64],
+                          "reason": str(step.get("reason", "NOT_YET_VERIFIED"))[:128]})
+    return {"case_id": case_id, "target_id": view.seed.id, "run_id": run_id,
+            "owned_tabs_max": 3, "owned_tabs_closed": all(
+                bool((task.metadata_json or {}).get("browser_workflow", {}).get("owned_tabs_closed"))
+                for task in tasks), "automatic_replay": False,
+            "resume": "NEW_EXPLICIT_ACTION_REQUIRED" if run.status != "COMPLETED" else "NOT_REQUIRED",
+            "steps": steps, "identity_verified": False,
+            "reader_note": {"vi": "Đây là nhật ký bước trình duyệt do SPIDER sở hữu. Kết quả bị chặn hoặc chưa rõ vẫn là dữ liệu chưa kết luận.",
+                            "en": "This is a trace of browser tabs owned by SPIDER. Blocked or unclear results remain inconclusive."}}
+
+
+async def phone_candidate_digest(session, case_id, target_id):
+    view = await project(session, case_id, target_id, "all")
+    if view.seed is None or view.seed.observable_type != "PHONE":
+        raise ValueError("PHONE target required")
+    return {"case_id": case_id, "target_id": view.seed.id,
+            **public_phone_candidates(view.evidence_observations, view.seed.canonical_value)}
 
 
 async def telemetry(session, case_id, target_id):

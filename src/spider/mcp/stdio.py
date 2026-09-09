@@ -146,6 +146,18 @@ def create_server(service):
         return await dispatcher.handle_tool_call("run_coverage", {"case_id": case_id, "target_id": target_id, "run_id": run_id})
 
     @server.tool(annotations=read)
+    async def browser_trace(case_id: str, target_id: str, run_id: str) -> dict:
+        """Read sanitized, owned-tab browser steps for one scoped run; no cookies or page text."""
+        return await dispatcher.handle_tool_call("browser_trace", {"case_id": case_id,
+            "target_id": target_id, "run_id": run_id})
+
+    @server.tool(annotations=read)
+    async def phone_candidate_digest(case_id: str, target_id: str) -> dict:
+        """Read ranked public phone links already evidenced; never a subscriber lookup."""
+        return await dispatcher.handle_tool_call("phone_candidate_digest", {"case_id": case_id,
+            "target_id": target_id})
+
+    @server.tool(annotations=read)
     async def telemetry(case_id: str, target_id: str) -> dict:
         """Read measured p50/p95 and sample counts; no speculative reliability score."""
         return await dispatcher.handle_tool_call("telemetry", {"case_id": case_id, "target_id": target_id})

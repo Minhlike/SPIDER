@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 import pytest
 from spider.service.evidence_analysis import link_proofs, assess_hypothesis, temporal_events
+from spider.service.phone_candidates import public_phone_candidates
 from spider.service.drift import CanaryReport, ingest_canary
 from spider.service.bundle import evidence_bundle
 from spider.service.review import EvidenceReview, save_review
@@ -43,6 +44,25 @@ def test_missing_archive_is_not_disappearance_and_archived_is_not_current():
     assert events[0]["view"] == "ARCHIVED"
     assert events[1]["event"] == "NO_ARCHIVED_OBSERVATION"
     assert all(e["event"] != "DISAPPEARED" for e in events)
+
+
+def test_public_phone_candidates_need_literal_evidence_and_keep_competition():
+    phone = "+84901234567"
+    rows = [
+        SimpleNamespace(id="one", created_at=datetime(2026, 1, 1, tzinfo=timezone.utc), raw_data_json={
+            "phone_e164": phone, "evidence_class": "PUBLIC_SELF_PUBLISHED", "candidate_name": "Alice",
+            "source_url": "https://example.test/alice?token=discard", "origin_evidence_id": "origin-a"}),
+        SimpleNamespace(id="two", created_at=datetime(2026, 1, 2, tzinfo=timezone.utc), raw_data_json={
+            "phone_e164": phone, "evidence_class": "DIRECTORY_ENTRY", "candidate_name": "Bob",
+            "source_url": "https://directory.test/bob", "mirror_of": "one"}),
+        SimpleNamespace(id="ignored", created_at=datetime(2026, 1, 3, tzinfo=timezone.utc), raw_data_json={
+            "candidate_name": "Injected without literal phone"}),
+    ]
+    result = public_phone_candidates(rows, phone)
+    assert [item["value"] for item in result["candidates"]] == ["Alice", "Bob"]
+    assert result["contradictions"][0]["state"] == "COMPETING_PUBLIC_CANDIDATES"
+    assert not result["identity_verified"] and "discard" not in json.dumps(result)
+    assert public_phone_candidates([], phone)["unknowns"] == ["NO_PUBLIC_PHONE_MENTION"]
 
 
 def test_link_metadata_parser_is_bounded_and_does_not_read_nested_unrelated_people():

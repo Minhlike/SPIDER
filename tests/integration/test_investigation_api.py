@@ -41,6 +41,15 @@ async def investigation(tmp_path):
                 target_observable_value="synthetic", status="COMPLETED", observations_count=1,
                 metadata_json={"seed_id": seed["id"], "duration_ms": duration,
                                "request_count": 2, "provider_version": "1"}))
+        session.add(ProviderRunRecord(id="browser", case_id=case["id"], status="PARTIAL",
+            metadata_json={"expected_sources": {a["id"]: ["coccoc_browser"]}}))
+        session.add(TaskRunRecord(id="browser-task", run_id="browser", case_id=case["id"],
+            execution_key_hash="browser", provider_id="coccoc_browser", capability="BROWSER_PERSONAL_DISCOVERY",
+            target_observable_value="synthetic", status="PARTIAL", observations_count=0,
+            metadata_json={"seed_id": a["id"], "browser_workflow": {"owned_tabs_closed": True,
+                "steps": [{"action_id": "safe-action", "step": "SEARCH_INDEX", "source": "Zalo",
+                    "sanitized_url": "https://zalo.me/example?token=must-not-export", "observed_at": "2026-01-01T00:00:00Z",
+                    "content_sha256": "a" * 64, "state": "UNKNOWN", "reason": "LOGIN_WALL"}]}}))
         await ObservationRepository.append_observations_batch(session, observations)
         await service.resolution_engine.resolve_observations(session, observations, case["id"])
     await service.db_writer.submit(seed_rows)
@@ -92,7 +101,7 @@ async def test_scoped_run_comparison_telemetry_and_graph(investigation):
     assert "error" not in coverage
     assert "error" in await server.handle_tool_call("run_coverage", {**scope, "run_id": "foreign"})
     measured = await server.handle_tool_call("telemetry", scope)
-    row = measured["providers"][0]
+    row = next(item for item in measured["providers"] if item["provider"] == "fixture")
     assert row["samples"] == 2 and row["requests"] == 4
     assert row["p50_ms"] == 10 and row["p95_ms"] == 40
     assert row["useful_evidence_per_request"] is None
@@ -104,6 +113,17 @@ async def test_scoped_run_comparison_telemetry_and_graph(investigation):
     graph = await server.handle_tool_call("graph_neighbors", {**scope, "entity_id": own["id"], "limit": 1})
     assert graph["evidence_ids"] == [observations[0].id]
     assert "never-export-raw" not in json.dumps(graph)
+
+
+@pytest.mark.asyncio
+async def test_browser_trace_is_scoped_sanitized_and_partial_safe(investigation):
+    _, server, case, a, b, _ = investigation
+    trace = await server.handle_tool_call("browser_trace", {"case_id": case, "target_id": a, "run_id": "browser"})
+    assert trace["owned_tabs_max"] == 3 and trace["owned_tabs_closed"]
+    assert trace["resume"] == "NEW_EXPLICIT_ACTION_REQUIRED"
+    assert trace["steps"][0]["sanitized_url"] == "https://zalo.me/example"
+    assert "must-not-export" not in json.dumps(trace)
+    assert "error" in await server.handle_tool_call("browser_trace", {"case_id": case, "target_id": b, "run_id": "browser"})
 
 
 def test_catalogue_uses_registered_metered_contract_only(tmp_path):

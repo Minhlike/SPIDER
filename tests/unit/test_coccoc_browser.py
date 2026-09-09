@@ -111,4 +111,8 @@ async def test_execute_reports_fixture_candidates_without_opening_browser(monkey
     result = await adapter.execute(target, lineage)
     assert result.outcome == "PARTIAL"  # One fixture row is not full source coverage.
     assert result.metadata["coverage"]["found"] == 1
+    workflow = result.metadata["browser_workflow"]
+    assert workflow["owned_tabs_max"] == 3 and workflow["owned_tabs_closed"]
+    assert workflow["automatic_replay"] is False
+    assert workflow["steps"][0]["content_sha256"]
     assert len(result.observations) == 2

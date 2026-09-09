@@ -4,6 +4,7 @@ import os
 import re
 import secrets
 import time
+import hashlib
 from pathlib import Path
 from urllib.parse import quote_plus, unquote, urlsplit, urlunsplit
 
@@ -11,6 +12,7 @@ from spider.models.budget import RequestBudgetExceeded
 from spider.models.enums import NetworkClass, ObservableType, ProviderState
 from spider.models.observable import NormalizedObservable
 from spider.models.observation import Observation
+from spider.models.base import utc_now
 from spider.providers.base import BaseProviderAdapter, ProviderExecutionResult, ProviderHealth
 
 
@@ -240,7 +242,11 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                     asyncio.create_task(finish(request, "NETWORK_ERROR"))))
                 await context.route("http://**/*", intercept)
                 await context.route("https://**/*", intercept)
-                page = context.pages[0] if context.pages else await context.new_page()
+                # This is a fresh persistent context launched by SPIDER.  Close
+                # its default tab before opening work so direct checks can never
+                # exceed the three SPIDER-owned tab budget.
+                for initial in list(context.pages):
+                    await initial.close()
                 rows = []
                 timeout_ms = int(min(15, max(3, options.get("timeout_seconds", 180) / 12)) * 1000)
 
@@ -250,15 +256,24 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                     rows.extend(await self._collect_direct_sources(
                         context, username, timeout_ms, lambda: exhausted, parallel_tabs
                     ))
-                    rows.extend(await self._search_sources(page, username, lambda: exhausted, timeout_ms))
+                    if not exhausted:
+                        page = await context.new_page()
+                        try:
+                            rows.extend(await self._search_sources(page, username, lambda: exhausted, timeout_ms))
+                        finally:
+                            await page.close()
                 else:
+                    page = await context.new_page()
                     sources = tuple((source, host) for source, host, _ in DIRECT_USERNAME_SOURCES) + SEARCH_SOURCES
-                    for source, host in sources:
-                        if exhausted:
-                            break
-                        rows.append(await self._search_one(
-                            page, source, host, target.canonical_value, timeout_ms, require_text=True
-                        ))
+                    try:
+                        for source, host in sources:
+                            if exhausted:
+                                break
+                            rows.append(await self._search_one(
+                                page, source, host, target.canonical_value, timeout_ms, require_text=True
+                            ))
+                    finally:
+                        await page.close()
                 return rows, "REQUEST_LIMIT" if exhausted else None
             except Exception as exc:
                 # Do not put Playwright/profile paths or browser diagnostics in
@@ -354,7 +369,8 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
         return {"kind": "site", "source": source, "state": state,
                 "reason": reason,
                 "url": safe_result_url(final_url) if state == "CANDIDATE" else requested_url,
-                "http_status": status}
+                "http_status": status,
+                "content_sha256": hashlib.sha256(f"{title}\n{body}".encode("utf-8", "replace")).hexdigest()}
 
     async def _search_sources(self, page, identifier, is_exhausted, timeout_ms):
         rows = []
@@ -380,11 +396,26 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
         return {"kind": "site", "source": source,
                 "state": "CANDIDATE" if valid else "UNKNOWN",
                 "reason": "EXACT_SEARCH_RESULT" if valid else "NO_EXACT_SEARCH_RESULT",
-                "url": safe_result_url(candidate) if valid else None}
+                "url": safe_result_url(candidate) if valid else None,
+                "content_sha256": hashlib.sha256(page_text.encode("utf-8", "replace")).hexdigest()}
+
+    @staticmethod
+    def _workflow_steps(rows, lineage, parent_observation_id=None):
+        """Trace only SPIDER-owned browser work; no cookies, query string or page text."""
+        timestamp = utc_now().isoformat()
+        return [{"action_id": lineage.configuration_hash[:128], "parent_observation_id": parent_observation_id,
+                 "step": "READ_PROFILE" if row.get("source") in {name for name, _, _ in DIRECT_USERNAME_SOURCES}
+                         else "SEARCH_INDEX", "source": row.get("source", "unknown")[:64],
+                 "sanitized_url": safe_result_url(row.get("url")) if row.get("url") else None,
+                 "observed_at": timestamp,
+                 "content_sha256": row.get("content_sha256") or hashlib.sha256(b"").hexdigest(),
+                 "state": row.get("state", "UNKNOWN"), "reason": row.get("reason", "NOT_YET_VERIFIED")}
+                for row in rows]
 
     async def execute(self, target, lineage, **kwargs):
         started = time.perf_counter()
         rows, reason = await self._collect(target, kwargs)
+        workflow_steps = self._workflow_steps(rows, lineage, kwargs.get("browser_parent_observation_id"))
         raw = "\n".join(json.dumps(row, ensure_ascii=False) for row in rows).encode("utf-8")
         observations = self.parse(raw, lineage)
         selected = len(DIRECT_USERNAME_SOURCES) + len(SEARCH_SOURCES)
@@ -421,7 +452,11 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
             raw_content=raw, observations=observations, exit_code=0 if complete else 1,
             outcome="COMPLETED" if complete else "PARTIAL",
             error_message=None if complete else errors.get(reason, "Browser discovery incomplete"),
-            metadata={"coverage": coverage, "budget_reason": reason},
+            metadata={"coverage": coverage, "budget_reason": reason,
+                      "browser_workflow": {"version": "1", "owned_tabs_max": 3,
+                          "owned_tabs_closed": True, "automatic_replay": False,
+                          "resume": "NEW_EXPLICIT_ACTION_REQUIRED" if reason else "NOT_REQUIRED",
+                          "steps": workflow_steps}},
             mime_type="application/x-ndjson", duration_ms=(time.perf_counter() - started) * 1000,
             raw_items_count=len(rows), accepted_count=len(observations),
         )

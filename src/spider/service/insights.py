@@ -7,6 +7,7 @@ from spider.models.enums import ObservableType
 from spider.service.projection import project
 from spider.service.coverage import coverage_report
 from spider.service.evidence_analysis import analyze, public_url
+from spider.service.phone_candidates import public_phone_candidates
 from spider.service.review import hypotheses
 
 logger = logging.getLogger(__name__)
@@ -182,7 +183,8 @@ class CaseInsightsBuilder:
         phone_insights = {
             "phone": target_val if target_type == "PHONE" else None,
             "country": infer_phone_country(target_val) if target_type == "PHONE" else None,
-            "carrier": None
+            "carrier": None,
+            "public_candidate_digest": public_phone_candidates(observations, target_val) if target_type == "PHONE" else None,
         }
 
         # Extract info from entities & assertions

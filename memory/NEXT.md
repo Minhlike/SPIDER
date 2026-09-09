@@ -35,8 +35,10 @@ not a universal graph-equality claim when sources compete for the final permits.
 M1 snapshot/delta and history/graph continuation are implemented in increment 4;
 their cursors are scope-bound and process-local. Projection now follows reachable
 branches only; run-comparison continuation is also implemented. Next P0:
-hard-bound/replay reachable projection. Then M4 owned browser workflow, M5
-PHONE public candidates/consented holdout, M6 evidence reasoning/telemetry/graph UX.
+hard-bound/replay reachable projection. M4 owned-tab workflow trace and M5 public
+candidate digest are fixture-complete but live/holdout gates remain. Next M6
+evidence reasoning/telemetry/graph UX, then M4 live navigation/pivot and M5
+consented holdout.
 Then M4 owned browser workflow, M5 PHONE public candidates/consented holdout,
 M6 evidence reasoning/telemetry/graph UX. Full M1-M6 remains incomplete.
 Keep seed input excluded from findings/evidence, deterministic core independent

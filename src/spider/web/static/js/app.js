@@ -1120,6 +1120,8 @@ function renderTypeSpecificInsights(insights) {
   // E. PHONE INTELLIGENCE CARD
   if (targetType === "PHONE" && insights.phone_insights) {
     const ph = insights.phone_insights;
+    const digest = ph.public_candidate_digest || {};
+    const candidates = Array.isArray(digest.candidates) ? digest.candidates : [];
     const card = document.createElement("div");
     card.className = "intelligence-card";
     card.innerHTML = `
@@ -1137,6 +1139,12 @@ function renderTypeSpecificInsights(insights) {
           <span class="detail-val"><strong>${escapeHtml(ph.country || "Chưa rõ")}</strong></span>
         </div>
       </div>
+      <div style="margin-top:14px;">
+        <div class="detail-key">${currentLanguage === "vi" ? "Liên hệ công khai có bằng chứng" : "Publicly evidenced links"}:</div>
+        ${candidates.length ? `<ul class="detail-list">${candidates.map(item => `<li><strong>${escapeHtml(item.type)}:</strong> ${escapeHtml(item.value)}<br><small>${escapeHtml((item.rank_reasons || []).join(" · "))}</small></li>`).join("")}</ul>` :
+          `<em>${currentLanguage === "vi" ? "Chưa có liên hệ công khai được ghi nhận. Điều này không xác định hay phủ định chủ số." : "No public link has been recorded. This neither identifies nor rules out a subscriber."}</em>`}
+      </div>
+      ${(digest.contradictions || []).length ? `<p class="warning-text">${currentLanguage === "vi" ? "Có ứng viên công khai cạnh tranh; SPIDER không chọn một người làm chủ số." : "Competing public candidates exist; SPIDER does not select a subscriber."}</p>` : ""}
     `;
     container.appendChild(card);
   }
