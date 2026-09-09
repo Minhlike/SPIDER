@@ -29,7 +29,7 @@ async def investigation(tmp_path):
             observable=NormalizedObservable(type=T.ACCOUNT, value=f"{account}@fixture"),
             lineage=SourceLineage(case_id=case["id"], seed_id=seed["id"], run_id=run,
                 task_id=run, provider_id="fixture", provider_version="1",
-                parent_observable_type=T.USERNAME, parent_observable_value=name),
+                upstream_family="FIXTURE", parent_observable_type=T.USERNAME, parent_observable_value=name),
             raw_data={"sentinel": "never-export-raw"}))
 
     async def seed_rows(session):
@@ -104,7 +104,8 @@ async def test_scoped_run_comparison_telemetry_and_graph(investigation):
     row = next(item for item in measured["providers"] if item["provider"] == "fixture")
     assert row["samples"] == 2 and row["requests"] == 4
     assert row["p50_ms"] == 10 and row["p95_ms"] == 40
-    assert row["useful_evidence_per_request"] is None
+    assert row["useful_evidence_count"] == 2
+    assert row["useful_evidence_per_request"] == 0.5
     assert not measured["scheduler_uses_telemetry"]
     entities = await service.get_case_entities(case)
     foreign = next(e for e in entities if e["canonical_name"] == "foreign@fixture")

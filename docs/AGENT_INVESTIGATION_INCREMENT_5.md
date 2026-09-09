@@ -35,3 +35,13 @@ does not query a real person, and does not use credentials.
   not live session navigation or a one-versus-three-tab Internet benchmark.
 - M5 remains **PARTIAL**: there is no adopted phone collector or consented
   holdout; live precision, false attribution and freshness are not claimed.
+
+## M6 follow-up — FACT
+
+- Coverage now has a deterministic, non-dispatching next-best-action with a
+  recorded basis and cost class. It never chooses a provider or retries a
+  network request automatically.
+- Telemetry reports useful evidence count and useful-evidence/request only from
+  newly observed, sourced, scoped identities. Seed input, duplicate identities
+  and replay cache hits do not inflate the metric. Reliability remains explicitly
+  uncalibrated until a separately audited dataset exists.

@@ -222,6 +222,17 @@ async def telemetry(session, case_id, target_id):
             continue
         key = (task.provider_id, m.get("provider_version"), m.get("adapter_version"))
         groups.setdefault(key, []).append(task)
+    # A useful item is a newly observed typed identity in this scoped question
+    # with a recorded source family.  Seed input and duplicate identities are
+    # not useful evidence, and replay cache hits are not network requests.
+    first_seen = set()
+    useful_by_task = {}
+    for observation in sorted(view.evidence_observations, key=lambda item: (_stamp(item.created_at), item.id)):
+        key = (observation.observable_type, observation.namespace, observation.canonical_value)
+        sourced = bool(observation.upstream_family and observation.upstream_family != "UNKNOWN")
+        if sourced and key not in first_seen:
+            useful_by_task[observation.task_id] = useful_by_task.get(observation.task_id, 0) + 1
+        first_seen.add(key)
     output = []
     for key, rows in sorted(groups.items(), key=lambda item: str(item[0])):
         durations = sorted(float(t.metadata_json["duration_ms"]) for t in rows
@@ -232,10 +243,13 @@ async def telemetry(session, case_id, target_id):
                    if type(t.metadata_json.get("request_count")) is int
                    and t.metadata_json["request_count"] >= 0]
         requests = sum(counted) if len(counted) == len(rows) else None
+        useful = sum(useful_by_task.get(task.id, 0) for task in rows)
         output.append({"provider": key[0], "version": key[1], "adapter_version": key[2],
             "samples": len(rows), "latency_samples": len(durations),
             "p50_ms": durations[math.ceil(len(durations)*.5)-1] if durations else None,
             "p95_ms": durations[math.ceil(len(durations)*.95)-1] if durations else None,
             "requests": requests, "request_samples": len(counted), "noncompleted_rate": sum(t.status != "COMPLETED" for t in rows)/len(rows),
-            "useful_evidence_per_request": None, "reliability": "NOT_YET_CALIBRATED"})
+            "useful_evidence_count": useful,
+            "useful_evidence_per_request": useful / requests if requests else None,
+            "reliability": "NOT_YET_CALIBRATED"})
     return {"providers": output, "scheduler_uses_telemetry": False}

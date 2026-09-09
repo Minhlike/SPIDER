@@ -82,7 +82,7 @@ Gate hiện hành nằm trong `memory/NEXT.md`.
 - M3 PASS FIXTURE / NOT YET VERIFIED LIVE: parent permit trước I/O cho Maigret/Uncover, shared hard cap và attribution theo task; default 2 provider, giới hạn global/provider/origin, cancel/drain và ingest theo thứ tự. Pool theo credential scope, anonymous replay/coalescing trong run có TTL/no-store/giới hạn bộ nhớ. Benchmark 20 lượt cho 1/2/4 nguồn được ghi ở increment 3; không suy ra tốc độ Internet hoặc UI. MCP action queue vẫn serial.
 - M4 PARTIAL: browser có owned-tab limit, sanitized step trace qua MCP và resume explicit; chưa có live session navigation/pivot benchmark.
 - M5 PARTIAL: E.164/metadata offline, public-candidate digest, mirror-aware ranking và UI wording đã có. Chưa có collector ADOPT hoặc consented live accuracy benchmark. Số user cho phép chỉ đã dùng kiểm thử normalization, không ghi vào repo.
-- M6 PARTIAL: catalogue backend khóa lựa chọn UI chưa hỗ trợ; telemetry latency/request có sample counts. Reasoning/UX đầy đủ còn PLANNED.
+- M6 PARTIAL: catalogue backend khóa lựa chọn UI chưa hỗ trợ; telemetry có latency/request/useful-evidence sample counts và coverage có next-best-action deterministic, không dispatch. Reasoning/UX đầy đủ và calibrated reliability còn PLANNED.
 
 P0 tiếp theo: hoàn thiện hard bound/replay cho reachable branch trong M1, tránh Agent phải đọc lại hoặc nạp toàn bộ dữ liệu cũ. M3 đã thay post-dispatch receipts bằng parent reservation trước I/O; scope giới hạn là một service process. Giữ rõ PARTIAL khi request cap làm thiếu coverage; không hứa cùng graph khi các nguồn tranh ngân sách cuối. Không sửa API-key schema để giải quyết accounting.
 

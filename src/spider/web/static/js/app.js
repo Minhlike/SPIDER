@@ -746,6 +746,10 @@ async function loadCaseDetail(caseId) {
     renderReaderReport(insightsRes);
     const coverage = insightsRes.coverage_report || {};
     document.getElementById('coverage-explanation').textContent = `${currentLanguage === 'vi' ? 'Bước kiểm tra có kết quả xác định / Còn chưa rõ' : 'Steps with a determined outcome / Still unclear'}: ${coverage.decided || 0} / ${coverage.unknown || 0}`;
+    const recommendation = coverage.next_best_action || {};
+    if (recommendation.action) {
+      document.getElementById('coverage-explanation').textContent += ` · ${currentLanguage === 'vi' ? 'Bước tiếp theo' : 'Next step'}: ${friendlyLabel(recommendation.action)} (${friendlyLabel(recommendation.basis || 'NOT_YET_VERIFIED')})`;
+    }
     document.getElementById('coverage-steps').textContent = (coverage.steps || []).map(s => `${s.provider_id}: ${friendlyLabel(s.reason in (reportVocabulary[currentLanguage] || {}) ? s.reason : s.state)}`).join('\n');
     const analysis = insightsRes.evidence_analysis || {};
     document.getElementById('evidence-analysis').textContent = [

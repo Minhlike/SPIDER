@@ -39,6 +39,8 @@ hard-bound/replay reachable projection. M4 owned-tab workflow trace and M5 publi
 candidate digest are fixture-complete but live/holdout gates remain. Next M6
 evidence reasoning/telemetry/graph UX, then M4 live navigation/pivot and M5
 consented holdout.
+M6 now reports useful-evidence/request from sourced, new scoped observations and
+deterministic non-dispatching coverage advice; reliability remains uncalibrated.
 Then M4 owned browser workflow, M5 PHONE public candidates/consented holdout,
 M6 evidence reasoning/telemetry/graph UX. Full M1-M6 remains incomplete.
 Keep seed input excluded from findings/evidence, deterministic core independent

@@ -3,6 +3,20 @@ STATES = {"ATTEMPTED", "CONFIRMED", "NOT_FOUND", "RATE_LIMITED", "BLOCKED", "TIM
           "UNSUPPORTED", "SKIPPED_BUDGET", "BROKEN_PROVIDER"}
 
 
+def next_best_action(steps):
+    """Deterministic, non-dispatching advice derived from recorded outcomes."""
+    states = {step["state"] for step in steps}
+    if "RATE_LIMITED" in states:
+        return {"action": "WAIT_FOR_RATE_LIMIT", "basis": "RATE_LIMITED", "cost_estimate": "NO_NETWORK", "dispatch": False}
+    if "BLOCKED" in states:
+        return {"action": "REVIEW_ACCESS_OR_LOGIN", "basis": "BLOCKED", "cost_estimate": "USER_REVIEW", "dispatch": False}
+    if "SKIPPED_BUDGET" in states:
+        return {"action": "REVIEW_BUDGET_OR_COVERAGE", "basis": "SKIPPED_BUDGET", "cost_estimate": "NO_NETWORK", "dispatch": False}
+    if any(step["state"] in {"ATTEMPTED", "TIMEOUT", "BROKEN_PROVIDER"} for step in steps):
+        return {"action": "REVIEW_UNRESOLVED_OUTCOMES", "basis": "UNRESOLVED_SOURCE", "cost_estimate": "NO_NETWORK", "dispatch": False}
+    return {"action": "REVIEW_EVIDENCE", "basis": "DECIDED_COVERAGE", "cost_estimate": "NO_NETWORK", "dispatch": False}
+
+
 def collection_state(task, observation_count):
     metadata = task.metadata_json or {}
     reason = metadata.get("budget_reason")
@@ -40,8 +54,10 @@ def coverage_report(tasks, observations, expected):
     steps += [{"provider_id": pid, "task_id": None, "state": "SKIPPED_BUDGET", "reason": "Not dispatched in this run"}
               for pid in sorted(set(expected) - attempted)]
     decided = sum(s["state"] in {"CONFIRMED", "NOT_FOUND"} for s in steps)
+    recommendation = next_best_action(steps)
     return {"expected_sources": sorted(set(expected)), "steps": steps,
             "attempted": sum(s["state"] not in {"UNSUPPORTED", "SKIPPED_BUDGET", "BLOCKED"} for s in steps),
             "decided": decided, "unknown": len(steps) - decided,
             "decision_coverage": decided / len(steps) if steps else None,
-            "next_action": "REVIEW_UNKNOWN_REASONS" if len(steps) > decided else "REVIEW_EVIDENCE"}
+            "next_action": "REVIEW_UNKNOWN_REASONS" if len(steps) > decided else "REVIEW_EVIDENCE",
+            "next_best_action": recommendation}
