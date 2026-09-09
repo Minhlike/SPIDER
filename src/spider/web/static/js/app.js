@@ -823,6 +823,7 @@ function coverageDescription(source) {
       ACCESS_DENIED: currentLanguage === "vi" ? "Chưa kết luận do nguồn từ chối truy cập" : "Unknown because the source denied access",
       UPSTREAM_ERROR: currentLanguage === "vi" ? "Chưa kết luận do dịch vụ nguồn bị lỗi" : "Unknown because the upstream service failed",
       NETWORK_OR_RESPONSE_ERROR: currentLanguage === "vi" ? "Chưa kết luận do lỗi mạng hoặc phản hồi không hợp lệ" : "Unknown because the network or response failed",
+      BROWSER_NETWORK_UNAVAILABLE: currentLanguage === "vi" ? "Cốc Cốc không truy cập được Internet; chưa kiểm tra website nào" : "Cốc Cốc could not reach the Internet; no websites were checked",
       CT_LOG_UNAVAILABLE: currentLanguage === "vi" ? "Nhật ký chứng chỉ chưa trả lời được; chưa thể kết luận về tên miền phụ" : "The certificate log did not respond; subdomains remain unknown",
       DNS_PARTIAL_RESPONSE: currentLanguage === "vi" ? "Một số loại bản ghi DNS chưa trả lời được; dữ liệu đang có vẫn được giữ" : "Some DNS record types did not respond; available records were retained",
       UNMETERED_PROVIDER: currentLanguage === "vi" ? "Tạm dừng để không chạy nguồn không đếm được request; đây không phải kết quả rỗng" : "Paused because requests cannot be counted; this is not a negative result",
@@ -835,7 +836,7 @@ function coverageDescription(source) {
     const outcome = friendlyLabel(code);
     return `${name}: ${outcome}`;
   }).join(" · ");
-  const summary = `${c.checked || 0}/${c.selected || 0} website đã xử lý · ${c.found || 0} ứng viên tài khoản · ${c.not_found || 0} không thấy · ${c.unknown || 0} chưa xác định · ${c.invalid || 0} username không hợp lệ · ${c.unprocessed || 0} chưa xử lý · ${c.non_unique_detections || 0} kết quả không phân biệt được với đối chứng · ${(c.controls_pending || 0) + (c.controls_unknown || 0)} đối chứng chưa kết luận`;
+  const summary = `${c.checked || 0}/${c.selected || 0} website đã thử kiểm tra · ${c.found || 0} ứng viên tài khoản · ${c.not_found || 0} không thấy · ${c.unknown || 0} chưa xác định · ${c.invalid || 0} username không hợp lệ · ${c.unprocessed || 0} chưa xử lý · ${c.non_unique_detections || 0} kết quả không phân biệt được với đối chứng · ${(c.controls_pending || 0) + (c.controls_unknown || 0)} đối chứng chưa kết luận`;
   return priority ? `${priority} · ${summary}` : summary;
 }
 

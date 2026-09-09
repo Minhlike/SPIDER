@@ -36,6 +36,7 @@ VOCABULARY = {
     "LOGIN_REQUIRED": ("Cần đăng nhập để đọc tiếp", "Sign-in required to continue"),
     "TIMEOUT": ("Nguồn chưa trả lời trong thời gian cho phép", "The source did not respond in time"),
     "NETWORK_ERROR": ("Chưa kết nối được tới nguồn", "Could not connect to the source"),
+    "BROWSER_NETWORK_UNAVAILABLE": ("Phiên Cốc Cốc không truy cập được Internet; chưa kiểm tra bất kỳ website nào", "The Cốc Cốc session could not reach the Internet; no websites were checked"),
     "UNSUPPORTED": ("Nguồn này chưa hỗ trợ cách kiểm tra cần thiết", "This source does not support the required check"),
     "BROKEN_PROVIDER": ("Công cụ thu thập chưa hoạt động đúng", "The collection tool did not work correctly"),
     "SKIPPED_BUDGET": ("Chưa kiểm tra tiếp trong lượt này", "Not checked further in this run"),

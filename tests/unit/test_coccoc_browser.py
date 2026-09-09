@@ -116,3 +116,25 @@ async def test_execute_reports_fixture_candidates_without_opening_browser(monkey
     assert workflow["automatic_replay"] is False
     assert workflow["steps"][0]["content_sha256"]
     assert len(result.observations) == 2
+
+
+@pytest.mark.asyncio
+async def test_execute_reports_browser_network_failure_without_fake_site_coverage(monkeypatch):
+    adapter = CocCocBrowserAdapter()
+
+    async def collect(_target, _options):
+        return [], "BROWSER_NETWORK_UNAVAILABLE"
+
+    monkeypatch.setattr(adapter, "_collect", collect)
+    from spider.models.observable import NormalizedObservable
+    target = NormalizedObservable(type=ObservableType.USERNAME, value="public-handle")
+    lineage = SourceLineage(case_id="c", run_id="r", task_id="t",
+        provider_id="coccoc_browser", provider_version="local-coccoc",
+        parent_observable_value="public-handle", parent_observable_type=ObservableType.USERNAME)
+
+    result = await adapter.execute(target, lineage)
+
+    assert result.outcome == "FAILED"
+    assert result.metadata["coverage"]["checked"] == 0
+    assert result.metadata["coverage"]["unprocessed"] == 11
+    assert "Không kết luận về username" in result.error_message

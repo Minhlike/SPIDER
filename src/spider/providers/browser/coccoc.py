@@ -37,6 +37,10 @@ NEGATIVE_MARKERS = (
 LOGIN_MARKERS = ("log in", "login", "đăng nhập")
 RATE_LIMIT_MARKERS = ("too many requests", "rate limit", "try again later", "thử lại sau")
 CHALLENGE_MARKERS = ("captcha", "verify you are human", "security check", "kiểm tra bảo mật")
+FATAL_BROWSER_REASONS = frozenset({
+    "PROFILE_IN_USE", "MISSING_RUNTIME", "BROWSER_CLOSED", "BROWSER_START_FAILED",
+    "BROWSER_NETWORK_UNAVAILABLE",
+})
 
 
 def coccoc_installation():
@@ -250,6 +254,14 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 rows = []
                 timeout_ms = int(min(15, max(3, options.get("timeout_seconds", 180) / 12)) * 1000)
 
+                # Do one identifier-free navigation before attempting the eleven
+                # platform checks.  A broken browser network path previously
+                # became eleven misleading per-site errors and consumed roughly
+                # ninety seconds.  This preflight is metered by the same route
+                # interceptor and is recorded as normal browser egress.
+                if not await self._network_preflight(context, timeout_ms):
+                    return [], "REQUEST_LIMIT" if exhausted else "BROWSER_NETWORK_UNAVAILABLE"
+
                 if target.type == ObservableType.USERNAME:
                     username = target.canonical_value.lstrip("@")
                     parallel_tabs = min(3, max(1, int(options.get("browser_parallel_tabs", 3))))
@@ -293,6 +305,28 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 if recorder:
                     for receipt in list(receipts.values()):
                         await recorder.finish(receipt, "NO_RESPONSE")
+
+    async def _network_preflight(self, context, timeout_ms):
+        """Check that the launched browser can reach a neutral public page.
+
+        No target value is included in this request.  Detailed Playwright
+        errors are intentionally discarded because they may contain local
+        profile paths or browser configuration.
+        """
+        page = None
+        try:
+            page = await context.new_page()
+            response = await page.goto("https://www.bing.com/", wait_until="domcontentloaded",
+                                       timeout=timeout_ms)
+            return bool(response and 200 <= response.status < 500)
+        except Exception:
+            return False
+        finally:
+            if page is not None:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
 
     async def _collect_direct_sources(self, context, username, timeout_ms,
                                       is_exhausted, parallel_tabs=3):
@@ -440,6 +474,7 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                         "outcome": row.get("state", "UNKNOWN"),
                         "reason": row.get("reason", "NOT_YET_VERIFIED")
                     } for row in rows}}
+        fatal_browser_failure = reason in FATAL_BROWSER_REASONS
         complete = reason is None and len(rows) == selected and undecided == 0
         if reason is None and not complete:
             reason = "UNRESOLVED_SOURCES"
@@ -447,11 +482,12 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                   "MISSING_RUNTIME": "Cốc Cốc runtime unavailable",
                   "BROWSER_CLOSED": "Cốc Cốc đã đóng trước khi hoàn tất kiểm tra.",
                   "BROWSER_START_FAILED": "Không thể khởi động phiên Cốc Cốc cho lượt kiểm tra này.",
+                  "BROWSER_NETWORK_UNAVAILABLE": "Phiên Cốc Cốc không truy cập được trang kiểm tra công khai. Không kết luận về username; hãy kiểm tra kết nối của Cốc Cốc rồi chạy lại.",
                   "REQUEST_LIMIT": "Browser request budget exhausted",
                   "UNRESOLVED_SOURCES": "Some browser sources could not be decided automatically"}
         return ProviderExecutionResult(
             raw_content=raw, observations=observations, exit_code=0 if complete else 1,
-            outcome="COMPLETED" if complete else "PARTIAL",
+            outcome="COMPLETED" if complete else "FAILED" if fatal_browser_failure else "PARTIAL",
             error_message=None if complete else errors.get(reason, "Browser discovery incomplete"),
             metadata={"coverage": coverage, "budget_reason": reason,
                       "browser_workflow": {"version": "1", "owned_tabs_max": 3,
