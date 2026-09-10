@@ -4,6 +4,7 @@
 let currentView = "dashboard";
 let currentCaseTab = "summary";
 let currentCaseId = null;
+let currentRunId = null;
 let currentLanguage = localStorage.getItem("spider_lang") || "vi";
 let currentTheme = localStorage.getItem("spider_theme") || "light";
 let cyInstance = null;
@@ -57,6 +58,7 @@ const i18n = {
     btn_delete: "Xóa vụ án",
     btn_save: "Lưu cài đặt",
     btn_shutdown: "Tắt SPIDER",
+    btn_stop_run: "Dừng lượt điều tra",
     tab_summary: "Tổng quan",
     tab_live: "Tiến trình",
     tab_findings: "Phát hiện",
@@ -145,6 +147,7 @@ const i18n = {
     btn_delete: "Delete Case",
     btn_save: "Save Settings",
     btn_shutdown: "Stop SPIDER",
+    btn_stop_run: "Stop investigation run",
     tab_summary: "Summary",
     tab_live: "Live Progress",
     tab_findings: "Findings",
@@ -261,6 +264,37 @@ function showNotification(msg) {
   }
 }
 
+function updateRunControls(status) {
+  const button = document.getElementById("btn-stop-run");
+  if (!button) return;
+  button.style.display = currentRunId && ["QUEUED", "RUNNING", "PENDING"].includes(status)
+    ? "inline-flex" : "none";
+  button.disabled = false;
+}
+
+async function stopCurrentRun() {
+  if (!currentRunId) return;
+  const button = document.getElementById("btn-stop-run");
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch(`/api/runs/${encodeURIComponent(currentRunId)}/stop`, {
+      method: "POST"
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail?.message || "Stop failed");
+    updateRunControls(result.status);
+    showNotification(currentLanguage === "vi"
+      ? "Đã dừng lượt điều tra; bằng chứng đã ghi nhận vẫn được giữ."
+      : "Investigation stopped; committed evidence was retained.");
+    if (currentCaseId) await loadCaseDetail(currentCaseId);
+  } catch (_) {
+    if (button) button.disabled = false;
+    showNotification(currentLanguage === "vi"
+      ? "Không dừng được lượt này; trạng thái chưa được thay đổi."
+      : "This run could not be stopped; its state was not changed.");
+  }
+}
+
 // --- 2. WebSocket Realtime Engine ---
 function initWebSocket() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -291,6 +325,7 @@ function handleRealtimeEvent(eventType, payload) {
     showNotification(`Bắt đầu điều tra: ${payload.target || "mục tiêu"}`);
     if (currentView === "dashboard") loadDashboard();
     if (currentCaseId === payload.case_id) {
+      currentRunId = payload.run_id || currentRunId;
       document.getElementById("tab-live-badge").style.display = "inline-block";
       const statusBadge = document.getElementById("case-status-badge");
       if (statusBadge) {
@@ -314,6 +349,7 @@ function handleRealtimeEvent(eventType, payload) {
         statusBadge.className = `badge badge-${finalStatus.toLowerCase()}`;
         statusBadge.textContent = finalStatus;
       }
+      updateRunControls(finalStatus);
       loadCaseDetail(currentCaseId);
     }
   }
@@ -650,6 +686,7 @@ async function startInvestigation(browserAssisted = "auto") {
 
     const data = await res.json();
     currentCaseId = data.case_id;
+    currentRunId = data.run_id;
     document.getElementById("case-status-badge").textContent = data.status;
 
     // Switch directly to Case Detail View on Live Progress Tab
@@ -694,6 +731,7 @@ function openCase(caseId) {
   document.getElementById('insight-target').innerHTML = '<option value="">Chọn mục tiêu / Select target</option>';
   currentView = "case_detail";
   currentCaseId = caseId;
+  currentRunId = null;
   document.querySelectorAll(".view-panel").forEach(el => el.classList.remove("active"));
   document.querySelectorAll(".nav-item").forEach(el => el.classList.remove("active"));
   document.getElementById("view-case_detail").classList.add("active");
@@ -771,9 +809,11 @@ async function loadCaseDetail(caseId) {
     // Header Info
     document.getElementById("case-title").textContent = caseRes.name || "Cuộc điều tra";
     const status = insightsRes.status || caseRes.status || "PENDING";
+    currentRunId = insightsRes.run_id || currentRunId;
     const statusBadge = document.getElementById("case-status-badge");
     statusBadge.textContent = friendlyLabel(status);
     statusBadge.className = `badge badge-${status.toLowerCase()}`;
+    updateRunControls(status);
 
     const created = caseRes.created_at ? new Date(caseRes.created_at).toLocaleString() : "-";
     document.getElementById("case-meta").innerHTML = `

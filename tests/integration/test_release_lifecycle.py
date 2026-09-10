@@ -7,7 +7,9 @@ from fastapi.testclient import TestClient
 
 from spider.service.service import SpiderService
 from spider.storage.schema import ProviderRunRecord
-from spider.web.api.investigate import StartInvestigationRequest, start_investigation
+from spider.web.api.investigate import (
+    StartInvestigationRequest, start_investigation, stop_investigation_run,
+)
 from spider.web.app import create_app
 
 
@@ -49,6 +51,35 @@ async def test_background_failure_persists_terminal_status(tmp_path, monkeypatch
         async with service.db_manager.session_factory() as session:
             run = await session.get(ProviderRunRecord, result["run_id"])
             assert run.status == "FAILED"
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_user_can_stop_one_run_without_stopping_service(tmp_path, monkeypatch):
+    service = SpiderService(db_path=str(tmp_path / "stop-one.db"), artifacts_dir=str(tmp_path / "runs"))
+    started = asyncio.Event()
+
+    async def blocked(**kwargs):
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(service, "investigate", blocked)
+    await service.start()
+    try:
+        result = await start_investigation(
+            StartInvestigationRequest(target="example.test", target_type="DOMAIN"),
+            BackgroundTasks(), service)
+        await asyncio.wait_for(started.wait(), 3)
+
+        stopped = await stop_investigation_run(result["run_id"], service)
+
+        assert stopped == {"run_id": result["run_id"], "case_id": result["case_id"],
+                           "status": "CANCELLED"}
+        assert service.is_running is True
+        assert not service.background_tasks
+        async with service.db_manager.session_factory() as session:
+            assert (await session.get(ProviderRunRecord, result["run_id"])).status == "CANCELLED"
     finally:
         await service.stop()
 

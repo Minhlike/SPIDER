@@ -180,6 +180,18 @@ def test_unlimited_time_and_requests_are_sent_as_null(offline_page):
     assert not errors
 
 
+def test_per_run_stop_control_is_visible_only_for_active_run(offline_page):
+    page, _, errors = offline_page
+    page.evaluate("""() => {
+      currentRunId = 'fixture-run';
+      updateRunControls('RUNNING');
+    }""")
+    assert page.locator("#btn-stop-run").evaluate("el => el.style.display") == "inline-flex"
+    page.evaluate("updateRunControls('CANCELLED')")
+    assert page.locator("#btn-stop-run").evaluate("el => el.style.display") == "none"
+    assert not errors
+
+
 def test_domain_report_renders_only_collected_security_and_service_facts(offline_page):
     page, _, errors = offline_page
     page.evaluate("""() => renderTypeSpecificInsights({

@@ -12,8 +12,8 @@ Current verified baseline before this work: `2ccf544116f7c30b15345a83c8cd4eb8d0e
 Current slice:
 
 - audit and plan consolidation complete;
-- nullable total time/request budgets and P0-A browser correctness implemented;
-  full suite 471 tests PASS in 219.79 seconds on 10/09/2026;
+- nullable total time/request budgets, P0-A browser correctness and exact per-run
+  Stop implemented; full suite 473 tests PASS in 243.82 seconds on 10/09/2026;
 - provider quotas, rate limits, per-action timeout, concurrency, dedup and policy
   remain enforced in unlimited mode;
 - final diff/document review completed; the suite included its existing public/
@@ -23,7 +23,9 @@ Current slice:
   routes, access-state precedence, query-echo rejection, separate search leads
   and per-origin failures. Live Cốc Cốc version/session reliability remains
   NOT YET VERIFIED.
-- Next: finish Phase P0-B durable frontier/checkpoint/resume and per-run Stop.
+- Per-run Stop marks only the selected run CANCELLED, retains committed evidence
+  and leaves the SPIDER service running; focused integration/UI/E2E gate 25 PASS.
+- Next: finish Phase P0-B durable frontier/checkpoint/resume.
 
 Do not claim manual-investigation parity, live browser reliability, provider
 adoption or the full reasoning engine complete without the master plan gates.

@@ -68,6 +68,7 @@ async def _run_investigation_background(service: SpiderService, case_id: str, ru
         })
     except asyncio.CancelledError:
         await _finish_interrupted_run(service, run_id, "CANCELLED")
+        await _broadcast_cancelled_run(service, case_id, run_id)
         raise
     except Exception:
         await _finish_interrupted_run(service, run_id, "FAILED")
@@ -84,6 +85,50 @@ async def _finish_interrupted_run(service, run_id, status):
             run.status = status
             run.completed_at = utc_now()
     await service.db_writer.submit(update)
+
+
+async def _broadcast_cancelled_run(service: SpiderService, case_id: str, run_id: str) -> None:
+    entities = await service.get_case_entities(case_id)
+    assertions = await service.get_case_assertions(case_id)
+    await event_broker.broadcast("RUN_COMPLETED", {
+        "case_id": case_id,
+        "run_result": {"run_id": run_id, "status": "CANCELLED"},
+        "entities_count": len(entities),
+        "assertions_count": len(assertions),
+    })
+
+
+@router.post("/runs/{run_id}/stop", response_model=Dict[str, Any])
+async def stop_investigation_run(run_id: str, service: SpiderService = Depends(get_srv)):
+    async with service.db_manager.session_factory() as session:
+        run = await session.get(ProviderRunRecord, run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail={
+                "code": "run_not_found", "message": "Investigation run was not found",
+            })
+        case_id, status = run.case_id, run.status
+    if status in {"COMPLETED", "PARTIAL", "FAILED", "CANCELLED"}:
+        return {"run_id": run_id, "case_id": case_id, "status": status}
+
+    task = next((item for item in service.background_tasks
+                 if item.get_name() == f"spider-run:{run_id}"), None)
+    if task is None:
+        raise HTTPException(status_code=409, detail={
+            "code": "run_not_owned_by_process",
+            "message": "The run is not attached to this SPIDER process; it was not stopped",
+        })
+    if not task.cancelling():
+        task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    async with service.db_manager.session_factory() as session:
+        run = await session.get(ProviderRunRecord, run_id)
+        status = run.status if run else "CANCELLED"
+    if status not in {"CANCELLED", "COMPLETED", "PARTIAL", "FAILED"}:
+        await _finish_interrupted_run(service, run_id, "CANCELLED")
+        status = "CANCELLED"
+        await _broadcast_cancelled_run(service, case_id, run_id)
+    return {"run_id": run_id, "case_id": case_id, "status": status}
 
 @router.post("/investigate", response_model=Dict[str, Any])
 async def start_investigation(
