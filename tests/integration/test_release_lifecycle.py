@@ -2,13 +2,16 @@ import asyncio
 import sqlite3
 
 import pytest
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
 from fastapi.testclient import TestClient
 
 from spider.service.service import SpiderService
+from spider.mcp.server import SpiderMCPServer
+from spider.models.enums import ObservableType
 from spider.storage.schema import ProviderRunRecord
 from spider.web.api.investigate import (
-    StartInvestigationRequest, start_investigation, stop_investigation_run,
+    ResumeInvestigationRequest, StartInvestigationRequest,
+    resume_investigation_run, start_investigation, stop_investigation_run,
 )
 from spider.web.app import create_app
 
@@ -80,6 +83,102 @@ async def test_user_can_stop_one_run_without_stopping_service(tmp_path, monkeypa
         assert not service.background_tasks
         async with service.db_manager.session_factory() as session:
             assert (await session.get(ProviderRunRecord, result["run_id"])).status == "CANCELLED"
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_user_can_resume_a_durable_checkpoint_as_a_new_run(tmp_path, monkeypatch):
+    service = SpiderService(db_path=str(tmp_path / "resume-run.db"), artifacts_dir=str(tmp_path / "runs"))
+    seen = {}
+
+    async def completed(**kwargs):
+        seen.update(kwargs)
+        return {"run_id": kwargs["run_id"], "status": "COMPLETED"}
+
+    monkeypatch.setattr(service, "investigate", completed)
+    await service.start()
+    try:
+        old_id = "old-run"
+        case_id = (await service.create_case("Resume API fixture"))["id"]
+        async def seed(session):
+            session.add(ProviderRunRecord(id=old_id, case_id=case_id,
+                status="CANCELLED", metadata_json={
+                "budget_limits": {"max_depth": 0, "max_entities": 20, "max_requests": None,
+                    "max_runtime_seconds": None, "max_provider_calls": None},
+                "investigation_mode": "INFRASTRUCTURE", "browser_assisted": False,
+                "checkpoint": {"version": 1, "frontier": [{
+                    "observable_type": "DOMAIN", "namespace": "", "value": "example.test",
+                    "canonical_value": "example.test", "seed_id": "seed", "depth": 0}]}}))
+        await service.db_writer.submit(seed)
+
+        result = await resume_investigation_run(old_id, ResumeInvestigationRequest(), service)
+        await asyncio.gather(*list(service.background_tasks))
+
+        assert result["resumed_from_run_id"] == old_id and result["run_id"] != old_id
+        assert seen["resume_from_run_id"] == old_id
+        assert seen["budget"].max_requests is None and seen["budget"].max_runtime_seconds is None
+        with pytest.raises(HTTPException) as duplicate:
+            await resume_investigation_run(old_id, ResumeInvestigationRequest(), service)
+        assert duplicate.value.status_code == 409
+        assert duplicate.value.detail["code"] == "run_already_resumed"
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_restart_marks_orphaned_checkpoint_as_resumable_cancelled(tmp_path):
+    database = tmp_path / "crash-checkpoint.db"
+    artifacts = tmp_path / "runs"
+    first = SpiderService(db_path=str(database), artifacts_dir=str(artifacts))
+    await first.start()
+    case_id = (await first.create_case("Crash recovery fixture"))["id"]
+    async def seed(session):
+        session.add(ProviderRunRecord(id="orphaned-run", case_id=case_id, status="RUNNING",
+            metadata_json={"checkpoint": {"version": 1, "frontier": [{
+                "observable_type": "DOMAIN", "namespace": "", "value": "example.test",
+                "canonical_value": "example.test", "seed_id": "seed", "depth": 0}]}}))
+    await first.db_writer.submit(seed)
+    await first.stop()
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE provider_runs SET status='RUNNING', completed_at=NULL WHERE id='orphaned-run'")
+
+    restarted = SpiderService(db_path=str(database), artifacts_dir=str(artifacts))
+    await restarted.start()
+    try:
+        async with restarted.db_manager.session_factory() as session:
+            recovered = await session.get(ProviderRunRecord, "orphaned-run")
+            assert recovered.status == "CANCELLED" and recovered.completed_at is not None
+    finally:
+        await restarted.stop()
+
+
+@pytest.mark.asyncio
+async def test_mcp_resume_is_restricted_to_the_checkpoint_seed(tmp_path, monkeypatch):
+    service = SpiderService(db_path=str(tmp_path / "mcp-resume.db"), artifacts_dir=str(tmp_path / "runs"))
+    async def completed(**kwargs):
+        return {"run_id": kwargs["run_id"], "status": "COMPLETED"}
+    monkeypatch.setattr(service, "investigate", completed)
+    await service.start()
+    try:
+        case_id = (await service.create_case("Scoped resume fixture"))["id"]
+        target_id = (await service.add_target(case_id, "example.test", ObservableType.DOMAIN))["id"]
+        async def seed(session):
+            session.add(ProviderRunRecord(id="scoped-old", case_id=case_id, status="CANCELLED",
+                metadata_json={"budget_limits": {"max_depth": 0}, "checkpoint": {
+                    "version": 1, "frontier": [{"observable_type": "DOMAIN", "namespace": "",
+                        "value": "example.test", "canonical_value": "example.test",
+                        "seed_id": target_id, "depth": 0}]}}))
+        await service.db_writer.submit(seed)
+        server = SpiderMCPServer(service)
+
+        rejected = await server.handle_tool_call("resume_run", {
+            "case_id": case_id, "target_id": "different-seed", "run_id": "scoped-old"})
+        assert rejected["error"]["code"] == "CHECKPOINT_OUTSIDE_TARGET"
+        resumed = await server.handle_tool_call("resume_run", {
+            "case_id": case_id, "target_id": target_id, "run_id": "scoped-old"})
+        assert resumed["status"] == "QUEUED" and resumed["automatic_replay"] is False
+        await asyncio.gather(*list(service.background_tasks))
     finally:
         await service.stop()
 

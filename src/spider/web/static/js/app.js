@@ -59,6 +59,7 @@ const i18n = {
     btn_save: "Lưu cài đặt",
     btn_shutdown: "Tắt SPIDER",
     btn_stop_run: "Dừng lượt điều tra",
+    btn_resume_run: "Tiếp tục lượt điều tra",
     tab_summary: "Tổng quan",
     tab_live: "Tiến trình",
     tab_findings: "Phát hiện",
@@ -148,6 +149,7 @@ const i18n = {
     btn_save: "Save Settings",
     btn_shutdown: "Stop SPIDER",
     btn_stop_run: "Stop investigation run",
+    btn_resume_run: "Resume investigation run",
     tab_summary: "Summary",
     tab_live: "Live Progress",
     tab_findings: "Findings",
@@ -264,12 +266,15 @@ function showNotification(msg) {
   }
 }
 
-function updateRunControls(status) {
+function updateRunControls(status, resumable = false) {
   const button = document.getElementById("btn-stop-run");
-  if (!button) return;
+  const resume = document.getElementById("btn-resume-run");
+  if (!button || !resume) return;
   button.style.display = currentRunId && ["QUEUED", "RUNNING", "PENDING"].includes(status)
     ? "inline-flex" : "none";
   button.disabled = false;
+  resume.style.display = currentRunId && resumable ? "inline-flex" : "none";
+  resume.disabled = false;
 }
 
 async function stopCurrentRun() {
@@ -292,6 +297,31 @@ async function stopCurrentRun() {
     showNotification(currentLanguage === "vi"
       ? "Không dừng được lượt này; trạng thái chưa được thay đổi."
       : "This run could not be stopped; its state was not changed.");
+  }
+}
+
+async function resumeCurrentRun() {
+  if (!currentRunId) return;
+  const priorRunId = currentRunId;
+  const button = document.getElementById("btn-resume-run");
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch(`/api/runs/${encodeURIComponent(priorRunId)}/resume`, {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail?.message || "Resume failed");
+    currentRunId = result.run_id;
+    updateRunControls(result.status, false);
+    showNotification(currentLanguage === "vi"
+      ? "Đã tiếp tục từ checkpoint; công việc đã hoàn tất sẽ không tự chạy lại."
+      : "Resumed from checkpoint; completed work will not be replayed automatically.");
+    if (currentCaseId) await loadCaseDetail(currentCaseId);
+  } catch (_) {
+    if (button) button.disabled = false;
+    showNotification(currentLanguage === "vi"
+      ? "Checkpoint này không thể tiếp tục."
+      : "This checkpoint could not be resumed.");
   }
 }
 
@@ -813,7 +843,7 @@ async function loadCaseDetail(caseId) {
     const statusBadge = document.getElementById("case-status-badge");
     statusBadge.textContent = friendlyLabel(status);
     statusBadge.className = `badge badge-${status.toLowerCase()}`;
-    updateRunControls(status);
+    updateRunControls(status, insightsRes.resumable === true);
 
     const created = caseRes.created_at ? new Date(caseRes.created_at).toLocaleString() : "-";
     document.getElementById("case-meta").innerHTML = `

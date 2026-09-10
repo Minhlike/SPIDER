@@ -32,7 +32,7 @@ async def test_official_client_initialize_discover_and_call(tmp_path):
             names = {t.name for t in tools.tools}
             assert {"case_digest", "case_delta", "get_evidence", "graph_neighbors", "compare_runs",
                     "run_coverage", "browser_trace", "phone_candidate_digest", "telemetry", "input_catalogue", "run_capability",
-                    "action_status", "cancel_run", "annotate_evidence", "list_cases", "list_targets"} <= names
+                    "action_status", "cancel_run", "resume_run", "annotate_evidence", "list_cases", "list_targets"} <= names
             call = await session.call_tool("input_catalogue", {})
             assert not call.isError
             missing = await session.call_tool("case_digest", {

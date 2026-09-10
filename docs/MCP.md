@@ -45,6 +45,7 @@ controlled benchmark and limits; these measurements do not verify live sources.
 | `run_capability` | Queue one evidence-linked transform with an idempotent receipt |
 | `action_status` | Read scoped receipt, last persisted counts and attached run state |
 | `cancel_run` | Cancel an attached capability action owned by this service session |
+| `resume_run` | Explicitly continue one target-scoped durable full-run checkpoint |
 | `annotate_evidence` | Idempotent scoped evidence review; never overwrites source evidence |
 
 New tools return `schema_version: "2"`; errors have a stable code. The SDK
@@ -94,6 +95,15 @@ detached work reports uncertainty and cannot be killed from this session. A clea
 session shutdown cancels its owned tasks and drains writes. Already committed
 evidence and graph changes share an ingest transaction and survive cancellation.
 This does not promise preservation of a provider's unsaved in-memory results.
+
+`resume_run` is an explicit mutation for a full investigation checkpoint. The
+checkpoint must belong to exactly the requested case and target; multi-target or
+foreign checkpoints are rejected. A continuation is a new linked run and a source
+checkpoint can create only one child, so retries do not double-dispatch. Terminal
+and uncertain task receipts from the source are not replayed automatically. A
+finite budget grants one new segment while accounting remains cumulative;
+unlimited request/time settings remain unlimited. A live provider/browser crash
+recovery benchmark is still not verified.
 
 `annotate_evidence` takes a UUID, case/target/question, claim and observation IDs,
 role, dependency and optional origin ID. Dependency assertions require an origin

@@ -91,6 +91,15 @@ async def test_concurrent_http_requests_cannot_overspend():
     assert sum(isinstance(r, RequestBudgetExceeded) for r in results) == 7
 
 
+def test_unlimited_request_accounting_keeps_exact_total_with_bounded_samples():
+    ledger, budget = BudgetLedger(), ExecutionBudget(max_requests=None)
+    for _ in range(1003):
+        ledger.request(budget, "fixture")
+    assert ledger.requests_count == 1003
+    assert len(ledger.request_events) == 1000
+    assert ledger.request_events_dropped_count == 3
+
+
 @pytest.mark.asyncio
 async def test_explicit_replay_cache_does_not_consume_network_budget():
     ledger, budget, dispatched = BudgetLedger(), ExecutionBudget(max_requests=1), []
@@ -150,6 +159,53 @@ async def test_entity_ingest_cap_persists_and_rebuild_cannot_bypass(tmp_path):
             assert saved.metadata_json["budget_ledger"] == run["budget_ledger"]
         rebuilt = await service.rebuild_case(case["id"])
         assert rebuilt["entities_rebuilt"] == 3
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_partial_run_resumes_durable_frontier_without_replaying_completed_task(tmp_path):
+    calls = []
+
+    class First(FakeProviderA):
+        def provider_id(self):
+            return "first"
+
+        async def execute(self, *args, **kwargs):
+            calls.append("first")
+            return await super().execute(*args, **kwargs)
+
+    class Second(FakeProviderA):
+        def provider_id(self):
+            return "second"
+
+        async def execute(self, *args, **kwargs):
+            calls.append("second")
+            return await super().execute(*args, **kwargs)
+
+    service = SpiderService(db_path=str(tmp_path / "resume.db"), artifacts_dir=str(tmp_path / "runs"))
+    service.provider_manager.register_adapter(First())
+    service.provider_manager.register_adapter(Second())
+    service.capability_registry.get_capability("SUBDOMAIN_DISCOVERY").default_providers = ["first", "second"]
+    await service.start()
+    try:
+        case = await service.create_case("Durable resume fixture")
+        await service.add_target(case["id"], "example.test", T.DOMAIN)
+        first = await service.investigate(case["id"], budget=ExecutionBudget(
+            max_depth=0, max_entities=20, max_provider_calls=1, max_parallel_tasks=1))
+        assert first["status"] == "PARTIAL" and calls == ["first"]
+
+        resumed = await service.investigate(case["id"], resume_from_run_id=first["run_id"],
+            budget=ExecutionBudget(max_depth=0, max_entities=20,
+                                   max_provider_calls=2, max_parallel_tasks=1))
+        assert resumed["status"] == "COMPLETED"
+        assert resumed["tasks_executed"] == 1
+        assert calls == ["first", "second"]
+        async with service.db_manager.session_factory() as session:
+            saved = await session.get(ProviderRunRecord, resumed["run_id"])
+            assert saved.metadata_json["resumed_from_run_id"] == first["run_id"]
+            assert saved.metadata_json["checkpoint"]["state"] == "EXHAUSTED"
+            assert saved.metadata_json["checkpoint"]["frontier"] == []
     finally:
         await service.stop()
 

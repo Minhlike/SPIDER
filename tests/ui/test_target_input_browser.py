@@ -189,6 +189,9 @@ def test_per_run_stop_control_is_visible_only_for_active_run(offline_page):
     assert page.locator("#btn-stop-run").evaluate("el => el.style.display") == "inline-flex"
     page.evaluate("updateRunControls('CANCELLED')")
     assert page.locator("#btn-stop-run").evaluate("el => el.style.display") == "none"
+    assert page.locator("#btn-resume-run").evaluate("el => el.style.display") == "none"
+    page.evaluate("updateRunControls('CANCELLED', true)")
+    assert page.locator("#btn-resume-run").evaluate("el => el.style.display") == "inline-flex"
     assert not errors
 
 

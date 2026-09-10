@@ -29,6 +29,7 @@ class BudgetLedger(SpiderBaseModel):
     cache_hits_count: int = 0
     entities_rejected_count: int = 0
     request_events: list[dict] = Field(default_factory=list)
+    request_events_dropped_count: int = 0
     _entities: set = PrivateAttr(default_factory=set)
     _task_request_counts: dict = PrivateAttr(default_factory=dict)
     _task_cache_counts: dict = PrivateAttr(default_factory=dict)
@@ -46,7 +47,10 @@ class BudgetLedger(SpiderBaseModel):
             if task_id is not None:
                 event["task_id"] = task_id
                 self._task_request_counts[task_id] = self._task_request_counts.get(task_id, 0) + 1
-            self.request_events.append(event)
+            if len(self.request_events) < 1000:
+                self.request_events.append(event)
+            else:
+                self.request_events_dropped_count += 1
 
     @property
     def attributed_requests_count(self):
@@ -86,6 +90,14 @@ class BudgetLedger(SpiderBaseModel):
     def cache_count_for_task(self, task_id):
         with self._lock:
             return self._task_cache_counts.get(task_id, 0)
+
+    def admitted_entity_keys(self):
+        with self._lock:
+            return set(self._entities)
+
+    def restore_admitted_entity_keys(self, identities):
+        with self._lock:
+            self._entities = {tuple(identity) for identity in identities}
 
     def is_exhausted(self, budget: ExecutionBudget, current_depth: int = 0) -> bool:
         if self.entities_count >= budget.max_entities:

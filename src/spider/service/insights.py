@@ -537,6 +537,8 @@ class CaseInsightsBuilder:
             "target_type": target_type,
             "status": latest_run.status if latest_run else "NOT_STARTED",
             "run_id": latest_run.id if latest_run else None,
+            "resumable": bool(latest_run and latest_run.status in ("CANCELLED", "PARTIAL")
+                              and ((latest_run.metadata_json or {}).get("checkpoint") or {}).get("frontier")),
             "investigation_mode": (latest_run.metadata_json or {}).get("investigation_mode") if latest_run else None,
             "browser_assisted": bool((latest_run.metadata_json or {}).get("browser_assisted")) if latest_run else False,
             "budget_ledger": (latest_run.metadata_json or {}).get("budget_ledger") if latest_run else None,

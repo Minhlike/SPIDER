@@ -29,6 +29,9 @@ from spider.storage.repositories.execution_repo import ExecutionRepository
 from spider.resolution.resolver import EntityResolutionEngine
 from spider.capability.applicability import assess_provider
 from spider.capability.scopes import capability_allowed, resolve_investigation_mode
+from spider.core.checkpoint import decode_frontier, encode_checkpoint, restore_ledger
+from spider.storage.schema import ProviderRunRecord, TaskRunRecord
+from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,7 @@ class SpiderEngine:
         run_id: Optional[str] = None,
         investigation_mode: str | InvestigationMode | None = None,
         browser_assisted: bool = False,
+        resume_from_run_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Executes a deterministic capability-driven investigation loop for the given case.
@@ -66,7 +70,6 @@ class SpiderEngine:
                     if budget.max_runtime_seconds is not None else None)
         def within_deadline() -> bool:
             return deadline is None or time.monotonic() < deadline
-        scheduler = DeterministicScheduler(self.capability_registry, budget)
         run_id = run_id or str(uuid.uuid4())
 
         # 1. Fetch case & targets
@@ -77,6 +80,25 @@ class SpiderEngine:
             targets = await CaseRepository.get_targets(session, case_id)
             if not targets:
                 raise ValueError(f"Case {case_id} has no targets registered")
+            resume_metadata = None
+            resumed_task_keys: Set[str] = set()
+            if resume_from_run_id:
+                previous = await session.get(ProviderRunRecord, resume_from_run_id)
+                if previous is None or previous.case_id != case_id:
+                    raise ValueError("Resume checkpoint does not belong to this case")
+                resume_metadata = previous.metadata_json if isinstance(previous.metadata_json, dict) else {}
+                checkpoint = resume_metadata.get("checkpoint") or {}
+                if checkpoint.get("version") != 1 or not checkpoint.get("frontier"):
+                    raise ValueError("Run has no resumable checkpoint")
+                prior_tasks = list((await session.scalars(select(TaskRunRecord).where(
+                    TaskRunRecord.run_id == resume_from_run_id,
+                    TaskRunRecord.status.not_in(("PENDING", "QUEUED", "RUNNING")),
+                ))).all())
+                resumed_task_keys = {task.execution_key_hash for task in prior_tasks}
+        scheduler = DeterministicScheduler(self.capability_registry, budget)
+        if resume_metadata is not None:
+            scheduler.ledger = restore_ledger(
+                resume_metadata.get("budget_ledger"), resume_metadata["checkpoint"])
         resolved_mode = resolve_investigation_mode(
             (ObservableType(target.observable_type) for target in targets),
             investigation_mode,
@@ -105,8 +127,10 @@ class SpiderEngine:
             metadata={"expected_sources": {target.id: expected_providers(target) for target in targets},
                 "investigation_mode": resolved_mode.value,
                 "browser_assisted": browser_assisted,
+                "policy_profile": policy_profile,
                 "egress_instrumented": True,
-                "budget_limits": budget.model_dump(mode="json")}
+                "budget_limits": budget.model_dump(mode="json"),
+                "resumed_from_run_id": resume_from_run_id}
         )
         async def _init_run(session):
             existing = await ExecutionRepository.update_provider_run(session, provider_run)
@@ -118,8 +142,13 @@ class SpiderEngine:
         executed_key_hashes: Set[str] = set()
         frontier: List[Tuple[NormalizedObservable, str, int]] = []
 
-        # Upsert seed targets as entities AND append to observation log
-        for tgt in targets:
+        if resume_metadata is not None:
+            checkpoint = resume_metadata["checkpoint"]
+            frontier = decode_frontier(checkpoint["frontier"])
+            executed_key_hashes = set(checkpoint.get("executed_execution_keys", [])) | resumed_task_keys
+
+        # Upsert seed targets as entities AND append to observation log for a new run.
+        for tgt in ([] if resume_metadata is not None else targets):
             norm_obs = NormalizedObservable(
                 type=ObservableType(tgt.observable_type),
                 namespace=tgt.namespace,
@@ -151,6 +180,22 @@ class SpiderEngine:
             await self.db_writer.submit(_init_seed)
             frontier.append((norm_obs, tgt.id, 0))
 
+        async def persist_checkpoint(state: str, pending_frontier=None):
+            snapshot = encode_checkpoint(
+                frontier if pending_frontier is None else pending_frontier,
+                executed_key_hashes, scheduler.ledger, state)
+            ledger_payload = scheduler.ledger.model_dump(mode="json")
+            provider_run.metadata["checkpoint"] = snapshot
+            provider_run.metadata["budget_ledger"] = ledger_payload
+            async def write(session):
+                row = await session.get(ProviderRunRecord, run_id)
+                if row:
+                    row.metadata_json = {**(row.metadata_json or {}),
+                        "checkpoint": snapshot, "budget_ledger": ledger_payload}
+            await self.db_writer.submit(write)
+
+        await persist_checkpoint("RUNNING")
+
         # 4. Investigation Event Loop
         total_tasks_run = 0
         total_observations = 0
@@ -161,6 +206,7 @@ class SpiderEngine:
 
         deferred_candidates = False
         while frontier and not scheduler.ledger.is_exhausted(budget) and within_deadline():
+            await persist_checkpoint("RUNNING")
             current_obs, seed_id, depth = frontier.pop(0)
 
             # Get entity ID
@@ -278,6 +324,12 @@ class SpiderEngine:
                             for obs in exec_result.observations:
                                 if obs.observable.identity != current_obs.identity:
                                     frontier.append((obs.observable, seed_id, depth + 1))
+                # Keep the active observable until every candidate batch is accounted for.
+                await persist_checkpoint("RUNNING", [(current_obs, seed_id, depth), *frontier])
+
+            if deferred_candidates:
+                frontier.insert(0, (current_obs, seed_id, depth))
+            await persist_checkpoint("PAUSED" if frontier else "EXHAUSTED")
 
         # Partial coverage must not be presented as a fully completed search.
         # Reaching a numeric limit on the final successful operation is complete
@@ -296,6 +348,9 @@ class SpiderEngine:
             provider_run.tasks_count = total_tasks_run
             provider_run.observations_count = total_observations
             provider_run.metadata["budget_ledger"] = scheduler.ledger.model_dump(mode="json")
+            provider_run.metadata["checkpoint"] = encode_checkpoint(
+                frontier, executed_key_hashes, scheduler.ledger,
+                "EXHAUSTED" if not frontier else "PAUSED")
             await ExecutionRepository.update_provider_run(session, provider_run)
         await self.db_writer.submit(_finish_run)
 

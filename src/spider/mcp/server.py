@@ -31,9 +31,10 @@ class SpiderMCPServer:
                              "case_digest", "case_delta", "get_evidence", "input_catalogue", "graph_neighbors",
                              "compare_runs", "run_coverage", "browser_trace", "phone_candidate_digest", "telemetry", "create_hypothesis", "list_hypotheses",
                              "run_capability", "action_status", "cancel_run", "annotate_evidence",
+                             "resume_run",
                              "list_cases", "list_targets"}:
             return {"error": "Unknown tool"}
-        if tool_name in {"run_capability", "cancel_run"} and not self.service.is_running:
+        if tool_name in {"run_capability", "cancel_run", "resume_run"} and not self.service.is_running:
             return {"error": {"code": "SESSION_REQUIRED"}}
         if tool_name == "collect":
             try:
@@ -43,6 +44,39 @@ class SpiderMCPServer:
         owned_lifecycle = not self.service.is_running
         await self.service.start()
         try:
+            if tool_name == "resume_run":
+                from spider.service.resume import prepare_resume, ResumeError
+                if set(arguments) != {"case_id", "target_id", "run_id"}:
+                    return {"error": {"code": "INVALID_SCOPE_OR_ARGUMENT"}}
+                try:
+                    spec = await prepare_resume(self.service, arguments["run_id"],
+                        case_id=arguments["case_id"], target_id=arguments["target_id"])
+                except ResumeError as exc:
+                    return {"error": {"code": str(exc)}}
+
+                async def execute_resume():
+                    try:
+                        await self.service.investigate(spec.case_id, budget=spec.budget,
+                            policy_profile=spec.policy_profile, run_id=spec.run_id,
+                            investigation_mode=spec.investigation_mode,
+                            browser_assisted=spec.browser_assisted,
+                            resume_from_run_id=spec.source_run_id)
+                    except asyncio.CancelledError:
+                        return
+                    except Exception:
+                        from spider.models.base import utc_now
+                        from spider.storage.schema import ProviderRunRecord
+                        async def fail(session):
+                            row = await session.get(ProviderRunRecord, spec.run_id)
+                            if row and row.status in {"QUEUED", "RUNNING"}:
+                                row.status, row.completed_at = "FAILED", utc_now()
+                        await self.service.db_writer.submit(fail)
+                task = asyncio.create_task(execute_resume(), name=f"spider-run:{spec.run_id}")
+                self.service.background_tasks.add(task)
+                task.add_done_callback(self.service.background_tasks.discard)
+                return {"case_id": spec.case_id, "target_id": arguments["target_id"],
+                        "run_id": spec.run_id, "resumed_from_run_id": spec.source_run_id,
+                        "status": "QUEUED", "automatic_replay": False}
             if tool_name in {"run_capability", "action_status", "cancel_run", "annotate_evidence"}:
                 from spider.service.actions import RunCapabilityInput, CancelRunInput, EvidenceAnnotationInput, ActionError
                 try:

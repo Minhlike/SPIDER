@@ -90,6 +90,17 @@ def create_server(service):
             "case_id": case_id, "target_id": target_id, "action_id": action_id, "run_id": run_id})
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
+                                           idempotentHint=False, openWorldHint=True))
+    async def resume_run(case_id: str, target_id: str, run_id: str) -> dict:
+        """Resume one durable checkpoint explicitly, without replaying prior task receipts.
+
+        The checkpoint must belong only to target_id. A second call for the same source run
+        returns RUN_ALREADY_RESUMED; inspect run_coverage before choosing another action.
+        """
+        return await dispatcher.handle_tool_call("resume_run", {
+            "case_id": case_id, "target_id": target_id, "run_id": run_id})
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                            idempotentHint=True, openWorldHint=False))
     async def create_hypothesis(case_id: str, target_id: str, action_id: str, statement: str,
                                 supporting: list[str], contradicting: list[str], unknown: list[str]) -> dict:

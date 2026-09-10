@@ -12,6 +12,7 @@ from spider.storage.repositories.execution_repo import ExecutionRepository
 from spider.storage.schema import ProviderRunRecord
 from spider.models.base import utc_now
 from spider.capability.scopes import resolve_investigation_mode
+from spider.service.resume import prepare_resume, ResumeError
 
 router = APIRouter(tags=["Investigation"])
 
@@ -39,7 +40,15 @@ class StartInvestigationRequest(BaseModel):
     investigation_mode: Literal["AUTO", "PERSONAL_FOOTPRINT", "INFRASTRUCTURE"] = "AUTO"
     browser_assisted: bool = False
 
-async def _run_investigation_background(service: SpiderService, case_id: str, run_id: str, target: str, obs_type_val: str, budget: ExecutionBudget, profile: Optional[str], investigation_mode: str, browser_assisted: bool):
+
+class ResumeInvestigationRequest(BaseModel):
+    budget: Optional[InvestigationBudgetRequest] = None
+
+async def _run_investigation_background(service: SpiderService, case_id: str, run_id: str,
+                                        target: str, obs_type_val: str, budget: ExecutionBudget,
+                                        profile: Optional[str], investigation_mode: str,
+                                        browser_assisted: bool,
+                                        resume_from_run_id: Optional[str] = None):
     await event_broker.broadcast("RUN_STARTED", {
         "case_id": case_id,
         "run_id": run_id,
@@ -50,7 +59,7 @@ async def _run_investigation_background(service: SpiderService, case_id: str, ru
         "browser_assisted": browser_assisted,
     })
     try:
-        run_res = await service.investigate(
+        options = dict(
             case_id=case_id,
             budget=budget,
             policy_profile=profile,
@@ -58,6 +67,9 @@ async def _run_investigation_background(service: SpiderService, case_id: str, ru
             investigation_mode=investigation_mode,
             browser_assisted=browser_assisted,
         )
+        if resume_from_run_id is not None:
+            options["resume_from_run_id"] = resume_from_run_id
+        run_res = await service.investigate(**options)
         entities = await service.get_case_entities(case_id)
         assertions = await service.get_case_assertions(case_id)
         await event_broker.broadcast("RUN_COMPLETED", {
@@ -129,6 +141,36 @@ async def stop_investigation_run(run_id: str, service: SpiderService = Depends(g
         status = "CANCELLED"
         await _broadcast_cancelled_run(service, case_id, run_id)
     return {"run_id": run_id, "case_id": case_id, "status": status}
+
+
+@router.post("/runs/{run_id}/resume", response_model=Dict[str, Any])
+async def resume_investigation_run(run_id: str, req: ResumeInvestigationRequest,
+                                   service: SpiderService = Depends(get_srv)):
+    budget = None
+    if req.budget:
+        budget = ExecutionBudget(
+            max_depth=req.budget.max_depth, max_entities=req.budget.max_entities,
+            max_requests=req.budget.max_requests,
+            max_runtime_seconds=req.budget.timeout_seconds,
+            max_provider_calls=None if req.budget.max_requests is None else 50,
+            username_site_limit=req.budget.username_site_limit,
+            username_source_scope=req.budget.username_source_scope)
+    try:
+        spec = await prepare_resume(service, run_id, budget=budget)
+    except ResumeError as exc:
+        status_code = 404 if str(exc) == "RUN_NOT_FOUND" else 409
+        raise HTTPException(status_code=status_code, detail={
+            "code": str(exc).lower(), "message": "This run cannot be resumed",
+        }) from None
+    task = asyncio.create_task(_run_investigation_background(
+        service, spec.case_id, spec.run_id, spec.target, spec.observable_type,
+        spec.budget, spec.policy_profile, spec.investigation_mode,
+        spec.browser_assisted, spec.source_run_id),
+        name=f"spider-run:{spec.run_id}")
+    service.background_tasks.add(task)
+    task.add_done_callback(service.background_tasks.discard)
+    return {"case_id": spec.case_id, "run_id": spec.run_id,
+            "resumed_from_run_id": spec.source_run_id, "status": "QUEUED"}
 
 @router.post("/investigate", response_model=Dict[str, Any])
 async def start_investigation(

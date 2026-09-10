@@ -73,6 +73,31 @@ class SpiderService:
                 pid: asyncio.Semaphore(1) for pid in self.provider_manager.adapters
             }
         await self.db_writer.start()
+        # A prior process cannot still own these full-engine tasks. Runs with a
+        # durable frontier become explicitly cancelled and resumable; action
+        # receipts without a checkpoint retain UNKNOWN_AFTER_RESTART semantics.
+        async def recover_checkpointed_runs(session):
+            from sqlalchemy import select, func
+            from spider.storage.schema import ProviderRunRecord, TaskRunRecord, ObservationRecord
+            from spider.models.base import utc_now
+            rows = list((await session.scalars(select(ProviderRunRecord).where(
+                ProviderRunRecord.status.in_(("QUEUED", "RUNNING"))))).all())
+            for row in rows:
+                metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+                checkpoint = metadata.get("checkpoint") or {}
+                if checkpoint.get("version") != 1 or not checkpoint.get("frontier"):
+                    continue
+                row.status, row.completed_at = "CANCELLED", utc_now()
+                tasks = list((await session.scalars(select(TaskRunRecord).where(
+                    TaskRunRecord.run_id == row.id))).all())
+                for task in tasks:
+                    if task.status in ("PENDING", "QUEUED", "RUNNING"):
+                        task.status, task.completed_at = "CANCELLED", utc_now()
+                row.tasks_count = len(tasks)
+                row.observations_count = await session.scalar(select(func.count()).select_from(
+                    ObservationRecord).where(ObservationRecord.run_id == row.id,
+                                             ObservationRecord.provider_id != "seed_target"))
+        await self.db_writer.submit(recover_checkpointed_runs)
         self.is_running = True
         self._started = True
         self._stopping = False
@@ -133,13 +158,17 @@ class SpiderService:
             return {"id": rec.id, "case_id": rec.case_id, "canonical_value": rec.canonical_value, "type": rec.observable_type}
         return await self.db_writer.submit(_add)
 
-    async def investigate(self, case_id: str, budget: Optional[ExecutionBudget] = None, policy_profile: Optional[str] = None, run_id: Optional[str] = None, investigation_mode=None, browser_assisted: bool = False) -> Dict[str, Any]:
+    async def investigate(self, case_id: str, budget: Optional[ExecutionBudget] = None,
+                          policy_profile: Optional[str] = None, run_id: Optional[str] = None,
+                          investigation_mode=None, browser_assisted: bool = False,
+                          resume_from_run_id: Optional[str] = None) -> Dict[str, Any]:
         from uuid import uuid4
         run_id = run_id or str(uuid4())
         try:
             return await self.engine.run_investigation(
                 case_id, budget=budget, policy_profile=policy_profile, run_id=run_id,
-                investigation_mode=investigation_mode, browser_assisted=browser_assisted)
+                investigation_mode=investigation_mode, browser_assisted=browser_assisted,
+                resume_from_run_id=resume_from_run_id)
         except asyncio.CancelledError:
             from sqlalchemy import select, func
             from spider.storage.schema import ProviderRunRecord, TaskRunRecord, ObservationRecord
