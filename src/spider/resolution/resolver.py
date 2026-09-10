@@ -8,7 +8,7 @@ from spider.models.assertion import Assertion
 from spider.models.evidence import EvidenceRef
 from spider.models.enums import ObservableType, AssertionType
 from spider.storage.repositories.graph_repo import GraphRepository
-from spider.resolution.rules import infer_assertion_type
+from spider.resolution.rules import resolve_assertion_rule
 
 class EntityResolutionEngine:
     def __init__(self, resolver_version: str = "2.1.0"):
@@ -57,7 +57,8 @@ class EntityResolutionEngine:
                     source_entity_id = parent_entity_rec.id
                     source_type = ObservableType(parent_entity_rec.observable_type)
                     
-                    asrt_type = infer_assertion_type(source_type, obs_type)
+                    rule = resolve_assertion_rule(source_type, obs_type)
+                    asrt_type = rule.assertion_type
                     if asrt_type:
                         assertion = Assertion(
                             id=str(uuid.uuid5(uuid.NAMESPACE_URL, json.dumps((case_id, source_entity_id, target_entity_id, asrt_type.value)))),
@@ -69,7 +70,10 @@ class EntityResolutionEngine:
                             independent_source_count=0,
                             source_families=[obs.lineage.upstream_family],
                             resolver_version=self.resolver_version,
-                            inference_rule="DIRECT_OBSERVATION",
+                            inference_rule=rule.rule_id,
+                            metadata={"rule_version": rule.rule_version,
+                                      "rule_registry_version": rule.registry_version,
+                                      "evidence_requirement": rule.evidence_requirement},
                             first_observed=obs.created_at,
                             last_observed=obs.created_at
                         )

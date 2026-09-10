@@ -591,7 +591,7 @@ Mỗi phase phải ghi:
 | Nullable time/request budget | **EXPERIMENT RESULT — implementation và full suite 471 tests PASS ngày 10/09/2026** |
 | P0-A browser correctness | **EXPERIMENT RESULT — exact route/access precedence/query-echo/merge/preflight regressions PASS trên fixture; Cốc Cốc live version matrix chưa kiểm chứng** |
 | P0-B budget/Stop/checkpoint/resume | **EXPERIMENT RESULT — fixture PASS: nullable totals, bounded samples, per-run Stop, versioned frontier, crash recovery, no automatic replay và resume qua UI/API/MCP; live long-run crash chưa kiểm chứng** |
-| Rule registry/planning/proof graph | **NOT YET VERIFIED** |
+| P0-C rule registry/planning/proof graph | **PARTIAL EXPERIMENT RESULT — versioned fail-closed direct-edge registry và Explain rule provenance fixture PASS; questions/gaps, claim lifecycle và justification DAG chưa làm** |
 | Username vertical slice v2 | **NOT YET VERIFIED** |
 | Email/domain/IP/phone reasoning v2 | **NOT YET VERIFIED** |
 | Manual parity benchmark | **NOT YET VERIFIED** |

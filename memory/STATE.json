@@ -31,7 +31,7 @@
   "security_gate": "PASS: current-user Windows DPAPI, masked API, ignored local settings",
   "launcher_gate": "PASS: exact backend PID, duplicate prevention, readiness, graceful stop",
   "blockers": [],
-  "next_action": "Follow docs/MASTER_INVESTIGATION_ENGINE_PLAN_VI.md Phase P0-C versioned rule registry and proof contract.",
+  "next_action": "Continue docs/MASTER_INVESTIGATION_ENGINE_PLAN_VI.md Phase P0-C question/gap registry, claim lifecycle and justification DAG.",
   "web_ui": {
     "host": "127.0.0.1",
     "port": 8765,
@@ -42,13 +42,13 @@
   "current_development": {
     "baseline_head": "069fa49a2b9eb500f1fa150775547d3851d2b509",
     "phase": "MASTER_INVESTIGATION_ENGINE_P0_C",
-    "status": "P0_B_FIXTURE_PASS_P0_C_NEXT",
+    "status": "P0_B_FIXTURE_PASS_P0_C_RULE_REGISTRY_PARTIAL",
     "plan": "docs/MASTER_INVESTIGATION_ENGINE_PLAN_VI.md",
     "report": "docs/AGENT_INVESTIGATION_INCREMENT_3.md",
     "offline_gate": {
-      "passed": 478,
+      "passed": 480,
       "deselected": 0,
-      "seconds": 231.19,
+      "seconds": 267.43,
       "chromium_ui_included": 15,
       "real_stdio_tests": 2
     },
@@ -57,13 +57,14 @@
     "note": "Top-level release fields are historical v2.0.0 snapshot; use this object and NEXT.md for current development.",
     "mcp_tools": 16,
     "p0_b_gate": "PASS_FIXTURE_LIVE_LONG_RUN_CRASH_NOT_YET_VERIFIED",
+    "p0_c_gate": "PARTIAL_VERSIONED_EDGE_RULES_NO_QUESTION_GAP_OR_JUSTIFICATION_DAG",
     "m2_gate": "PASS_FIXTURE_NOT_LIVE_VERIFIED",
     "reader_reports": "SHARED_VI_EN_IMPLEMENTED",
     "default_parallel_providers": 2,
     "m3_gate": "PASS_FIXTURE_NOT_LIVE_VERIFIED",
     "m1_gate": "PARTIAL_STABLE_SNAPSHOTS_AND_SCOPED_CONTINUATION",
     "m1_remaining": "HARD_BOUND_REACHABLE_PROJECTION_NOT_YET_VERIFIED",
-    "latest_development_head": "UNCOMMITTED_AFTER_e313247a5b5772251669deffe414cc76e2921a9d",
+    "latest_development_head": "UNCOMMITTED_AFTER_78bd9ad55d30545322665edf661c30278851be1f",
     "m4_gate": "PARTIAL_FIXTURE_OWNED_TAB_TRACE_NO_LIVE_BENCHMARK",
     "m5_gate": "PARTIAL_PUBLIC_CANDIDATE_PIPELINE_NO_CONSENTED_HOLDOUT",
     "m6_gate": "PARTIAL_MEASURED_UTILITY_AND_NONDISPATCHING_ADVICE_UNCALIBRATED"

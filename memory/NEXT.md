@@ -13,8 +13,8 @@ Current slice:
 
 - audit and plan consolidation complete;
 - nullable total time/request budgets, P0-A browser correctness and Phase P0-B
-  durable Stop/checkpoint/resume implemented; full suite 478 tests PASS in
-  231.19 seconds on 10/09/2026;
+  durable Stop/checkpoint/resume implemented; P0-C versioned direct-edge rule
+  registry started; full suite 480 tests PASS in 267.43 seconds on 10/09/2026;
 - provider quotas, rate limits, per-action timeout, concurrency, dedup and policy
   remain enforced in unlimited mode;
 - final diff/document review completed; the suite included its existing public/
@@ -29,7 +29,9 @@ Current slice:
   resume creates one linked child and skips prior terminal/uncertain receipts.
   UI, HTTP and target-scoped MCP resume are covered by fixtures. Live Cốc Cốc
   long-run crash recovery remains NOT YET VERIFIED.
-- Next: Phase P0-C versioned rule registry, questions/gaps and justification DAG.
+- P0-C now records rule ID/version/registry/evidence requirement on new graph
+  edges and Explain returns this provenance. Conflicting rule mappings fail at
+  load. Next: question/gap registry, claim lifecycle and justification DAG.
 
 Do not claim manual-investigation parity, live browser reliability, provider
 adoption or the full reasoning engine complete without the master plan gates.

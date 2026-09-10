@@ -90,6 +90,9 @@ async def test_vertical_slice_subfinder_and_metabigor(tmp_path):
         assert explanation is not None
         assert explanation["source_entity"]["type"] == "IP_ADDRESS"
         assert explanation["target_entity"]["type"] == "ASN"
+        assert explanation["rule"] == {
+            "id": "ADDRESS_BELONGS_TO_ASN", "version": "1.0.0",
+            "registry_version": "1.0.0", "evidence_requirement": "DIRECT_OBSERVATION"}
         assert len(explanation["evidence"]) > 0
 
         # 7. Test complete rebuild
