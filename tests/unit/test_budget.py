@@ -45,3 +45,19 @@ def test_budget_exhaustion_conditions():
     ledger.record_observation_yield(5)
     assert ledger.consecutive_zero_yield_runs == 0
     assert ledger.is_exhausted(budget, current_depth=0) is False
+
+
+def test_unlimited_request_and_provider_call_budgets_still_count_usage():
+    budget = ExecutionBudget(max_requests=None, max_provider_calls=None,
+                             max_runtime_seconds=None, max_entities=10)
+    ledger = BudgetLedger()
+
+    for _ in range(25):
+        ledger.request(budget, "fixture")
+        ledger.provider_calls_count += 1
+
+    assert ledger.requests_count == 25
+    assert ledger.provider_calls_count == 25
+    assert ledger.is_exhausted(budget) is False
+    assert budget.model_dump(mode="json")["max_requests"] is None
+    assert budget.model_dump(mode="json")["max_runtime_seconds"] is None

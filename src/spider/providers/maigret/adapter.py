@@ -148,8 +148,10 @@ class MaigretAdapter(BaseProviderAdapter):
             if requested_sites is not None:
                 spec["requested_sites"] = requested_sites
             ledger, budget = kwargs.get("request_ledger"), kwargs.get("execution_budget")
-            if ledger is not None:
+            if ledger is not None and budget.max_requests is not None:
                 spec["max_requests"] = max(0, budget.max_requests - ledger.requests_count)
+                spec["fingerprint_salt"] = ledger._fingerprint_salt.hex()
+            elif ledger is not None:
                 spec["fingerprint_salt"] = ledger._fingerprint_salt.hex()
             accounted = 0
             recorder = kwargs.get("egress_recorder")

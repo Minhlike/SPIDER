@@ -22,8 +22,8 @@ def get_srv(request: Request) -> SpiderService:
 class InvestigationBudgetRequest(BaseModel):
     max_depth: int = Field(default=1, ge=0, le=3)
     max_entities: int = Field(default=500, ge=1, le=5000)
-    max_requests: int = Field(default=100, ge=0, le=5000)
-    timeout_seconds: int = Field(default=180, ge=10, le=600)
+    max_requests: Optional[int] = Field(default=100, ge=0, le=5000)
+    timeout_seconds: Optional[int] = Field(default=180, ge=10, le=86400)
     username_site_limit: Literal[0, 50, 500] = 500
     username_source_scope: Literal["VN_COMMON_CORE", "GLOBAL_50", "GLOBAL_500", "GLOBAL_ALL"] = "VN_COMMON_CORE"
 
@@ -143,6 +143,7 @@ async def start_investigation(
                     max_entities=req.budget.max_entities,
                     max_requests=req.budget.max_requests,
                     max_runtime_seconds=req.budget.timeout_seconds,
+                    max_provider_calls=None if req.budget.max_requests is None else 50,
                     username_site_limit=req.budget.username_site_limit,
                     username_source_scope=req.budget.username_source_scope)
                   if req.budget else ExecutionBudget(max_depth=req.max_depth))

@@ -31,7 +31,7 @@
   "security_gate": "PASS: current-user Windows DPAPI, masked API, ignored local settings",
   "launcher_gate": "PASS: exact backend PID, duplicate prevention, readiness, graceful stop",
   "blockers": [],
-  "next_action": "M1 stable snapshot/delta and history/graph continuation; then M4/M5/M6.",
+  "next_action": "Follow docs/MASTER_INVESTIGATION_ENGINE_PLAN_VI.md Phase P0-A browser correctness.",
   "web_ui": {
     "host": "127.0.0.1",
     "port": 8765,
@@ -41,14 +41,14 @@
   "handoff": "docs/RELEASE_V2_0_0.md",
   "current_development": {
     "baseline_head": "069fa49a2b9eb500f1fa150775547d3851d2b509",
-    "phase": "AGENT_INVESTIGATION_INCREMENT_3",
-    "status": "PARTIAL_PLAN_IMPLEMENTED",
-    "plan": "docs/AGENT_INVESTIGATION_PLAN_VI.md",
+    "phase": "MASTER_INVESTIGATION_ENGINE_P0_B",
+    "status": "UNBOUNDED_TOTAL_BUDGETS_IMPLEMENTED",
+    "plan": "docs/MASTER_INVESTIGATION_ENGINE_PLAN_VI.md",
     "report": "docs/AGENT_INVESTIGATION_INCREMENT_3.md",
     "offline_gate": {
-      "passed": 441,
-      "deselected": 1,
-      "seconds": 132.36,
+      "passed": 469,
+      "deselected": 0,
+      "seconds": 242.51,
       "chromium_ui_included": 14,
       "real_stdio_tests": 2
     },
@@ -62,7 +62,7 @@
     "m3_gate": "PASS_FIXTURE_NOT_LIVE_VERIFIED",
     "m1_gate": "PARTIAL_STABLE_SNAPSHOTS_AND_SCOPED_CONTINUATION",
     "m1_remaining": "HARD_BOUND_REACHABLE_PROJECTION_NOT_YET_VERIFIED",
-    "latest_development_head": "68eb705ffe55dc50bd503bba3d441750d166c1b6",
+    "latest_development_head": "UNCOMMITTED_AFTER_2ccf544116f7c30b15345a83c8cd4eb8d0e802c3",
     "m4_gate": "PARTIAL_FIXTURE_OWNED_TAB_TRACE_NO_LIVE_BENCHMARK",
     "m5_gate": "PARTIAL_PUBLIC_CANDIDATE_PIPELINE_NO_CONSENTED_HOLDOUT",
     "m6_gate": "PARTIAL_MEASURED_UTILITY_AND_NONDISPATCHING_ADVICE_UNCALIBRATED"

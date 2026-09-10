@@ -215,3 +215,39 @@ async def test_root_domain_sources_are_not_cut_off_by_zero_yield_heuristic(tmp_p
         assert run["budget_ledger"]["consecutive_zero_yield_runs"] == len(names)
     finally:
         await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_engine_unlimited_totals_keep_a_bounded_per_action_timeout(tmp_path):
+    seen = {}
+
+    class UnlimitedFixture(FakeProviderA):
+        def capabilities(self):
+            return ["UNLIMITED_FIXTURE"]
+
+        async def execute(self, target, lineage, **kwargs):
+            seen["timeout_seconds"] = kwargs["timeout_seconds"]
+            kwargs["request_ledger"].request(kwargs["execution_budget"], self.provider_id())
+            return ProviderExecutionResult(raw_content=b"{}", observations=[], outcome="COMPLETED")
+
+    service = SpiderService(db_path=str(tmp_path / "unbounded-engine.db"),
+                            artifacts_dir=str(tmp_path / "runs"))
+    service.capability_registry.capabilities.clear()
+    service.provider_manager.adapters.clear()
+    service.provider_manager.register_adapter(UnlimitedFixture())
+    service.capability_registry.register_capability(CapabilityDefinition(
+        name="UNLIMITED_FIXTURE", description="Offline unlimited budget fixture",
+        default_providers=["fake_a"], input_types=[T.DOMAIN], output_types=[]))
+    await service.start()
+    try:
+        case = await service.create_case("Unlimited totals fixture")
+        await service.add_target(case["id"], "example.test", T.DOMAIN)
+        run = await service.investigate(case["id"], budget=ExecutionBudget(
+            max_depth=0, max_requests=None, max_runtime_seconds=None,
+            max_provider_calls=None, per_action_timeout_seconds=17))
+        assert run["status"] == "COMPLETED"
+        assert run["budget_exhausted"] is False
+        assert run["budget_ledger"]["requests_count"] == 1
+        assert seen["timeout_seconds"] == 17
+    finally:
+        await service.stop()

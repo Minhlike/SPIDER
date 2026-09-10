@@ -99,7 +99,8 @@ class UncoverAdapter(BaseProviderAdapter):
                     result = access.result_state(engine, "MISSING_CREDENTIAL", "REQUIRED_FIELDS_MISSING", "search")
                 elif remaining <= 0:
                     result = access.result_state(engine, "NETWORK_ERROR", "TIMEOUT", "search")
-                elif ledger is not None and ledger.requests_count >= budget.max_requests:
+                elif (ledger is not None and budget.max_requests is not None
+                      and ledger.requests_count >= budget.max_requests):
                     result = access.result_state(engine, "SKIPPED_BUDGET", "REQUEST_LIMIT", "search")
                 else:
                     permits = RequestPermits(self.provider_id(), ledger, budget, recorder,

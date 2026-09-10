@@ -62,7 +62,10 @@ class SpiderEngine:
         Executes a deterministic capability-driven investigation loop for the given case.
         """
         budget = budget or ExecutionBudget()
-        deadline = time.monotonic() + budget.max_runtime_seconds
+        deadline = (time.monotonic() + budget.max_runtime_seconds
+                    if budget.max_runtime_seconds is not None else None)
+        def within_deadline() -> bool:
+            return deadline is None or time.monotonic() < deadline
         scheduler = DeterministicScheduler(self.capability_registry, budget)
         run_id = run_id or str(uuid.uuid4())
 
@@ -157,7 +160,7 @@ class SpiderEngine:
         available_providers = set(self.provider_manager.adapters.keys())
 
         deferred_candidates = False
-        while frontier and not scheduler.ledger.is_exhausted(budget) and time.monotonic() < deadline:
+        while frontier and not scheduler.ledger.is_exhausted(budget) and within_deadline():
             current_obs, seed_id, depth = frontier.pop(0)
 
             # Get entity ID
@@ -199,7 +202,7 @@ class SpiderEngine:
                     cand.execution_key.configuration_hash = seed_id
                     if cand.execution_key.key_string in executed_key_hashes:
                         continue
-                    if scheduler.ledger.is_exhausted(budget, current_depth=depth) or time.monotonic() >= deadline:
+                    if scheduler.ledger.is_exhausted(budget, current_depth=depth) or not within_deadline():
                         deferred_candidates = True
                         break
 
@@ -236,8 +239,11 @@ class SpiderEngine:
                     if deferred_candidates:
                         break
                     continue
+                action_timeout = budget.per_action_timeout_seconds
+                if deadline is not None:
+                    action_timeout = min(action_timeout, max(0.1, deadline - time.monotonic()))
                 jobs = [asyncio.create_task(self.provider_manager.execute_task(
-                    task, current_obs, lineage, timeout_seconds=max(0.1, deadline-time.monotonic()),
+                    task, current_obs, lineage, timeout_seconds=action_timeout,
                     request_ledger=scheduler.ledger, execution_budget=budget,
                     derivation="DIRECT" if depth == 0 else "DERIVED",
                     username_site_limit=budget.username_site_limit,
@@ -278,7 +284,7 @@ class SpiderEngine:
         # when no work remains. It is partial only when the limit truncated the
         # frontier or a provider reported incomplete work.
         budget_exhausted = deferred_candidates or bool(frontier) and (
-            time.monotonic() >= deadline or scheduler.ledger.is_exhausted(budget)
+            (deadline is not None and time.monotonic() >= deadline) or scheduler.ledger.is_exhausted(budget)
         )
         final_status = (ExecutionStatus.PARTIAL if budget_exhausted or incomplete_tasks else ExecutionStatus.COMPLETED)
         if failed_tasks == total_tasks_run and total_tasks_run and not total_observations:

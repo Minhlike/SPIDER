@@ -46,6 +46,8 @@ const i18n = {
     lbl_policy: "Hồ sơ an toàn mạng (Policy Profile)",
     lbl_depth: "Độ sâu thu thập (Max Depth)",
     lbl_timeout: "Thời gian tối đa (Timeout)",
+    lbl_request_budget: "Giới hạn yêu cầu mạng",
+    unbounded_hint: "Không giới hạn vẫn tuân thủ rate limit, quota, timeout từng nguồn, chống lặp và nút dừng.",
     lbl_scope_confirm: "Mục tiêu nằm trong phạm vi được phép điều tra an toàn",
     btn_start: "Bắt đầu điều tra tự động",
     btn_cancel: "Hủy bỏ",
@@ -132,6 +134,8 @@ const i18n = {
     lbl_policy: "Network Safety Policy Profile",
     lbl_depth: "Max Recursion Depth",
     lbl_timeout: "Execution Timeout",
+    lbl_request_budget: "Network request limit",
+    unbounded_hint: "Unlimited still respects rate limits, quotas, per-source timeouts, loop detection, and Stop.",
     lbl_scope_confirm: "Target is within authorized investigation scope",
     btn_start: "Start automatic investigation",
     btn_cancel: "Cancel",
@@ -588,7 +592,9 @@ async function startInvestigation(browserAssisted = "auto") {
 
   const profile = document.getElementById("profile-select").value;
   const depth = parseInt(document.getElementById("depth-select").value, 10);
-  const timeout = parseInt(document.getElementById("timeout-select").value, 10);
+  const timeoutValue = document.getElementById("timeout-select").value;
+  const requestValue = document.getElementById("request-budget-select").value;
+  const timeout = timeoutValue === "unlimited" ? null : parseInt(timeoutValue, 10);
   const isAuthorized = document.getElementById("authorized-checkbox").checked;
 
   const btn = document.getElementById("btn-start-investigate");
@@ -615,6 +621,8 @@ async function startInvestigation(browserAssisted = "auto") {
     // targets use the visible signed-in browser by default when available.
     const effectiveBrowserAssisted = browserAssisted === true ||
       (browserAssisted === "auto" && ["USERNAME", "EMAIL"].includes(classification.type));
+    const maxRequests = requestValue === "unlimited" ? null :
+      (requestValue === "auto" ? (effectiveBrowserAssisted ? 500 : 100) : parseInt(requestValue, 10));
     const res = await fetch("/api/investigate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -627,7 +635,7 @@ async function startInvestigation(browserAssisted = "auto") {
         budget: {
           max_depth: depth,
           max_entities: 500,
-          max_requests: effectiveBrowserAssisted ? 500 : 100,
+          max_requests: maxRequests,
           timeout_seconds: timeout,
           username_source_scope: document.getElementById("username-sites-select").value
         },
@@ -1202,8 +1210,10 @@ async function loadCaseProgress(caseId) {
 
     const tasks = insightsRes.provider_contributions || [];
     const runStatus = insightsRes.status || "PENDING";
-    document.getElementById("live-run-status").textContent = friendlyLabel(runStatus);
-    document.getElementById("live-run-status").className = `badge badge-${runStatus.toLowerCase()}`;
+    const liveStatus = document.getElementById("live-run-status");
+    liveStatus.textContent = friendlyLabel(runStatus);
+    liveStatus.className = `badge badge-${runStatus.toLowerCase()}`;
+    liveStatus.dataset.status = runStatus;
 
     if (tasks.length === 0) {
       tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:20px;">Đang chuẩn bị lập lịch các tác vụ OSINT...</td></tr>`;

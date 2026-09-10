@@ -10,7 +10,9 @@ async def test_widths_preserve_evidence_and_graph_with_reverse_completion(tmp_pa
     for width in (1, 2, 4):
         folder = tmp_path / str(width)
         folder.mkdir()
-        rows.append(await trial(folder, width, delays=(.10, .07, .04, .01)))
+        # Keep the shortest task alive long enough for all four dispatches to
+        # enter on a loaded Windows CI host; completion order remains reversed.
+        rows.append(await trial(folder, width, delays=(.20, .17, .14, .11)))
     assert [r["peak_providers"] for r in rows] == [1, 2, 4]
     assert all(r["requests"] == 4 and r["status"] == "COMPLETED" for r in rows)
     assert all(r["entities"] == rows[0]["entities"] and r["graph"] == rows[0]["graph"] for r in rows)
@@ -128,7 +130,9 @@ async def test_provider_and_global_limits_are_shared_across_runs(tmp_path):
     service = SpiderService(str(tmp_path / "shared.db"), str(tmp_path / "runs"))
     tracker = Tracker()
     for index in range(5):
-        service.provider_manager.register_adapter(CountedFixture(index, tracker, delay=.04))
+        # Keep work active long enough to observe the shared global limit even
+        # when Windows scheduling and SQLite setup delay sibling dispatches.
+        service.provider_manager.register_adapter(CountedFixture(index, tracker, delay=.15))
     service.capability_registry.get_capability("SUBDOMAIN_DISCOVERY").default_providers = list(service.provider_manager.adapters)
     await service.start()
     try:

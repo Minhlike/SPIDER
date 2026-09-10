@@ -1,7 +1,7 @@
 # Investigation increment 1 — 2026-09-05
 
 Baseline: `069fa49a2b9eb500f1fa150775547d3851d2b509`. This is an incremental
-implementation of `AGENT_INVESTIGATION_PLAN_VI.md`, not completion of M1–M6.
+implementation of the retired historical plan (frozen at [baseline 2ccf544](https://github.com/Minhlike/SPIDER/blob/2ccf544116f7c30b15345a83c8cd4eb8d0e802c3/docs/AGENT_INVESTIGATION_PLAN_VI.md)), not completion of M1–M6. Current work is governed by `MASTER_INVESTIGATION_ENGINE_PLAN_VI.md`.
 
 ## FACT — implemented
 

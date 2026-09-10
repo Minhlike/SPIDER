@@ -161,7 +161,7 @@
             </select>
           </div>
 
-          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+          <div style="display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:16px;">
             <div class="form-group">
               <label class="form-label" data-i18n="lbl_depth">Độ sâu thu thập (Max Depth)</label>
               <select id="depth-select" class="form-select">
@@ -178,9 +178,20 @@
                 <option value="120">120 giây</option>
                 <option value="180" selected>180 giây</option>
                 <option value="600">600 giây</option>
+                <option value="unlimited">Không giới hạn — dừng thủ công hoặc khi hết nhánh</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" data-i18n="lbl_request_budget">Giới hạn yêu cầu mạng</label>
+              <select id="request-budget-select" class="form-select">
+                <option value="auto" selected>Tự động — 100 hoặc 500 khi dùng trình duyệt</option>
+                <option value="100">100 yêu cầu</option>
+                <option value="500">500 yêu cầu</option>
+                <option value="unlimited">Không giới hạn nhân tạo</option>
               </select>
             </div>
           </div>
+          <p class="form-hint" data-i18n="unbounded_hint">Không giới hạn vẫn tuân thủ rate limit, quota, timeout từng nguồn, chống lặp và nút dừng.</p>
 
           <div class="form-group">
             <label class="form-label" for="username-sites-select">Phạm vi tìm username</label>
@@ -303,7 +314,7 @@
           <div class="table-container">
             <div class="table-header">
               <span data-i18n="task_execution_progress">Chi tiết thực thi tác vụ & Tiến trình thời gian thực</span>
-              <span id="live-run-status" class="badge badge-running">PENDING</span>
+              <span id="live-run-status" class="badge badge-running" data-status="PENDING">PENDING</span>
             </div>
             <table>
               <thead>

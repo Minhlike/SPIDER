@@ -168,6 +168,18 @@ def test_ip_report_renders_enrichment_and_source_provenance(offline_page):
     assert not errors
 
 
+def test_unlimited_time_and_requests_are_sent_as_null(offline_page):
+    page, dispatches, errors = offline_page
+    page.locator("#target-input").fill("fixture-user")
+    page.locator("#timeout-select").select_option("unlimited")
+    page.locator("#request-budget-select").select_option("unlimited")
+    with page.expect_response("**/api/investigate"):
+        page.locator("#btn-browser-investigate").click()
+    assert dispatches[0]["budget"]["timeout_seconds"] is None
+    assert dispatches[0]["budget"]["max_requests"] is None
+    assert not errors
+
+
 def test_domain_report_renders_only_collected_security_and_service_facts(offline_page):
     page, _, errors = offline_page
     page.evaluate("""() => renderTypeSpecificInsights({

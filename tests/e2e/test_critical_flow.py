@@ -27,8 +27,8 @@ def investigate(page, base_url, target, target_type="DOMAIN", final_status="COMP
     queued = response.value.json()
     assert queued["status"] == "QUEUED" and queued["run_id"]
     expect(page.locator("#case-tab-content-live")).to_be_visible()
-    expect(page.locator("#live-run-status")).to_have_text(
-        re.compile(r"PENDING|RUNNING|COMPLETED|PARTIAL"), timeout=5000)
+    expect(page.locator("#live-run-status")).to_have_attribute(
+        "data-status", re.compile(r"PENDING|RUNNING|COMPLETED|PARTIAL"), timeout=5000)
     # Status codes are intentionally rendered through the Vietnamese reader
     # vocabulary.  The badge class is the stable machine-facing UI contract.
     expect(page.locator("#case-status-badge")).to_have_class(

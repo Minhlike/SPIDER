@@ -64,13 +64,13 @@ every username exists. Email lookup checks exact email values in public GitHub
 profiles and can follow the published handle at the next depth. Neither a
 matching handle nor a public page title establishes a person's identity.
 
-See the [development plan](docs/PUBLIC_FOOTPRINT_PLAN.md) and the
+See the [master Investigation Intelligence Engine plan](docs/MASTER_INVESTIGATION_ENGINE_PLAN_VI.md) and the
 [implementation report in Vietnamese](docs/PUBLIC_FOOTPRINT_REPORT_VI.md), with the
 [reproducible benchmark protocol](benchmarks/README.md). The v2.0.0 release tag
 does not include these subsequent local development changes.
 
 
-See the [source audit and research-based upgrade plan](docs/RESEARCH_UPGRADE_PLAN_VI.md).
+The same master plan contains the current source audit, research gates, migration order and acceptance criteria.
 Ambiguous inputs now require a type choice before execution; API and MCP clients
 can pass `target_type`, and CLI users can pass `--type USERNAME` or `--type DOMAIN`.
 
@@ -138,4 +138,4 @@ runtime\venv\Scripts\python.exe -m spider.cli.main provider health
 - [Runbook & Operations](docs/RUNBOOK.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Licenses](docs/LICENSES.md)
-- [Roadmap](docs/ROADMAP.md)
+- [Master Investigation Intelligence Engine plan](docs/MASTER_INVESTIGATION_ENGINE_PLAN_VI.md)

@@ -42,3 +42,39 @@ def test_browser_budget_and_authorization_reach_engine(tmp_path, monkeypatch):
         })
         assert rejected.status_code == 422
         assert rejected.json()["detail"]["code"] == "browser_scope_authorization_required"
+
+
+def test_unlimited_time_and_request_options_reach_engine_as_null(tmp_path, monkeypatch):
+    import spider.web.app as web_app
+    service = SpiderService(db_path=str(tmp_path / "unlimited.db"), artifacts_dir=str(tmp_path / "runs"))
+    seen = {}
+
+    async def investigate(case_id, budget, policy_profile, run_id, investigation_mode,
+                          browser_assisted):
+        seen["budget"] = budget
+        return {"status": "COMPLETED"}
+
+    monkeypatch.setattr(service, "investigate", investigate)
+    monkeypatch.setattr(web_app, "create_spider_service", lambda **kwargs: service)
+    with TestClient(web_app.create_app()) as client:
+        response = client.post("/api/investigate", json={
+            "target": "example.test",
+            "target_type": "DOMAIN",
+            "budget": {
+                "max_depth": 0,
+                "max_entities": 500,
+                "max_requests": None,
+                "timeout_seconds": None,
+            },
+        })
+        assert response.status_code == 200
+        assert response.json()["status"] == "QUEUED"
+
+        async def drain():
+            if service.background_tasks:
+                await asyncio.gather(*service.background_tasks)
+        client.portal.call(drain)
+
+        assert seen["budget"].max_requests is None
+        assert seen["budget"].max_runtime_seconds is None
+        assert seen["budget"].max_provider_calls is None

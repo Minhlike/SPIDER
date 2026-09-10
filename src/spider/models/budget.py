@@ -1,19 +1,23 @@
 from pydantic import Field, PrivateAttr
 from threading import Lock
 import secrets
-from typing import Literal
+from typing import Literal, Optional
 from spider.models.base import SpiderBaseModel
 
 class ExecutionBudget(SpiderBaseModel):
     max_entities: int = Field(default=500, ge=0)
     max_depth: int = 3
-    max_requests: int = Field(default=100, ge=0)
-    max_runtime_seconds: int = 300
+    # None means the user deliberately selected no SPIDER-imposed total cap.
+    # Per-provider timeouts, provider quotas/rate limits and policy checks still
+    # apply, so an unlimited investigation cannot turn into an unbounded call.
+    max_requests: Optional[int] = Field(default=100, ge=0)
+    max_runtime_seconds: Optional[int] = Field(default=300, ge=1)
+    per_action_timeout_seconds: int = Field(default=180, ge=1, le=900)
     username_site_limit: Literal[0, 50, 500] = 500
     username_source_scope: Literal["VN_COMMON_CORE", "GLOBAL_50", "GLOBAL_500", "GLOBAL_ALL"] = "VN_COMMON_CORE"
     # Conservative default after shared-cap/cancellation/deterministic-ingest gates.
     max_parallel_tasks: int = Field(default=2, ge=1, le=4)
-    max_provider_calls: int = 50
+    max_provider_calls: Optional[int] = Field(default=50, ge=0)
     max_branch_work: int = 20
     diminishing_returns_cutoff: int = 3
 
@@ -34,7 +38,7 @@ class BudgetLedger(SpiderBaseModel):
     def request(self, budget: ExecutionBudget, provider_id: str, protocol: str = "HTTP", kind: str = "request", *, task_id: str | None = None):
         """Count a dispatch attempt before transport I/O; failed attempts also cost one."""
         with self._lock:
-            if self.requests_count >= budget.max_requests:
+            if budget.max_requests is not None and self.requests_count >= budget.max_requests:
                 raise RequestBudgetExceeded()
             self.requests_count += 1
             event = {"sequence": self.requests_count, "provider_id": provider_id,
@@ -86,9 +90,9 @@ class BudgetLedger(SpiderBaseModel):
     def is_exhausted(self, budget: ExecutionBudget, current_depth: int = 0) -> bool:
         if self.entities_count >= budget.max_entities:
             return True
-        if self.requests_count >= budget.max_requests:
+        if budget.max_requests is not None and self.requests_count >= budget.max_requests:
             return True
-        if self.provider_calls_count >= budget.max_provider_calls:
+        if budget.max_provider_calls is not None and self.provider_calls_count >= budget.max_provider_calls:
             return True
         if current_depth > budget.max_depth:
             return True

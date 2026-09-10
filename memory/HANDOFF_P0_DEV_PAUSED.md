@@ -4,7 +4,7 @@
 
 - Repository: `D:\PhanMem_Tools\SPIDER`; HEAD: `b78ac038a65c5c0b215322de3acfa49e3b3fd25a`.
 - Latest instruction: “tạm dừng công việc đúng cách và an toàn”. Stop development; wait for explicit resumption.
-- Development was authorized by “bắt đầu dev theo plan”; source plan is `docs/RESEARCH_UPGRADE_PLAN_VI.md`. Its pre-existing uncommitted plan-only changes were preserved.
+- Development was authorized by “bắt đầu dev theo plan”; the historical source plan is frozen at [baseline 2ccf544](https://github.com/Minhlike/SPIDER/blob/2ccf544116f7c30b15345a83c8cd4eb8d0e802c3/docs/RESEARCH_UPGRADE_PLAN_VI.md). Current work is governed by `docs/MASTER_INVESTIGATION_ENGINE_PLAN_VI.md`.
 - All new code/tests remain in the working tree, unstaged and uncommitted. No commit, push or tag in this development turn.
 - No production backend/browser launched. No real subject investigation, credential file read, account validation or paid query in this turn. No edits to Uncover credential files, DPAPI/settings implementation or real credentials.
 - At pause, the scoped process inspection found no running project Python, pytest or Maigret worker process. The only test command launched in this turn finished with exit code 1. Nothing needed termination.
