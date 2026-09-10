@@ -36,6 +36,7 @@ controlled benchmark and limits; these measurements do not verify live sources.
 | `case_delta` | Evidence recorded after a prior digest snapshot; never an absence claim |
 | `get_evidence` | Scoped provenance, versions and artifact hash; no raw page payload |
 | `graph_neighbors` | Scoped edges, typed entities and potential transforms; no dispatch |
+| `explain_claim` | Scoped claim lifecycle and evidence-rule justification DAG |
 | `compare_runs` | Added identities and identities not observed in the later run |
 | `run_coverage` | Outcomes and gaps for one target and run |
 | `telemetry` | Measured latency and request sample counts; missing measurements stay unknown |
@@ -128,6 +129,12 @@ are integrity protected and reject another case, target, question or read
 surface. They contain no raw evidence or source content and expire on a service
 restart; request a fresh digest when that happens. `graph_neighbors` has the
 same snapshot/continuation contract for edges.
+
+The digest also evaluates versioned questions for the selected target. Each row
+is `ANSWERED`, `OPEN`, or `UNKNOWN`, includes evidence entity IDs or a concrete
+gap reason, and never converts missing collection into verified absence.
+`explain_claim` checks the same target scope, then returns the claim lifecycle
+and an acyclic evidence → rule → claim graph without raw provider payloads.
 
 `case_delta` takes a previous `case_digest` snapshot and returns only evidence
 recorded after that baseline. It has its own frozen page cursor. Empty delta and

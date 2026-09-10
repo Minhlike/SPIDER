@@ -77,6 +77,9 @@ class GraphRepository:
             existing.last_observed = max(existing.last_observed, assertion.last_observed.replace(tzinfo=None)) if existing.last_observed.tzinfo is None else max(existing.last_observed, assertion.last_observed)
             existing.confidence = max(existing.confidence, assertion.confidence)
             existing.independent_source_count = max(existing.independent_source_count, assertion.independent_source_count)
+            existing.resolver_version = assertion.resolver_version
+            existing.inference_rule = assertion.inference_rule
+            existing.metadata_json = {**(existing.metadata_json or {}), **assertion.metadata}
             # merge source families
             merged_families = list(set(existing.source_families + assertion.source_families))
             existing.source_families = merged_families

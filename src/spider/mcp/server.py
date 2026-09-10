@@ -32,6 +32,7 @@ class SpiderMCPServer:
                              "compare_runs", "run_coverage", "browser_trace", "phone_candidate_digest", "telemetry", "create_hypothesis", "list_hypotheses",
                              "run_capability", "action_status", "cancel_run", "annotate_evidence",
                              "resume_run",
+                             "explain_claim",
                              "list_cases", "list_targets"}:
             return {"error": "Unknown tool"}
         if tool_name in {"run_capability", "cancel_run", "resume_run"} and not self.service.is_running:
@@ -109,7 +110,7 @@ class SpiderMCPServer:
                         return await list_hypotheses(session, arguments["case_id"], arguments["target_id"], limit)
                 except (ValueError, KeyError):
                     return {"error": {"code": "INVALID_HYPOTHESIS_OR_SCOPE"}}
-            if tool_name in {"input_catalogue", "graph_neighbors", "compare_runs", "run_coverage", "browser_trace", "phone_candidate_digest", "telemetry",
+            if tool_name in {"input_catalogue", "graph_neighbors", "compare_runs", "run_coverage", "browser_trace", "phone_candidate_digest", "telemetry", "explain_claim",
                              "list_cases", "list_targets"}:
                 from spider.service import investigation_api as api
                 try:
@@ -125,6 +126,8 @@ class SpiderMCPServer:
                             return await api.graph_neighbors(session, self.service, arguments["case_id"],
                                 arguments["target_id"], arguments["entity_id"], arguments.get("limit", 20),
                                 arguments.get("after"), arguments.get("snapshot"))
+                        if tool_name == "explain_claim":
+                            return await api.explain_claim(*scope, arguments["claim_id"])
                         if tool_name == "compare_runs":
                             return await api.compare_runs(*scope, arguments["before_id"],
                                 arguments["after_id"], arguments.get("limit", 20), arguments.get("after"),

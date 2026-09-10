@@ -140,6 +140,12 @@ def create_server(service):
             "entity_id": entity_id, "limit": limit, "after": after, "snapshot": snapshot})
 
     @server.tool(annotations=read)
+    async def explain_claim(case_id: str, target_id: str, claim_id: str) -> dict:
+        """Read one scoped claim lifecycle and its evidence-rule justification DAG."""
+        return await dispatcher.handle_tool_call("explain_claim", {
+            "case_id": case_id, "target_id": target_id, "claim_id": claim_id})
+
+    @server.tool(annotations=read)
     async def input_catalogue() -> dict:
         """List input types with metered capabilities; availability is not live verification."""
         return await dispatcher.handle_tool_call("input_catalogue", {})

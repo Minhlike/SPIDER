@@ -283,6 +283,10 @@ async def test_navigation_annotation_retry_does_not_undo_newer_review(actions):
     async with service.db_manager.session_factory() as session:
         review = await session.scalar(select(EvidenceReviewRecord))
         assert review.role == "CONTRADICTING_EVIDENCE"
+    explanation = await service.explain_assertion(annotation["claim_id"])
+    assert explanation["claim_lifecycle"]["state"] == "CONTESTED"
+    assert any(edge["kind"] == "CONTRADICTS"
+               for edge in explanation["justification_dag"]["edges"])
     assert "error" in await server.handle_tool_call("annotate_evidence", {**annotation, "role": "UNKNOWN"})
     assert "error" in await server.handle_tool_call("annotate_evidence", {
         **annotation, "action_id": str(uuid4()), "observation_id": observations[-1].id})

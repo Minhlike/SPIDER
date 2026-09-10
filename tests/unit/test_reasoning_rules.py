@@ -1,7 +1,9 @@
 import pytest
+from types import SimpleNamespace
 
 from spider.models.enums import AssertionType, ObservableType
 from spider.resolution.rules import AssertionRuleRegistry, resolve_assertion_rule
+from spider.service.questions import QuestionRegistry, assess_questions
 
 
 def test_versioned_registry_resolves_specific_and_fallback_rules():
@@ -26,3 +28,29 @@ rules:
 ''', encoding="utf-8")
     with pytest.raises(ValueError, match="Conflicting assertion rules"):
         AssertionRuleRegistry(rules)
+
+
+def test_question_registry_reports_answered_and_open_without_absence_claim():
+    answered = assess_questions(SimpleNamespace(
+        seed=SimpleNamespace(observable_type="USERNAME"),
+        finding_entities=[SimpleNamespace(observable_type="ACCOUNT", id="account-1")]), [])
+    question = answered["questions"][0]
+    assert question["id"] == "USERNAME_PUBLIC_ACCOUNTS"
+    assert question["status"] == "ANSWERED" and question["answer_entity_ids"] == ["account-1"]
+    assert question["absence_verified"] is False
+
+    open_state = assess_questions(SimpleNamespace(
+        seed=SimpleNamespace(observable_type="EMAIL"), finding_entities=[]), [])
+    assert all(row["status"] == "OPEN" for row in open_state["questions"])
+    assert all(row["reason"] == "NO_COLLECTION_ATTEMPT" for row in open_state["unresolved_gaps"])
+
+
+def test_question_registry_rejects_duplicate_ids(tmp_path):
+    questions = tmp_path / "questions.yaml"
+    questions.write_text('''registry_version: "1.0.0"
+questions:
+  - {id: SAME_QUESTION, version: "1.0.0", input_types: [EMAIL], answer_entity_types: [ACCOUNT], next_capabilities: [PUBLIC_PROFILE_LOOKUP]}
+  - {id: SAME_QUESTION, version: "1.0.0", input_types: [USERNAME], answer_entity_types: [ACCOUNT], next_capabilities: [PUBLIC_PROFILE_LOOKUP]}
+''', encoding="utf-8")
+    with pytest.raises(ValueError, match="Question IDs must be unique"):
+        QuestionRegistry(questions)

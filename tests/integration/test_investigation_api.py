@@ -33,6 +33,14 @@ async def investigation(tmp_path):
             raw_data={"sentinel": "never-export-raw"}))
 
     async def seed_rows(session):
+        seeds = [Observation(
+            observable=NormalizedObservable(type=T.USERNAME, value=name),
+            lineage=SourceLineage(case_id=case["id"], seed_id=target["id"],
+                run_id="seed", task_id="seed", provider_id="seed_target",
+                provider_version="1", upstream_family="USER_SEED"))
+            for target, name in ((a, "alpha"), (b, "beta"))]
+        await ObservationRepository.append_observations_batch(session, seeds)
+        await service.resolution_engine.resolve_observations(session, seeds, case["id"])
         for seed, run, duration in ((a, "before", 10), (a, "after", 40), (b, "foreign", 900)):
             session.add(ProviderRunRecord(id=run, case_id=case["id"], status="COMPLETED",
                 metadata_json={"expected_sources": {seed["id"]: ["fixture"]}}))
@@ -85,6 +93,10 @@ async def test_competing_hypotheses_idempotence_and_scope(investigation):
 async def test_scoped_run_comparison_telemetry_and_graph(investigation):
     service, server, case, a, b, observations = investigation
     scope = {"case_id": case, "target_id": a}
+    digest = await server.handle_tool_call("case_digest", scope)
+    question = digest["question_state"]["questions"][0]
+    assert question["id"] == "USERNAME_PUBLIC_ACCOUNTS" and question["status"] == "ANSWERED"
+    assert not question["absence_verified"]
     diff = await server.handle_tool_call("compare_runs", {**scope, "before_id": "before", "after_id": "after"})
     assert diff["counts"] == {"added": 1, "not_observed": 1}
     assert not diff["absence_verified"]
@@ -114,6 +126,13 @@ async def test_scoped_run_comparison_telemetry_and_graph(investigation):
     graph = await server.handle_tool_call("graph_neighbors", {**scope, "entity_id": own["id"], "limit": 1})
     assert graph["evidence_ids"] == [observations[0].id]
     assert "never-export-raw" not in json.dumps(graph)
+    proof = await server.handle_tool_call("explain_claim", {
+        **scope, "claim_id": graph["edges"][0]["id"]})
+    assert proof["rule"]["version"] == "1.0.0"
+    assert proof["justification_dag"]["proof_complete"] is True
+    assert "never-export-raw" not in json.dumps(proof)
+    assert "error" in await server.handle_tool_call("explain_claim", {
+        "case_id": case, "target_id": b, "claim_id": graph["edges"][0]["id"]})
 
 
 @pytest.mark.asyncio

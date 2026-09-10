@@ -10,6 +10,7 @@ from spider.service.read_snapshot import make_cursor, make_snapshot, read_cursor
 from spider.service.evidence_analysis import public_url
 from spider.service.phone_candidates import public_phone_candidates
 from spider.storage.schema import TaskRunRecord, ProviderRunRecord, CaseRecord, TargetRecord
+from spider.explain.explainer import ExplainEngine
 
 
 async def list_context(session, case_id=None, limit=20, after=None):
@@ -33,6 +34,18 @@ async def list_context(session, case_id=None, limit=20, after=None):
              {"id": r.id, "name": r.name[:255], "status": r.status} for r in rows[:limit]]
     return {"items": items, "more": len(rows) > limit,
             "next_cursor": items[-1]["id"] if len(rows) > limit else None}
+
+
+async def explain_claim(session, case_id, target_id, claim_id):
+    view = await project(session, case_id, target_id)
+    if claim_id not in {assertion.id for assertion in view.assertions}:
+        raise ValueError("Claim outside target scope")
+    explanation = await ExplainEngine.explain_assertion(session, claim_id)
+    if explanation is None:
+        raise ValueError("Claim not found")
+    explanation["case_id"] = case_id
+    explanation["target_id"] = view.seed.id
+    return explanation
 
 
 def input_catalogue(service):

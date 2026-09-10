@@ -93,6 +93,14 @@ async def test_vertical_slice_subfinder_and_metabigor(tmp_path):
         assert explanation["rule"] == {
             "id": "ADDRESS_BELONGS_TO_ASN", "version": "1.0.0",
             "registry_version": "1.0.0", "evidence_requirement": "DIRECT_OBSERVATION"}
+        assert explanation["claim_lifecycle"]["state"] == "SUPPORTED_RELATION"
+        assert explanation["justification_dag"]["acyclic"] is True
+        assert explanation["justification_dag"]["proof_complete"] is True
+        assert any(edge["kind"] == "DERIVES" for edge in explanation["justification_dag"]["edges"])
+        node_ids = {node["id"] for node in explanation["justification_dag"]["nodes"]}
+        assert len(node_ids) == len(explanation["justification_dag"]["nodes"])
+        assert all(edge["from"] in node_ids and edge["to"] in node_ids
+                   for edge in explanation["justification_dag"]["edges"])
         assert len(explanation["evidence"]) > 0
 
         # 7. Test complete rebuild
