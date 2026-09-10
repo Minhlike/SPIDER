@@ -31,7 +31,7 @@
   "security_gate": "PASS: current-user Windows DPAPI, masked API, ignored local settings",
   "launcher_gate": "PASS: exact backend PID, duplicate prevention, readiness, graceful stop",
   "blockers": [],
-  "next_action": "Follow docs/MASTER_INVESTIGATION_ENGINE_PLAN_VI.md Phase P0-A browser correctness.",
+  "next_action": "Follow docs/MASTER_INVESTIGATION_ENGINE_PLAN_VI.md Phase P0-B durable frontier/checkpoint/resume and per-run Stop.",
   "web_ui": {
     "host": "127.0.0.1",
     "port": 8765,
@@ -46,9 +46,9 @@
     "plan": "docs/MASTER_INVESTIGATION_ENGINE_PLAN_VI.md",
     "report": "docs/AGENT_INVESTIGATION_INCREMENT_3.md",
     "offline_gate": {
-      "passed": 469,
+      "passed": 471,
       "deselected": 0,
-      "seconds": 242.51,
+      "seconds": 219.79,
       "chromium_ui_included": 14,
       "real_stdio_tests": 2
     },

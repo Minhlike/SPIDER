@@ -588,8 +588,8 @@ Mỗi phase phải ghi:
 |---|---|
 | Inventory/architecture/gap audit | **FACT — hoàn thành cho source/config/tests/docs liên quan; vendor/generated code không review thủ công** |
 | Hợp nhất plan | **FACT — tài liệu này là master duy nhất** |
-| Nullable time/request budget | **EXPERIMENT RESULT — implementation và full suite 469 tests PASS ngày 10/09/2026** |
-| P0-A browser correctness | **NOT YET VERIFIED / chưa triển khai trong master** |
+| Nullable time/request budget | **EXPERIMENT RESULT — implementation và full suite 471 tests PASS ngày 10/09/2026** |
+| P0-A browser correctness | **EXPERIMENT RESULT — exact route/access precedence/query-echo/merge/preflight regressions PASS trên fixture; Cốc Cốc live version matrix chưa kiểm chứng** |
 | Durable checkpoint/resume + per-run Stop | **PARTIAL — action cancel và shutdown cancel có; full engine checkpoint chưa có** |
 | Rule registry/planning/proof graph | **NOT YET VERIFIED** |
 | Username vertical slice v2 | **NOT YET VERIFIED** |

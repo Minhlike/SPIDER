@@ -9,7 +9,7 @@ from spider.providers.browser.coccoc import (
     CocCocBrowserAdapter, apply_negative_control, classify_direct_candidate, classify_direct_result,
     apply_indexed_profile_candidates, browser_start_reason, candidate_has_username, coccoc_profile,
     coccoc_search_url, host_matches, indexed_profile_candidates,
-    safe_result_url,
+    safe_result_url, select_search_candidate,
 )
 
 
@@ -35,18 +35,28 @@ def test_direct_candidate_requires_host_path_and_non_login_response():
 
 def test_direct_classifier_uses_declared_profile_url_and_preserves_access_failures():
     assert classify_direct_result("threads.com", "alice", 200,
-        "https://www.threads.com/@alice", "Threads", "Profile shell",
+        "https://www.threads.com/@alice", "Alice on Threads", "Public posts by @alice",
         ["https://www.threads.com/@alice"])[0] == "CANDIDATE"
     assert classify_direct_result("tiktok.com", "alice", 429,
         "https://www.tiktok.com/@alice", "TikTok", "Too many requests")[0] == "RATE_LIMITED"
     assert classify_direct_result("tiktok.com", "alice", 403,
         "https://www.tiktok.com/@alice", "Security check", "captcha")[0] == "BLOCKED"
+    assert classify_direct_result("instagram.com", "alice", 403,
+        "https://www.instagram.com/alice/", "Access check",
+        "This page isn't available until you log in")[0] == "BLOCKED"
+    assert classify_direct_result("threads.com", "alice", 200,
+        "https://www.threads.com/@alice", "Threads", "Generic application shell",
+        ["https://www.threads.com/@alice"])[0] == "UNKNOWN"
 
 
 def test_coccoc_search_url_encodes_query_and_account_requires_path_match():
     assert coccoc_search_url('site:zalo.me "alice doe"') == \
         "https://coccoc.com/search?query=site%3Azalo.me+%22alice+doe%22"
     assert candidate_has_username("https://www.instagram.com/alice/", "alice")
+    assert not candidate_has_username("https://www.instagram.com/notalice/", "alice")
+    assert not candidate_has_username("https://www.tiktok.com/@alice/video/123", "alice")
+    assert not candidate_has_username("https://x.com/alice/status/123", "alice")
+    assert candidate_has_username("https://www.linkedin.com/in/alice/", "alice")
     assert not candidate_has_username("https://zalo.me/s/article-123", "alice")
 
 
@@ -60,10 +70,30 @@ def test_indexed_profile_fallback_keeps_explicit_absence_and_marks_search_candid
     candidates = indexed_profile_candidates(links, "alice")
     merged = apply_indexed_profile_candidates(rows, candidates, "COCCOC_SEARCH_RESULT")
 
-    assert merged[0]["state"] == "CANDIDATE"
-    assert merged[0]["reason"] == "COCCOC_SEARCH_RESULT"
-    assert merged[0]["direct_outcome"] == "LOGIN_REQUIRED"
-    assert merged[1]["state"] == "NOT_FOUND"
+    assert merged[0]["state"] == "LOGIN_REQUIRED"
+    assert merged[0]["reason"] == "LOGIN_WALL"
+    assert merged[1]["kind"] == "search_lead"
+    assert merged[1]["state"] == "CANDIDATE"
+    assert merged[1]["direct_outcome"] == "LOGIN_REQUIRED"
+    assert merged[2]["state"] == "NOT_FOUND"
+
+
+def test_indexed_profile_candidates_reject_posts_and_substring_handles():
+    links = [
+        "https://www.instagram.com/notalice/",
+        "https://www.tiktok.com/@alice/video/123",
+        "https://www.threads.com/@alice/post/ABC",
+    ]
+    assert indexed_profile_candidates(links, "alice") == {}
+
+
+def test_email_search_candidate_cannot_be_proved_by_query_echo():
+    unrelated = [{"href": "https://zalo.me/s/public-article", "text": "Public article"}]
+    matching = [{"href": "https://zalo.me/s/public-article",
+                 "text": "Contact owner@example.test"}]
+    assert select_search_candidate(unrelated, "zalo.me", "owner@example.test", True) is None
+    assert select_search_candidate(matching, "zalo.me", "owner@example.test", True) == \
+        "https://zalo.me/s/public-article"
 
 
 def test_negative_control_can_promote_only_a_differential_response():

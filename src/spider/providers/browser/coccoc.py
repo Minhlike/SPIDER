@@ -99,11 +99,27 @@ def coccoc_search_url(query: str) -> str:
 
 
 def candidate_has_username(url: str, username: str) -> bool:
-    """Require the canonical username in the public result path before creating ACCOUNT."""
+    """Require an exact profile route, never a substring or post route."""
     try:
-        return username.casefold() in unquote(urlsplit(url).path).casefold()
+        parsed = urlsplit(url)
+        host = (parsed.hostname or "").casefold()
+        parts = [part.casefold() for part in unquote(parsed.path).split("/") if part]
     except (TypeError, ValueError):
         return False
+    username_key = username.lstrip("@").casefold()
+    if not username_key:
+        return False
+    if host_matches(url, "linkedin.com"):
+        return len(parts) == 2 and parts == ["in", username_key]
+    if host_matches(url, "instagram.com") or host_matches(url, "facebook.com") \
+            or host_matches(url, "github.com") or host_matches(url, "x.com"):
+        return parts == [username_key]
+    if host_matches(url, "threads.com") or host_matches(url, "tiktok.com") \
+            or host_matches(url, "youtube.com"):
+        return parts == [f"@{username_key}"]
+    if host_matches(url, "zalo.me"):
+        return parts == [username_key]
+    return False
 
 
 def indexed_profile_candidates(links, username: str) -> dict[str, str]:
@@ -120,6 +136,21 @@ def indexed_profile_candidates(links, username: str) -> dict[str, str]:
     return candidates
 
 
+def select_search_candidate(links, host: str, identifier: str, require_text=False):
+    """Select a host result using link-local text, never the SERP query echo."""
+    identifier_key = identifier.casefold()
+    for item in links:
+        href = item.get("href") if isinstance(item, dict) else item
+        anchor_text = item.get("text", "") if isinstance(item, dict) else ""
+        safe = safe_result_url(href)
+        if not safe or not host_matches(safe, host):
+            continue
+        if require_text and identifier_key not in f"{unquote(safe)}\n{anchor_text}".casefold():
+            continue
+        return safe
+    return None
+
+
 def apply_indexed_profile_candidates(rows, candidates, search_outcome):
     """Use search only as a lower-confidence fallback, never to erase a definite absence."""
     merged = []
@@ -127,12 +158,17 @@ def apply_indexed_profile_candidates(rows, candidates, search_outcome):
         result = dict(row)
         source = result.get("source")
         candidate = candidates.get(source)
-        if (candidate and result.get("state") != "NOT_FOUND"
+        if (candidate and result.get("state") not in {"NOT_FOUND", "CANDIDATE"}
                 and source in SEARCH_FALLBACK_SOURCES):
-            result.update(state="CANDIDATE", reason="COCCOC_SEARCH_RESULT", url=candidate,
-                          account_candidate=True, search_engine=SEARCH_ENGINE_NAME,
-                          direct_outcome=row.get("state"),
-                          direct_reason=row.get("reason"))
+            result["search_fallback_outcome"] = "COCCOC_SEARCH_RESULT"
+            merged.append(result)
+            merged.append({"kind": "search_lead", "source": source,
+                           "state": "CANDIDATE", "reason": "COCCOC_SEARCH_RESULT",
+                           "url": candidate, "account_candidate": True,
+                           "search_engine": SEARCH_ENGINE_NAME,
+                           "direct_outcome": row.get("state"),
+                           "direct_reason": row.get("reason")})
+            continue
         elif source in SEARCH_FALLBACK_SOURCES:
             result["search_fallback_outcome"] = search_outcome
         merged.append(result)
@@ -147,15 +183,13 @@ def classify_direct_candidate(expected_host: str, username: str, status: int | N
 def classify_direct_result(expected_host: str, username: str, status: int | None,
                            final_url: str, title: str, body: str,
                            declared_urls=()) -> tuple[str, str]:
-    if status in (404, 410):
-        return "NOT_FOUND", "HTTP_NOT_FOUND"
     text = f"{title}\n{body[:100000]}".casefold()
-    if any(marker in text for marker in NEGATIVE_MARKERS):
-        return "NOT_FOUND", "NEGATIVE_PAGE_MARKER"
     if status == 429 or any(marker in text for marker in RATE_LIMIT_MARKERS):
         return "RATE_LIMITED", "RATE_LIMIT"
     if status in (401, 403) or any(marker in text for marker in CHALLENGE_MARKERS):
         return "BLOCKED", "CHALLENGE_OR_ACCESS_DENIED"
+    if status in (404, 410):
+        return "NOT_FOUND", "HTTP_NOT_FOUND"
     try:
         path = unquote(urlsplit(final_url).path).casefold()
     except ValueError:
@@ -163,14 +197,12 @@ def classify_direct_result(expected_host: str, username: str, status: int | None
     login_surface = f"{title}\n{urlsplit(final_url).path}".casefold()
     if any(marker in login_surface for marker in LOGIN_MARKERS):
         return "LOGIN_REQUIRED", "LOGIN_WALL"
-    username_key = username.casefold()
-    declared_match = any(
-        isinstance(url, str) and host_matches(url, expected_host)
-        and username_key in unquote(urlsplit(url).path).casefold()
-        for url in declared_urls
-    )
+    if (status is not None and 200 <= status < 400
+            and any(marker in text for marker in NEGATIVE_MARKERS)):
+        return "NOT_FOUND", "NEGATIVE_PAGE_MARKER"
     if (status is not None and 200 <= status < 400 and host_matches(final_url, expected_host)
-            and username_key in path and (username_key in text or declared_match)):
+            and candidate_has_username(final_url, username)
+            and username.lstrip("@").casefold() in text):
         return "CANDIDATE", "PROFILE_PAGE_SIGNALS"
     return "UNKNOWN", "INSUFFICIENT_PAGE_SIGNALS"
 
@@ -201,7 +233,7 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
 
     def provider_id(self): return "coccoc_browser"
     def version(self): return "local-coccoc"
-    def adapter_version(self): return "1.2.0"
+    def adapter_version(self): return "1.3.0"
     def capabilities(self): return ["BROWSER_PERSONAL_DISCOVERY"]
     def network_class(self): return NetworkClass.THIRD_PARTY_ONLY
     def accepts(self): return [ObservableType.EMAIL, ObservableType.USERNAME]
@@ -303,14 +335,6 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 rows = []
                 timeout_ms = int(min(15, max(3, options.get("timeout_seconds", 180) / 12)) * 1000)
 
-                # Do one identifier-free navigation before attempting the eleven
-                # platform checks.  A broken browser network path previously
-                # became eleven misleading per-site errors and consumed roughly
-                # ninety seconds.  This preflight is metered by the same route
-                # interceptor and is recorded as normal browser egress.
-                if not await self._network_preflight(context, timeout_ms):
-                    return [], "REQUEST_LIMIT" if exhausted else "BROWSER_NETWORK_UNAVAILABLE"
-
                 if target.type == ObservableType.USERNAME:
                     username = target.canonical_value.lstrip("@")
                     parallel_tabs = min(3, max(1, int(options.get("browser_parallel_tabs", 3))))
@@ -360,28 +384,6 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 if recorder:
                     for receipt in list(receipts.values()):
                         await recorder.finish(receipt, "NO_RESPONSE")
-
-    async def _network_preflight(self, context, timeout_ms):
-        """Check that the launched browser can reach a neutral public page.
-
-        No target value is included in this request.  Detailed Playwright
-        errors are intentionally discarded because they may contain local
-        profile paths or browser configuration.
-        """
-        page = None
-        try:
-            page = await context.new_page()
-            response = await page.goto("https://example.com/", wait_until="domcontentloaded",
-                                       timeout=timeout_ms)
-            return bool(response and 200 <= response.status < 500)
-        except Exception:
-            return False
-        finally:
-            if page is not None:
-                try:
-                    await page.close()
-                except Exception:
-                    pass
 
     async def _collect_direct_sources(self, context, username, timeout_ms,
                                       is_exhausted, parallel_tabs=3):
@@ -482,7 +484,7 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
             await page.goto(coccoc_search_url(f'"{username}"'), wait_until="domcontentloaded",
                             timeout=min(timeout_ms, 8000))
             links = await page.locator("a[href]").evaluate_all(
-                "els => els.slice(0, 500).map(a => a.href)"
+                "els => els.slice(0, 500).map(a => ({href: a.href, text: a.innerText || a.textContent || ''}))"
             )
         except Exception:
             return apply_indexed_profile_candidates(direct_rows, {}, "SEARCH_ENGINE_UNAVAILABLE")
@@ -505,9 +507,8 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                     "reason": "SEARCH_ENGINE_UNAVAILABLE", "url": None,
                     "search_engine": SEARCH_ENGINE_NAME,
                     "content_sha256": hashlib.sha256(b"").hexdigest()}
-        candidate = next((safe for url in links if (safe := safe_result_url(url))
-                          and host_matches(safe, host)), None)
-        valid = bool(candidate and (not require_text or identifier.casefold() in page_text))
+        candidate = select_search_candidate(links, host, identifier, require_text)
+        valid = candidate is not None
         return {"kind": "site", "source": source,
                 "state": "CANDIDATE" if valid else "UNKNOWN",
                 "reason": "COCCOC_SEARCH_RESULT" if valid else "NO_EXACT_SEARCH_RESULT",
@@ -537,21 +538,22 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                                               kwargs.get("browser_action_id"))
         raw = "\n".join(json.dumps(row, ensure_ascii=False) for row in rows).encode("utf-8")
         observations = self.parse(raw, lineage)
+        site_rows = [row for row in rows if row.get("kind") != "search_lead"]
         selected = len(DIRECT_USERNAME_SOURCES) + len(SEARCH_SOURCES)
         candidates = sum(row.get("state") == "CANDIDATE" for row in rows)
-        not_found = sum(row.get("state") == "NOT_FOUND" for row in rows)
-        unprocessed = sum(row.get("state") == "UNPROCESSED" for row in rows) + max(0, selected - len(rows))
-        undecided = len(rows) - candidates - not_found - sum(
-            row.get("state") == "UNPROCESSED" for row in rows)
-        controls = [row.get("control_state") for row in rows if "control_state" in row]
-        fallback_outcomes = [row.get("search_fallback_outcome") for row in rows
+        not_found = sum(row.get("state") == "NOT_FOUND" for row in site_rows)
+        unprocessed = sum(row.get("state") == "UNPROCESSED" for row in site_rows) + max(0, selected - len(site_rows))
+        undecided = len(site_rows) - sum(row.get("state") == "CANDIDATE" for row in site_rows) \
+            - not_found - sum(row.get("state") == "UNPROCESSED" for row in site_rows)
+        controls = [row.get("control_state") for row in site_rows if "control_state" in row]
+        fallback_outcomes = [row.get("search_fallback_outcome") for row in site_rows
                              if row.get("source") in SEARCH_FALLBACK_SOURCES]
         fallback_outcome = ("COCCOC_SEARCH_RESULT" if any(
                                 row.get("reason") == "COCCOC_SEARCH_RESULT"
                                 and row.get("source") in SEARCH_FALLBACK_SOURCES for row in rows)
                             else "SEARCH_ENGINE_UNAVAILABLE" if "SEARCH_ENGINE_UNAVAILABLE" in fallback_outcomes
                             else "NO_EXACT_SEARCH_RESULT" if fallback_outcomes else "NOT_RUN")
-        coverage = {"selected": selected, "checked": len(rows), "found": candidates,
+        coverage = {"selected": selected, "checked": len(site_rows), "found": candidates,
                     "not_found": not_found, "unknown": undecided,
                     "unprocessed": unprocessed,
                     "controls_pending": 0,
@@ -567,9 +569,9 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                     "priority_sites": {row.get("source", "unknown"): {
                         "outcome": row.get("state", "UNKNOWN"),
                         "reason": row.get("reason", "NOT_YET_VERIFIED")
-                    } for row in rows}}
+                    } for row in site_rows}}
         fatal_browser_failure = reason in FATAL_BROWSER_REASONS
-        complete = reason is None and len(rows) == selected and undecided == 0
+        complete = reason is None and len(site_rows) == selected and undecided == 0
         if reason is None and not complete:
             reason = "UNRESOLVED_SOURCES"
         errors = {"PROFILE_IN_USE": "Cốc Cốc đang mở với profile này; hãy đóng Cốc Cốc rồi chạy lại để SPIDER mở các tab điều tra.",

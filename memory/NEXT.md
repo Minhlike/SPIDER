@@ -12,14 +12,18 @@ Current verified baseline before this work: `2ccf544116f7c30b15345a83c8cd4eb8d0e
 Current slice:
 
 - audit and plan consolidation complete;
-- nullable total time/request budgets implemented; full suite 469 tests PASS in
-  242.51 seconds on 10/09/2026;
+- nullable total time/request budgets and P0-A browser correctness implemented;
+  full suite 471 tests PASS in 219.79 seconds on 10/09/2026;
 - provider quotas, rate limits, per-action timeout, concurrency, dedup and policy
   remain enforced in unlimited mode;
 - final diff/document review completed; the suite included its existing public/
   reserved live-smoke targets, but no user identifier, API secret or personal
   Cốc Cốc profile was used;
-- Phase P0-A browser correctness is next after the current slice is closed.
+- Phase P0-A browser correctness is implemented on fixtures: exact profile
+  routes, access-state precedence, query-echo rejection, separate search leads
+  and per-origin failures. Live Cốc Cốc version/session reliability remains
+  NOT YET VERIFIED.
+- Next: finish Phase P0-B durable frontier/checkpoint/resume and per-run Stop.
 
 Do not claim manual-investigation parity, live browser reliability, provider
 adoption or the full reasoning engine complete without the master plan gates.
