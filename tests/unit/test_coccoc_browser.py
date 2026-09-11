@@ -8,7 +8,7 @@ from spider.models.provenance import SourceLineage
 from spider.providers.browser.coccoc import (
     CocCocBrowserAdapter, apply_negative_control, classify_direct_candidate, classify_direct_result,
     apply_indexed_profile_candidates, browser_start_reason, candidate_has_username, coccoc_profile,
-    coccoc_search_url, host_matches, indexed_profile_candidates,
+    coccoc_search_url, DIRECT_USERNAME_SOURCES, SEARCH_ENGINE_NAME, host_matches, indexed_profile_candidates,
     safe_result_url, select_search_candidate,
 )
 
@@ -96,6 +96,30 @@ def test_email_search_candidate_cannot_be_proved_by_query_echo():
         "https://zalo.me/s/public-article"
 
 
+@pytest.mark.asyncio
+async def test_site_search_returns_a_lead_not_a_verified_site():
+    class Locator:
+        async def inner_text(self, **_kwargs):
+            return "alice"
+
+        async def evaluate_all(self, _script):
+            return ["https://github.com/alice"]
+
+    class Page:
+        async def goto(self, *_args, **_kwargs):
+            return None
+
+        def locator(self, _selector):
+            return Locator()
+
+    row = await CocCocBrowserAdapter()._search_one(
+        Page(), "GitHub", "github.com", "alice", 1000)
+    assert row["state"] == "CANDIDATE"
+    assert row["kind"] == "search_lead"
+    assert row["account_candidate"] is False
+    assert row["profile_shaped"] is True
+
+
 def test_negative_control_can_promote_only_a_differential_response():
     row = {"state": "UNKNOWN", "reason": "INSUFFICIENT_PAGE_SIGNALS"}
     promoted = apply_negative_control(row, "NOT_FOUND")
@@ -150,7 +174,7 @@ def test_parser_keeps_candidates_unverified_and_rejects_unlisted_hosts():
     assert {obs.confidence for obs in observations} == {0.55}
 
 
-def test_search_result_creates_account_only_for_a_profile_shaped_url():
+def test_search_result_remains_a_url_lead_until_profile_revalidation():
     raw = b'\n'.join([
         json.dumps({"source": "Instagram", "state": "CANDIDATE",
                     "reason": "COCCOC_SEARCH_RESULT", "account_candidate": True,
@@ -165,9 +189,63 @@ def test_search_result_creates_account_only_for_a_profile_shaped_url():
 
     observations = CocCocBrowserAdapter().parse(raw, lineage)
 
-    assert {obs.observable.type for obs in observations} == {ObservableType.ACCOUNT, ObservableType.URL}
-    assert sum(obs.observable.type == ObservableType.ACCOUNT for obs in observations) == 1
-    assert all(obs.raw_data["match_basis"] == "coccoc_search_candidate" for obs in observations)
+    assert len(observations) == 2
+    assert {obs.observable.type for obs in observations} == {ObservableType.URL}
+    assert all(obs.raw_data["match_basis"] == "coccoc_search_lead" for obs in observations)
+
+
+def test_revalidated_search_lead_creates_an_account_linked_from_its_url():
+    raw = json.dumps({"source": "Instagram", "state": "CANDIDATE",
+        "reason": "SEARCH_LEAD_REVALIDATED", "account_candidate": True,
+        "url": "https://www.instagram.com/alice/", "search_engine": "Cốc Cốc"}).encode()
+    lineage = SourceLineage(case_id="c", run_id="r", task_id="t",
+        provider_id="coccoc_browser", provider_version="local-coccoc",
+        parent_observable_value="alice", parent_observable_type=ObservableType.USERNAME)
+
+    observations = CocCocBrowserAdapter().parse(raw, lineage)
+
+    account = next(obs for obs in observations if obs.observable.type == ObservableType.ACCOUNT)
+    assert account.lineage.parent_observable_type == ObservableType.URL
+    assert account.lineage.parent_observable_value == "https://www.instagram.com/alice/"
+    assert account.raw_data["match_basis"] == "coccoc_search_lead_revalidated"
+    assert account.raw_data["identity_verified"] is False
+
+
+@pytest.mark.asyncio
+async def test_search_leads_are_revalidated_with_bounded_tabs(monkeypatch):
+    adapter = CocCocBrowserAdapter()
+    active = 0
+    peak = 0
+
+    async def inspect(_context, source, _host, _username, requested_url, _timeout_ms):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        return {"kind": "site", "source": source, "state": "CANDIDATE",
+                "reason": "PROFILE_PAGE_SIGNALS", "url": requested_url,
+                "http_status": 200, "content_sha256": "a" * 64}
+
+    monkeypatch.setattr(adapter, "_inspect_direct_source", inspect)
+    direct = [{"kind": "site", "source": source, "state": "LOGIN_REQUIRED",
+               "reason": "LOGIN_WALL"} for source in ("Instagram", "Threads", "TikTok")]
+    leads = [{"kind": "search_lead", "source": source, "state": "CANDIDATE",
+              "reason": "COCCOC_SEARCH_RESULT", "account_candidate": False,
+              "url": url.format(username="alice"), "direct_outcome": "LOGIN_REQUIRED",
+              "direct_reason": "LOGIN_WALL"}
+             for source, _host, url in DIRECT_USERNAME_SOURCES
+             if source in {"Instagram", "Threads", "TikTok"}]
+
+    rows = await adapter._revalidate_search_leads(
+        None, "alice", direct + leads, lambda: False, 1000, parallel_tabs=3)
+
+    promoted = [row for row in rows if row.get("reason") == "SEARCH_LEAD_REVALIDATED"]
+    retained_leads = [row for row in rows if row.get("kind") == "search_lead"]
+    assert len(promoted) == 3 and len(retained_leads) == 3
+    assert all(row["account_candidate"] is False and row["revalidation_state"] == "CANDIDATE"
+               for row in retained_leads)
+    assert peak == 3
 
 
 @pytest.mark.asyncio
@@ -190,6 +268,34 @@ async def test_execute_reports_fixture_candidates_without_opening_browser(monkey
     assert workflow["automatic_replay"] is False
     assert workflow["steps"][0]["content_sha256"]
     assert len(result.observations) == 2
+
+
+@pytest.mark.asyncio
+async def test_execute_keeps_unverified_search_lead_as_partial_url_only(monkeypatch):
+    adapter = CocCocBrowserAdapter()
+
+    async def collect(_target, _options):
+        return [{"kind": "search_lead", "source": "Instagram", "state": "CANDIDATE",
+                 "reason": "COCCOC_SEARCH_RESULT", "account_candidate": False,
+                 "url": "https://www.instagram.com/alice/", "search_engine": "Cốc Cốc",
+                 "revalidation_state": "BLOCKED", "revalidation_reason": "CHALLENGE_OR_ACCESS_DENIED"}], None
+
+    monkeypatch.setattr(adapter, "_collect", collect)
+    from spider.models.observable import NormalizedObservable
+    target = NormalizedObservable(type=ObservableType.USERNAME, value="alice")
+    lineage = SourceLineage(case_id="c", run_id="r", task_id="t",
+        provider_id="coccoc_browser", provider_version="local-coccoc",
+        parent_observable_value="alice", parent_observable_type=ObservableType.USERNAME)
+
+    result = await adapter.execute(target, lineage)
+
+    assert result.outcome == "PARTIAL"
+    assert result.metadata["coverage"]["found"] == 0
+    assert result.metadata["coverage"]["search_discovery"] == {
+        "engine": SEARCH_ENGINE_NAME, "outcome": "COCCOC_SEARCH_RESULT",
+        "candidate_profiles": 0, "unverified_leads": 1}
+    assert len(result.observations) == 1
+    assert result.observations[0].observable.type == ObservableType.URL
 
 
 @pytest.mark.asyncio

@@ -307,11 +307,25 @@ def test_research_controls_light_default_and_empty_result_explanation(offline_pa
         Instagram: {outcome: 'UNKNOWN', reason: 'LOGIN_REQUIRED'},
         Threads: {outcome: 'UNKNOWN', reason: 'PARSER_DRIFT'},
         TikTok: {outcome: 'UNKNOWN', reason: 'BLOCKED'}
-      }
+      },
+      search_discovery: {engine: 'Cốc Cốc', outcome: 'COCCOC_SEARCH_RESULT',
+        candidate_profiles: 1, unverified_leads: 2}
     }})""")
     assert "Instagram: Cần đăng nhập để đọc tiếp" in diagnostic
     assert "Threads: Trang đã thay đổi, công cụ chưa đọc chính xác được" in diagnostic
     assert "TikTok: Nguồn yêu cầu kiểm tra truy cập, chưa đọc được dữ liệu" in diagnostic
+    assert "1 hồ sơ đã mở lại và cần đối chiếu chủ tài khoản" in diagnostic
+    assert "2 liên kết tìm kiếm chưa xác minh" in diagnostic
+    english_diagnostic = page.evaluate("""() => {
+      currentLanguage = 'en';
+      const value = coverageDescription({coverage: {selected: 1, checked: 1, found: 1,
+        search_discovery: {engine: 'Cốc Cốc', outcome: 'COCCOC_SEARCH_RESULT',
+          candidate_profiles: 1, unverified_leads: 1}}});
+      currentLanguage = 'vi';
+      return value;
+    }""")
+    assert "1 reopened profile needing ownership corroboration" in english_diagnostic
+    assert "1 unverified search link" in english_diagnostic
     assert not errors
 
 

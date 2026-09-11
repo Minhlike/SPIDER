@@ -76,7 +76,11 @@ Question (`all`, `public_profiles`, `infrastructure`), registered capability,
 adapter acceptance, request metering and stored target authorization are checked
 before admission and again before execution. An authorized seed does not authorize
 direct access to a linked entity. `browser_assisted=true` expresses browser intent
-for the existing browser capability; it does not enable the planned M4 workflow.
+for the existing browser capability. Its current USERNAME workflow records
+sanitized `READ_PROFILE`, `SEARCH_INDEX` and `REVALIDATE_PROFILE` steps. A
+search-result URL remains a lead until the exact profile route is reopened; even
+then ACCOUNT ownership is unverified and requires corroboration. The live
+session/holdout gate remains unverified.
 
 Defaults: 20 request attempts, 20 entity admissions including the input, 60 seconds.
 Limits: requests/entities 1–100, timeout 1–120 seconds plus adapter cleanup grace.

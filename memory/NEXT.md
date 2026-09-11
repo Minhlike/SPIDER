@@ -1,6 +1,6 @@
 # Current development pointer
 
-Updated: 11/09/2026.
+Updated: 12/09/2026.
 
 The only active development plan is
 `docs/MASTER_INVESTIGATION_ENGINE_PLAN_VI.md`. Historical handoffs, increment
@@ -16,7 +16,10 @@ Current slice:
   durable Stop/checkpoint/resume implemented; P0-C versioned direct-edge rule
   registry, question/gap projection, claim lifecycle and scoped justification
   DAG, deterministic plan preview and source-specific DNS TTL revalidation
-  implemented; full suite 486 tests PASS in 227.55 seconds on 11/09/2026;
+  implemented; Phase P1-A now keeps search-index hits as URL leads and reopens
+  exact Instagram/Threads/TikTok routes with at most three owned tabs before
+  emitting an ACCOUNT candidate. The full suite is 490 tests PASS in 214.06
+  seconds on 12/09/2026;
 - provider quotas, rate limits, per-action timeout, concurrency, dedup and policy
   remain enforced in unlimited mode;
 - final diff/document review completed; the suite included its existing public/
@@ -41,8 +44,15 @@ Current slice:
   `plan_preview` reproduces the same candidate plan/fingerprint from the same
   scoped snapshot and never dispatches. DNS TTL now marks revalidation due
   without claiming disappearance; malformed/cross-provider rules fail closed.
-  P0-C is PASS on fixtures. Next: Phase P1-A USERNAME vertical slice; retain the
-  live/manual holdout gates before any parity claim.
+  P0-C is PASS on fixtures.
+- P1-A USERNAME is partial on fixtures: direct checks remain authoritative;
+  Cốc Cốc results cannot promote an ACCOUNT by themselves; a successful exact
+  route revalidation records USERNAME → URL → ACCOUNT lineage and keeps
+  ownership unverified. Blocked/unopened leads remain URL-only and PARTIAL.
+  Coverage and VI/EN UI now distinguish revalidated profiles from unverified
+  search links. Next: add sanitized self-published outbound link evidence and
+  reciprocal proof, then run the consented live/manual holdout before any parity
+  claim.
 
 Do not claim manual-investigation parity, live browser reliability, provider
 adoption or the full reasoning engine complete without the master plan gates.

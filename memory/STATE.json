@@ -42,13 +42,13 @@
   "current_development": {
     "baseline_head": "069fa49a2b9eb500f1fa150775547d3851d2b509",
     "phase": "MASTER_INVESTIGATION_ENGINE_P1_A",
-    "status": "P0_C_FIXTURE_PASS_P1_A_NEXT",
+    "status": "P0_C_PASS_P1_A_FIXTURE_PARTIAL",
     "plan": "docs/MASTER_INVESTIGATION_ENGINE_PLAN_VI.md",
     "report": "docs/AGENT_INVESTIGATION_INCREMENT_3.md",
     "offline_gate": {
-      "passed": 486,
+      "passed": 490,
       "deselected": 0,
-      "seconds": 227.55,
+      "seconds": 214.06,
       "chromium_ui_included": 15,
       "real_stdio_tests": 2
     },
@@ -64,8 +64,9 @@
     "m3_gate": "PASS_FIXTURE_NOT_LIVE_VERIFIED",
     "m1_gate": "PARTIAL_STABLE_SNAPSHOTS_AND_SCOPED_CONTINUATION",
     "m1_remaining": "HARD_BOUND_REACHABLE_PROJECTION_NOT_YET_VERIFIED",
-    "latest_development_head": "UNCOMMITTED_AFTER_01e4a4b80313ead36d958f120cfe46fd483607b1",
-    "m4_gate": "PARTIAL_FIXTURE_OWNED_TAB_TRACE_NO_LIVE_BENCHMARK",
+    "latest_development_head": "UNCOMMITTED_AFTER_d6e50506aa2c4fde135ff0af5d451e7d3ffc6c44",
+    "m4_gate": "PARTIAL_FIXTURE_SEARCH_LEAD_REVALIDATION_3_TAB_BOUND_NO_LIVE_BENCHMARK",
+    "p1_a_gate": "PARTIAL_FIXTURE_DIRECT_SEARCH_LEAD_REVALIDATE_PASS_OUTBOUND_RECIPROCAL_AND_LIVE_HOLDOUT_PENDING",
     "m5_gate": "PARTIAL_PUBLIC_CANDIDATE_PIPELINE_NO_CONSENTED_HOLDOUT",
     "m6_gate": "PARTIAL_MEASURED_UTILITY_AND_NONDISPATCHING_ADVICE_UNCALIBRATED"
   }

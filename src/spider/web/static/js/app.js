@@ -915,10 +915,22 @@ function coverageDescription(source) {
     return `${name}: ${outcome}`;
   }).join(" · ");
   const search = c.search_discovery;
-  const searchCandidates = search?.candidate_profiles ? (currentLanguage === "vi"
-    ? ` (${search.candidate_profiles} ứng viên)` : ` (${search.candidate_profiles} candidates)`) : "";
-  const searchNote = search && search.engine ? `${search.engine}: ${friendlyLabel(search.outcome || "UNKNOWN")}${searchCandidates}` : "";
-  const summary = `${c.checked || 0}/${c.selected || 0} website đã thử kiểm tra · ${c.found || 0} ứng viên tài khoản · ${c.not_found || 0} không thấy · ${c.unknown || 0} chưa xác định · ${c.invalid || 0} username không hợp lệ · ${c.unprocessed || 0} chưa xử lý · ${c.non_unique_detections || 0} kết quả không phân biệt được với đối chứng · ${(c.controls_pending || 0) + (c.controls_unknown || 0)} đối chứng chưa kết luận`;
+  const searchParts = [];
+  if (search?.candidate_profiles) {
+    searchParts.push(currentLanguage === "vi"
+      ? `${search.candidate_profiles} hồ sơ đã mở lại và cần đối chiếu chủ tài khoản`
+      : `${search.candidate_profiles} reopened ${search.candidate_profiles === 1 ? "profile" : "profiles"} needing ownership corroboration`);
+  }
+  if (search?.unverified_leads) {
+    searchParts.push(currentLanguage === "vi"
+      ? `${search.unverified_leads} liên kết tìm kiếm chưa xác minh`
+      : `${search.unverified_leads} unverified search ${search.unverified_leads === 1 ? "link" : "links"}`);
+  }
+  const searchCounts = searchParts.length ? ` (${searchParts.join(", ")})` : "";
+  const searchNote = search && search.engine ? `${search.engine}: ${friendlyLabel(search.outcome || "UNKNOWN")}${searchCounts}` : "";
+  const summary = currentLanguage === "vi"
+    ? `${c.checked || 0}/${c.selected || 0} website đã thử kiểm tra · ${c.found || 0} hồ sơ cần đối chiếu · ${c.not_found || 0} không thấy · ${c.unknown || 0} chưa xác định · ${c.invalid || 0} username không hợp lệ · ${c.unprocessed || 0} chưa xử lý · ${c.non_unique_detections || 0} kết quả không phân biệt được với đối chứng · ${(c.controls_pending || 0) + (c.controls_unknown || 0)} đối chứng chưa kết luận`
+    : `${c.checked || 0}/${c.selected || 0} websites checked · ${c.found || 0} profiles needing corroboration · ${c.not_found || 0} not found · ${c.unknown || 0} unknown · ${c.invalid || 0} invalid usernames · ${c.unprocessed || 0} unprocessed · ${c.non_unique_detections || 0} results indistinguishable from controls · ${(c.controls_pending || 0) + (c.controls_unknown || 0)} inconclusive controls`;
   return [priority, searchNote, summary].filter(Boolean).join(" · ");
 }
 

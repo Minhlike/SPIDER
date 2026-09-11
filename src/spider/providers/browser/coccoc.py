@@ -164,7 +164,7 @@ def apply_indexed_profile_candidates(rows, candidates, search_outcome):
             merged.append(result)
             merged.append({"kind": "search_lead", "source": source,
                            "state": "CANDIDATE", "reason": "COCCOC_SEARCH_RESULT",
-                           "url": candidate, "account_candidate": True,
+                           "url": candidate, "account_candidate": False,
                            "search_engine": SEARCH_ENGINE_NAME,
                            "direct_outcome": row.get("state"),
                            "direct_reason": row.get("reason")})
@@ -347,8 +347,17 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                             direct_rows = await self._search_direct_fallbacks(
                                 page, username, direct_rows, lambda: exhausted, timeout_ms
                             )
-                            rows.extend(direct_rows)
-                            rows.extend(await self._search_sources(page, username, lambda: exhausted, timeout_ms))
+                        finally:
+                            await page.close()
+                        direct_rows = await self._revalidate_search_leads(
+                            context, username, direct_rows, lambda: exhausted, timeout_ms,
+                            parallel_tabs
+                        )
+                        rows.extend(direct_rows)
+                        page = await context.new_page()
+                        try:
+                            rows.extend(await self._search_sources(
+                                page, username, lambda: exhausted, timeout_ms))
                         finally:
                             await page.close()
                     else:
@@ -493,6 +502,48 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
             direct_rows, candidates, "COCCOC_SEARCH_RESULT" if candidates else "NO_EXACT_SEARCH_RESULT"
         )
 
+    async def _revalidate_search_leads(self, context, username, rows, is_exhausted,
+                                       timeout_ms, parallel_tabs=3):
+        """Open exact indexed profile routes before promoting a lead to ACCOUNT."""
+        leads = [dict(row) for row in rows if row.get("kind") == "search_lead"]
+        direct = [dict(row) for row in rows if row.get("kind") != "search_lead"]
+        positions = {row.get("source"): index for index, row in enumerate(direct)}
+        hosts = {source: host for source, host, _ in DIRECT_USERNAME_SOURCES}
+        semaphore = asyncio.Semaphore(min(3, max(1, int(parallel_tabs))))
+
+        async def inspect(lead):
+            lead["account_candidate"] = False
+            if is_exhausted():
+                lead.update(revalidation_state="UNPROCESSED",
+                            revalidation_reason="REQUEST_LIMIT")
+                return lead, None
+            source, candidate = lead.get("source"), safe_result_url(lead.get("url"))
+            if source not in hosts or not candidate or not candidate_has_username(candidate, username):
+                lead.update(revalidation_state="UNKNOWN",
+                            revalidation_reason="INVALID_PROFILE_ROUTE")
+                return lead, None
+            async with semaphore:
+                checked = await self._inspect_direct_source(
+                    context, source, hosts[source], username, candidate, timeout_ms)
+            lead.update(revalidation_state=checked.get("state", "UNKNOWN"),
+                        revalidation_reason=checked.get("reason", "NOT_YET_VERIFIED"))
+            if checked.get("state") != "CANDIDATE":
+                return lead, None
+            checked.update(kind="site", reason="SEARCH_LEAD_REVALIDATED",
+                           search_lead_url=candidate, search_engine=SEARCH_ENGINE_NAME,
+                           account_candidate=True,
+                           direct_outcome=lead.get("direct_outcome"),
+                           direct_reason=lead.get("direct_reason"))
+            return lead, checked
+
+        checked = await asyncio.gather(*(inspect(lead) for lead in leads))
+        output_leads = []
+        for lead, promoted in checked:
+            output_leads.append(lead)
+            if promoted is not None and promoted.get("source") in positions:
+                direct[positions[promoted["source"]]] = promoted
+        return direct + output_leads
+
     async def _search_one(self, page, source, host, identifier, timeout_ms, require_text=False):
         query = f'site:{host} "{identifier}"'
         try:
@@ -509,11 +560,12 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                     "content_sha256": hashlib.sha256(b"").hexdigest()}
         candidate = select_search_candidate(links, host, identifier, require_text)
         valid = candidate is not None
-        return {"kind": "site", "source": source,
+        return {"kind": "search_lead" if valid else "site", "source": source,
                 "state": "CANDIDATE" if valid else "UNKNOWN",
                 "reason": "COCCOC_SEARCH_RESULT" if valid else "NO_EXACT_SEARCH_RESULT",
                 "url": safe_result_url(candidate) if valid else None,
-                "account_candidate": bool(valid and candidate_has_username(candidate, identifier)),
+                "account_candidate": False,
+                "profile_shaped": bool(valid and candidate_has_username(candidate, identifier)),
                 "search_engine": SEARCH_ENGINE_NAME,
                 "content_sha256": hashlib.sha256(page_text.encode("utf-8", "replace")).hexdigest()}
 
@@ -522,7 +574,8 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
         """Trace only SPIDER-owned browser work; no cookies, query string or page text."""
         timestamp = utc_now().isoformat()
         return [{"action_id": (action_id or lineage.configuration_hash)[:128], "parent_observation_id": parent_observation_id,
-                "step": "SEARCH_INDEX" if row.get("reason") == "COCCOC_SEARCH_RESULT"
+                "step": "REVALIDATE_PROFILE" if row.get("reason") == "SEARCH_LEAD_REVALIDATED"
+                         else "SEARCH_INDEX" if row.get("reason") == "COCCOC_SEARCH_RESULT"
                          else "READ_PROFILE" if row.get("source") in {name for name, _, _ in DIRECT_USERNAME_SOURCES}
                          else "SEARCH_INDEX", "source": row.get("source", "unknown")[:64],
                  "sanitized_url": safe_result_url(row.get("url")) if row.get("url") else None,
@@ -539,21 +592,30 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
         raw = "\n".join(json.dumps(row, ensure_ascii=False) for row in rows).encode("utf-8")
         observations = self.parse(raw, lineage)
         site_rows = [row for row in rows if row.get("kind") != "search_lead"]
+        search_only_names = {source for source, _ in SEARCH_SOURCES}
+        search_only_leads = [row for row in rows if row.get("kind") == "search_lead"
+                             and row.get("source") in search_only_names]
         selected = len(DIRECT_USERNAME_SOURCES) + len(SEARCH_SOURCES)
-        candidates = sum(row.get("state") == "CANDIDATE" for row in rows)
+        candidates = sum(row.get("state") == "CANDIDATE" and row.get("kind") != "search_lead"
+                         for row in rows)
         not_found = sum(row.get("state") == "NOT_FOUND" for row in site_rows)
-        unprocessed = sum(row.get("state") == "UNPROCESSED" for row in site_rows) + max(0, selected - len(site_rows))
+        checked = min(selected, len(site_rows) + len({row.get("source") for row in search_only_leads}))
+        unprocessed = sum(row.get("state") == "UNPROCESSED" for row in site_rows) + max(0, selected - checked)
         undecided = len(site_rows) - sum(row.get("state") == "CANDIDATE" for row in site_rows) \
-            - not_found - sum(row.get("state") == "UNPROCESSED" for row in site_rows)
+            - not_found - sum(row.get("state") == "UNPROCESSED" for row in site_rows) \
+            + len(search_only_leads)
         controls = [row.get("control_state") for row in site_rows if "control_state" in row]
         fallback_outcomes = [row.get("search_fallback_outcome") for row in site_rows
                              if row.get("source") in SEARCH_FALLBACK_SOURCES]
-        fallback_outcome = ("COCCOC_SEARCH_RESULT" if any(
+        fallback_outcome = ("SEARCH_LEAD_REVALIDATED" if any(
+                                row.get("reason") == "SEARCH_LEAD_REVALIDATED"
+                                and row.get("source") in SEARCH_FALLBACK_SOURCES for row in rows)
+                            else "COCCOC_SEARCH_RESULT" if any(
                                 row.get("reason") == "COCCOC_SEARCH_RESULT"
                                 and row.get("source") in SEARCH_FALLBACK_SOURCES for row in rows)
                             else "SEARCH_ENGINE_UNAVAILABLE" if "SEARCH_ENGINE_UNAVAILABLE" in fallback_outcomes
                             else "NO_EXACT_SEARCH_RESULT" if fallback_outcomes else "NOT_RUN")
-        coverage = {"selected": selected, "checked": len(site_rows), "found": candidates,
+        coverage = {"selected": selected, "checked": checked, "found": candidates,
                     "not_found": not_found, "unknown": undecided,
                     "unprocessed": unprocessed,
                     "controls_pending": 0,
@@ -564,12 +626,14 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                     "parallel_tabs": min(3, max(1, int(kwargs.get("browser_parallel_tabs", 3)))),
                     "source_scope": "VN_COMMON_BROWSER",
                     "search_discovery": {"engine": SEARCH_ENGINE_NAME, "outcome": fallback_outcome,
-                                         "candidate_profiles": sum(row.get("reason") == "COCCOC_SEARCH_RESULT"
-                                                                   for row in rows)},
+                                         "candidate_profiles": sum(row.get("reason") == "SEARCH_LEAD_REVALIDATED"
+                                                                   for row in rows),
+                                         "unverified_leads": sum(row.get("reason") == "COCCOC_SEARCH_RESULT"
+                                                                 for row in rows)},
                     "priority_sites": {row.get("source", "unknown"): {
                         "outcome": row.get("state", "UNKNOWN"),
                         "reason": row.get("reason", "NOT_YET_VERIFIED")
-                    } for row in site_rows}}
+                    } for row in site_rows + search_only_leads}}
         fatal_browser_failure = reason in FATAL_BROWSER_REASONS
         complete = reason is None and len(site_rows) == selected and undecided == 0
         if reason is None and not complete:
@@ -606,23 +670,32 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 continue
             if not any(host_matches(url, host) for host in ALLOWED_RESULT_HOSTS):
                 continue
-            is_search_result = row.get("reason") == "COCCOC_SEARCH_RESULT"
+            is_search_lead = row.get("reason") == "COCCOC_SEARCH_RESULT"
+            is_revalidated = row.get("reason") == "SEARCH_LEAD_REVALIDATED"
             evidence = {"platform": row.get("source"), "profile_url": url,
-                        "match_basis": "coccoc_search_candidate" if is_search_result
+                        "match_basis": "coccoc_search_lead_revalidated" if is_revalidated
+                                       else "coccoc_search_lead" if is_search_lead
                                        else "signed_in_browser_candidate",
                         "identity_verified": False,
-                        "verification_state": "CANDIDATE_REVIEW_REQUIRED",
+                        "verification_state": "PROFILE_ROUTE_REVALIDATED_IDENTITY_UNVERIFIED"
+                                              if is_revalidated else "SEARCH_LEAD_ONLY"
+                                              if is_search_lead else "CANDIDATE_REVIEW_REQUIRED",
                         "browser": "Cốc Cốc",
-                        "search_engine": row.get("search_engine") if is_search_result else None}
+                        "search_engine": row.get("search_engine") if is_search_lead or is_revalidated else None}
             item_lineage = lineage.model_copy(update={"upstream_source": "coccoc_browser",
                 "upstream_family": "BROWSER_ASSISTED"})
             if (lineage.parent_observable_type == ObservableType.USERNAME
-                    and (not is_search_result or row.get("account_candidate") is True)):
+                    and not is_search_lead and row.get("account_candidate") is not False):
                 account = f"{lineage.parent_observable_value}@{str(row.get('source', '')).casefold()}"
+                account_lineage = item_lineage.model_copy(update={
+                    "parent_observable_value": url if is_revalidated else lineage.parent_observable_value,
+                    "parent_observable_type": ObservableType.URL if is_revalidated else ObservableType.USERNAME,
+                    "parent_namespace": "" if is_revalidated else lineage.parent_namespace})
                 results.append(Observation(
                     observable=self.normalize({"type": ObservableType.ACCOUNT, "value": account,
                                                "namespace": str(row.get("source", "")).casefold()}),
-                    lineage=item_lineage, confidence=0.55, raw_data=evidence))
+                    lineage=account_lineage, confidence=0.70 if is_revalidated else 0.55,
+                    raw_data=evidence))
             results.append(Observation(
                 observable=self.normalize({"type": ObservableType.URL, "value": url}),
                 lineage=item_lineage, confidence=0.55, raw_data=evidence))
