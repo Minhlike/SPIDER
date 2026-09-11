@@ -15,8 +15,8 @@ Current slice:
 - nullable total time/request budgets, P0-A browser correctness and Phase P0-B
   durable Stop/checkpoint/resume implemented; P0-C versioned direct-edge rule
   registry, question/gap projection, claim lifecycle and scoped justification
-  DAG and deterministic plan preview implemented; full suite 483 tests PASS in
-  225.62 seconds on 11/09/2026;
+  DAG, deterministic plan preview and source-specific DNS TTL revalidation
+  implemented; full suite 486 tests PASS in 227.55 seconds on 11/09/2026;
 - provider quotas, rate limits, per-action timeout, concurrency, dedup and policy
   remain enforced in unlimited mode;
 - final diff/document review completed; the suite included its existing public/
@@ -39,8 +39,10 @@ Current slice:
   reproduces the same materialized proof DAG in the vertical fixture. A relevant
   account now leaves a question PARTIAL until its registered capabilities finish;
   `plan_preview` reproduces the same candidate plan/fingerprint from the same
-  scoped snapshot and never dispatches. Next: source-specific freshness
-  eligibility before P0-C PASS.
+  scoped snapshot and never dispatches. DNS TTL now marks revalidation due
+  without claiming disappearance; malformed/cross-provider rules fail closed.
+  P0-C is PASS on fixtures. Next: Phase P1-A USERNAME vertical slice; retain the
+  live/manual holdout gates before any parity claim.
 
 Do not claim manual-investigation parity, live browser reliability, provider
 adoption or the full reasoning engine complete without the master plan gates.

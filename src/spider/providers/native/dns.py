@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 import dns.resolver
 import dns.reversename
@@ -14,6 +15,7 @@ from spider.models.enums import ObservableType, NetworkClass, ProviderState
 from spider.models.observable import NormalizedObservable
 from spider.models.observation import Observation
 from spider.models.provenance import SourceLineage
+from spider.models.base import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,7 @@ class NativeDnsAdapter(BaseProviderAdapter):
             query_domain = val.split("@")[1].strip()
 
         records, incomplete = [], False
+        collected_at = utc_now()
         ledger, budget = kwargs.get("request_ledger"), kwargs.get("execution_budget")
         recorder = kwargs.get("egress_recorder")
         resolver = dns.resolver.Resolver()
@@ -128,13 +131,17 @@ class NativeDnsAdapter(BaseProviderAdapter):
                         continue
                     for rdata in rrset:
                         if rtype == "MX":
-                            records.append({"type": record_type, "value": str(rdata.exchange).rstrip("."), "preference": rdata.preference})
+                            records.append({"type": record_type, "value": str(rdata.exchange).rstrip("."),
+                                            "preference": rdata.preference, "ttl": int(rrset.ttl)})
                         else:
-                            records.append({"type": record_type, "value": str(rdata).rstrip(".") if rtype in ("NS", "PTR", "CNAME") else str(rdata)})
+                            records.append({"type": record_type,
+                                            "value": str(rdata).rstrip(".") if rtype in ("NS", "PTR", "CNAME") else str(rdata),
+                                            "ttl": int(rrset.ttl)})
             except RequestBudgetExceeded:
                 incomplete = True
                 break
-        raw_bytes = json.dumps({"target": val, "query_domain": query_domain, "records": records}).encode()
+        raw_bytes = json.dumps({"target": val, "query_domain": query_domain,
+                                "observed_at": collected_at.isoformat(), "records": records}).encode()
         return ProviderExecutionResult(raw_content=raw_bytes, observations=self.parse(raw_bytes, lineage),
             outcome="PARTIAL" if incomplete else "COMPLETED",
             error_message="Some DNS record types could not be checked" if incomplete else None,
@@ -150,6 +157,20 @@ class NativeDnsAdapter(BaseProviderAdapter):
         target_val = data.get("target", "")
         query_domain = data.get("query_domain", target_val)
         records = data.get("records", [])
+        observed_at = data.get("observed_at")
+
+        def metadata_for(record):
+            ttl = record.get("ttl")
+            try:
+                observed = datetime.fromisoformat(observed_at)
+                valid_ttl = type(ttl) is int and 0 <= ttl <= 2_147_483_647
+                if observed.tzinfo is None or not valid_ttl:
+                    return {}
+            except (TypeError, ValueError):
+                return {}
+            return {"source_freshness": {"provider_id": self.provider_id(),
+                "rule_id": "DNS_RR_TTL_REVALIDATION", "rule_version": "1.0.0",
+                "revalidate_after": (observed + timedelta(seconds=ttl)).isoformat()}}
 
         # If Target was EMAIL, create DOMAIN observation
         if "@" in target_val:
@@ -181,20 +202,21 @@ class NativeDnsAdapter(BaseProviderAdapter):
                 "parent_observable_type": ObservableType.DOMAIN if "@" in target_val else lineage.parent_observable_type,
                 "parent_namespace": "" if "@" in target_val else lineage.parent_namespace,
             })
+            metadata = metadata_for(rec)
 
             if rtype == "A":
-                obs = self.normalize({"type": ObservableType.IP_ADDRESS, "value": rval})
+                obs = self.normalize({"type": ObservableType.IP_ADDRESS, "value": rval, "metadata": metadata})
                 results.append(Observation(observable=obs, lineage=item_lineage, confidence=0.95, raw_data=rec))
             elif rtype == "AAAA":
-                obs = self.normalize({"type": ObservableType.IPV6_ADDRESS, "value": rval})
+                obs = self.normalize({"type": ObservableType.IPV6_ADDRESS, "value": rval, "metadata": metadata})
                 results.append(Observation(observable=obs, lineage=item_lineage, confidence=0.95, raw_data=rec))
             elif rtype in ("MX", "NS", "PTR", "CNAME"):
-                obs = self.normalize({"type": ObservableType.HOSTNAME, "value": rval})
+                obs = self.normalize({"type": ObservableType.HOSTNAME, "value": rval, "metadata": metadata})
                 results.append(Observation(observable=obs, lineage=item_lineage, confidence=0.95, raw_data=rec))
             elif rtype in ("TXT", "SOA", "CAA", "DMARC"):
                 # Keep domain-level DNS facts as evidence on the domain entity.
                 # They are not invented hosts or user-input findings.
-                obs = self.normalize({"type": ObservableType.DOMAIN, "value": query_domain})
+                obs = self.normalize({"type": ObservableType.DOMAIN, "value": query_domain, "metadata": metadata})
                 results.append(Observation(observable=obs, lineage=item_lineage, confidence=0.95, raw_data=rec))
 
         return results
@@ -202,5 +224,6 @@ class NativeDnsAdapter(BaseProviderAdapter):
     def normalize(self, raw_item: Any) -> NormalizedObservable:
         return NormalizedObservable(
             type=raw_item["type"],
-            value=raw_item["value"]
+            value=raw_item["value"],
+            metadata=raw_item.get("metadata", {})
         )

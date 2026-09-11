@@ -141,6 +141,10 @@ and an acyclic evidence → rule → claim graph without raw provider payloads.
 Its temporal assessment remains `UNKNOWN`/`NOT_INFERRED` unless a future
 source-specific expiry rule supplies enough evidence; observation age or a
 missing later capture alone never establishes staleness or disappearance.
+Native DNS now records the response TTL as a versioned revalidation rule. An
+expired TTL yields `REVALIDATION_DUE` while `currentness` remains `UNKNOWN`;
+it does not mean the record disappeared. Invalid, timezone-free or
+cross-provider freshness contracts are ignored and counted.
 
 `case_delta` takes a previous `case_digest` snapshot and returns only evidence
 recorded after that baseline. It has its own frozen page cursor. Empty delta and

@@ -28,7 +28,10 @@ async def investigation(tmp_path):
                                      (a, "alpha", "after", "new"),
                                      (b, "beta", "foreign", "foreign")):
         observations.append(Observation(
-            observable=NormalizedObservable(type=T.ACCOUNT, value=f"{account}@fixture"),
+            observable=NormalizedObservable(type=T.ACCOUNT, value=f"{account}@fixture",
+                metadata={"source_freshness": {"provider_id": "fixture",
+                    "rule_id": "FIXTURE_REVALIDATION", "rule_version": "1.0.0",
+                    "revalidate_after": "2020-01-01T00:00:00+00:00"}} if account == "old" else {}),
             lineage=SourceLineage(case_id=case["id"], seed_id=seed["id"], run_id=run,
                 task_id=run, provider_id="fixture", provider_version="1",
                 upstream_family="FIXTURE", parent_observable_type=T.USERNAME, parent_observable_value=name),
@@ -139,6 +142,8 @@ async def test_scoped_run_comparison_telemetry_and_graph(investigation):
         **scope, "claim_id": graph["edges"][0]["id"]})
     assert proof["rule"]["version"] == "1.0.0"
     assert proof["justification_dag"]["proof_complete"] is True
+    assert proof["temporal_assessment"]["currentness"] == "UNKNOWN"
+    assert proof["temporal_assessment"]["stale_status"] == "REVALIDATION_DUE"
     assert "never-export-raw" not in json.dumps(proof)
     assert "error" in await server.handle_tool_call("explain_claim", {
         "case_id": case, "target_id": b, "claim_id": graph["edges"][0]["id"]})

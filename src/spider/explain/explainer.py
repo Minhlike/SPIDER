@@ -37,10 +37,11 @@ class ExplainEngine:
             EvidenceReviewRecord.claim_id == assertion_id))).all())
         reviews.sort(key=lambda row: (
             row.reviewed_at.isoformat() if row.reviewed_at else "", row.id))
-        reviewed_ids = {review.observation_id for review in reviews}
-        reviewed_observations = list((await session.scalars(select(ObservationRecord).where(
-            ObservationRecord.id.in_(reviewed_ids)))).all()) if reviewed_ids else []
-        observed_by_id = {row.id: row for row in reviewed_observations}
+        observation_ids = {ev.observation_id for ev in evidence_records} | {
+            review.observation_id for review in reviews}
+        observed_rows = list((await session.scalars(select(ObservationRecord).where(
+            ObservationRecord.id.in_(observation_ids)))).all()) if observation_ids else []
+        observed_by_id = {row.id: row for row in observed_rows}
         rule_metadata = asrt.metadata_json if isinstance(asrt.metadata_json, dict) else {}
         rule_node = f"rule:{asrt.inference_rule}:{rule_metadata.get('rule_version') or 'legacy'}"
         claim_node = f"claim:{asrt.id}"
@@ -86,6 +87,12 @@ class ExplainEngine:
                      if unknown or candidate_relation else "SUPPORTED_RELATION")
 
         from spider.service.reporting import evidence_note
+        from spider.service.temporal import assess_source_freshness
+        temporal = assess_source_freshness(observed_rows)
+        temporal.update({
+            "first_observed": asrt.first_observed.isoformat() if asrt.first_observed else None,
+            "last_observed": asrt.last_observed.isoformat() if asrt.last_observed else None,
+        })
         return {
             "reader_note": {lang: evidence_note(lang) for lang in ("vi", "en")},
             "assertion_id": asrt.id,
@@ -114,13 +121,7 @@ class ExplainEngine:
                                     review.role == "SUPPORTING_EVIDENCE" for review in reviews),
                                 "contradicting_evidence": contradictory,
                                 "unknown_relevance": unknown},
-            "temporal_assessment": {
-                "first_observed": asrt.first_observed.isoformat() if asrt.first_observed else None,
-                "last_observed": asrt.last_observed.isoformat() if asrt.last_observed else None,
-                "currentness": "UNKNOWN",
-                "stale_status": "NOT_INFERRED",
-                "reason": "NO_SOURCE_SPECIFIC_EXPIRY_RULE",
-            },
+            "temporal_assessment": temporal,
             "justification_dag": {"schema_version": "1", "acyclic": True,
                                   "proof_complete": bool(evidence_list and rule_metadata.get("rule_version")),
                                   "nodes": nodes, "edges": edges},

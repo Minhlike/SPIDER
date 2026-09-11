@@ -54,3 +54,16 @@ def test_dns_parser_retains_domain_level_security_records_as_evidence():
     assert profile["dns_security"]["spf"] == ["v=spf1 -all"]
     assert profile["dns_security"]["dmarc"] == ["v=DMARC1; p=reject"]
     assert profile["dns_security"]["caa"] == ['0 issue "ca.example"']
+
+
+def test_dns_parser_projects_ttl_as_a_revalidation_rule():
+    raw = json.dumps({"target": "example.test", "query_domain": "example.test",
+        "observed_at": "2026-01-01T00:00:00+00:00",
+        "records": [{"type": "A", "value": "192.0.2.8", "ttl": 300}]}).encode()
+    observation = NativeDnsAdapter().parse(raw, SourceLineage(
+        case_id="case", run_id="run", task_id="task",
+        provider_id="native_dns", provider_version="1"))[0]
+    freshness = observation.observable.metadata["source_freshness"]
+    assert freshness == {"provider_id": "native_dns",
+        "rule_id": "DNS_RR_TTL_REVALIDATION", "rule_version": "1.0.0",
+        "revalidate_after": "2026-01-01T00:05:00+00:00"}
