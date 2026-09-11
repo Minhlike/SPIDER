@@ -97,7 +97,8 @@ async def test_scoped_run_comparison_telemetry_and_graph(investigation):
     scope = {"case_id": case, "target_id": a}
     digest = await server.handle_tool_call("case_digest", scope)
     question = digest["question_state"]["questions"][0]
-    assert question["id"] == "USERNAME_PUBLIC_ACCOUNTS" and question["status"] == "ANSWERED"
+    assert question["id"] == "USERNAME_PUBLIC_ACCOUNTS" and question["status"] == "PARTIAL"
+    assert question["reason"] == "EVIDENCE_AVAILABLE_COVERAGE_INCOMPLETE"
     assert not question["absence_verified"]
     diff = await server.handle_tool_call("compare_runs", {**scope, "before_id": "before", "after_id": "after"})
     assert diff["counts"] == {"added": 1, "not_observed": 1}
@@ -152,6 +153,49 @@ async def test_browser_trace_is_scoped_sanitized_and_partial_safe(investigation)
     assert trace["steps"][0]["sanitized_url"] == "https://zalo.me/example"
     assert "must-not-export" not in json.dumps(trace)
     assert "error" in await server.handle_tool_call("browser_trace", {"case_id": case, "target_id": b, "run_id": "browser"})
+
+
+@pytest.mark.asyncio
+async def test_plan_preview_is_deterministic_for_a_scoped_snapshot(investigation):
+    service, server, case, a, _, _ = investigation
+    target = await service.add_target(case, "gamma", T.USERNAME)
+    seed = Observation(observable=NormalizedObservable(type=T.USERNAME, value="gamma"),
+        lineage=SourceLineage(case_id=case, seed_id=target["id"], run_id="seed-gamma",
+            task_id="seed-gamma", provider_id="seed_target", provider_version="1",
+            upstream_family="USER_SEED"))
+
+    async def materialize_seed(session):
+        await ObservationRepository.append_observation(session, seed)
+        await service.resolution_engine.resolve_observations(session, [seed], case)
+    await service.db_writer.submit(materialize_seed)
+
+    scope = {"case_id": case, "target_id": target["id"]}
+    first = await server.handle_tool_call("plan_preview", scope)
+    assert first["state"] == "READY" and first["candidates"]
+    assert all(not row["dispatch"] and row["verification"]["provider_live"] == "NOT_CHECKED"
+               for row in first["candidates"])
+    replay = await server.handle_tool_call("plan_preview", {**scope, "snapshot": first["snapshot"]})
+    assert replay == first
+    assert "error" in await server.handle_tool_call("plan_preview", {
+        "case_id": case, "target_id": a, "snapshot": first["snapshot"]})
+
+    account = Observation(observable=NormalizedObservable(type=T.ACCOUNT,
+        value="gamma@fixture", namespace="fixture"),
+        lineage=SourceLineage(case_id=case, seed_id=target["id"], run_id="after-plan",
+            task_id="after-plan", provider_id="fixture", provider_version="1",
+            upstream_family="FIXTURE", parent_observable_type=T.USERNAME,
+            parent_observable_value="gamma"))
+
+    async def append_after_snapshot(session):
+        await ObservationRepository.append_observation(session, account)
+        await service.resolution_engine.resolve_observations(session, [account], case)
+    await service.db_writer.submit(append_after_snapshot)
+
+    assert await server.handle_tool_call("plan_preview", {**scope, "snapshot": first["snapshot"]}) == first
+    fresh = await server.handle_tool_call("plan_preview", scope)
+    assert fresh["state"] == "READY" and fresh["candidates"]
+    assert fresh["question_state"]["questions"][0]["status"] == "PARTIAL"
+    assert fresh["plan_fingerprint"] != first["plan_fingerprint"]
 
 
 def test_catalogue_uses_registered_metered_contract_only(tmp_path):

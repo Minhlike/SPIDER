@@ -7,13 +7,15 @@ from spider.capability.definitions import CapabilityDefinition
 class CapabilityRegistry:
     def __init__(self, config_path: Optional[str] = "config/capabilities.yaml"):
         self.capabilities: Dict[str, CapabilityDefinition] = {}
+        self.version = "UNVERSIONED"
         if config_path and Path(config_path).exists():
             self.load_from_yaml(config_path)
 
     def load_from_yaml(self, path: str) -> None:
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
-        
+
+        self.version = str(data.get("version") or "UNVERSIONED")
         for name, info in data.get("capabilities", {}).items():
             input_types = [ObservableType(t) for t in info.get("input_types", []) if t in ObservableType.__members__]
             output_types = [ObservableType(t) for t in info.get("output_types", []) if t in ObservableType.__members__]

@@ -146,6 +146,14 @@ def create_server(service):
             "case_id": case_id, "target_id": target_id, "claim_id": claim_id})
 
     @server.tool(annotations=read)
+    async def plan_preview(case_id: str, target_id: str, question: str = "all",
+                           snapshot: str | None = None) -> dict:
+        """Preview a deterministic scoped plan; this never dispatches a provider."""
+        return await dispatcher.handle_tool_call("plan_preview", {
+            "case_id": case_id, "target_id": target_id, "question": question,
+            "snapshot": snapshot})
+
+    @server.tool(annotations=read)
     async def input_catalogue() -> dict:
         """List input types with metered capabilities; availability is not live verification."""
         return await dispatcher.handle_tool_call("input_catalogue", {})

@@ -1,14 +1,18 @@
 """Agent/UI investigation reads; evidence scope is enforced before graph access."""
 import hashlib
+import json
 import math
+from types import SimpleNamespace
 from sqlalchemy import select
 from spider.models.enums import ObservableType
 from spider.capability.applicability import assess_provider
+from spider.capability.scopes import PERSONAL_CAPABILITIES
 from spider.service.projection import project
 from spider.service.coverage import coverage_report
 from spider.service.read_snapshot import make_cursor, make_snapshot, read_cursor, read_snapshot
 from spider.service.evidence_analysis import public_url
 from spider.service.phone_candidates import public_phone_candidates
+from spider.service.questions import assess_questions, DEFAULT_QUESTIONS
 from spider.storage.schema import TaskRunRecord, ProviderRunRecord, CaseRecord, TargetRecord
 from spider.explain.explainer import ExplainEngine
 
@@ -64,6 +68,98 @@ def input_catalogue(service):
 
 def _stamp(value):
     return value.isoformat() if value is not None else ""
+
+
+async def plan_preview(session, service, case_id, target_id, question="all", snapshot=None):
+    """Build a stable, read-only candidate plan from one scoped snapshot."""
+    view = await project(session, case_id, target_id, question)
+    if view.seed is None:
+        raise ValueError("Target required")
+    evidence = sorted(view.evidence_observations, key=lambda row: (_stamp(row.created_at), row.id))
+    tasks = list((await session.scalars(select(TaskRunRecord).where(
+        TaskRunRecord.case_id == case_id).order_by(TaskRunRecord.started_at, TaskRunRecord.id))).all())
+    tasks = [row for row in tasks if (row.metadata_json or {}).get("seed_id") == view.seed.id]
+    if snapshot is None:
+        snapshot = make_snapshot("plan_preview", case_id, view.seed.id, question, {
+            "evidence": [_stamp(evidence[-1].created_at), evidence[-1].id] if evidence else None,
+            "tasks": [_stamp(tasks[-1].started_at), tasks[-1].id] if tasks else None,
+        })
+    bounds = read_snapshot(snapshot, "plan_preview", case_id, view.seed.id, question)
+    evidence_bound, task_bound = bounds.get("evidence"), bounds.get("tasks")
+    evidence = [row for row in evidence if evidence_bound is not None and
+                (_stamp(row.created_at), row.id) <= tuple(evidence_bound)]
+    tasks = [row for row in tasks if task_bound is not None and
+             (_stamp(row.started_at), row.id) <= tuple(task_bound)]
+
+    root = (view.seed.observable_type, view.seed.namespace, view.seed.canonical_value)
+    evidence_identities = {(row.observable_type, row.namespace, row.canonical_value) for row in evidence}
+    bounded_entities = [entity for entity in view.finding_entities
+                        if (entity.observable_type, entity.namespace, entity.canonical_name) in evidence_identities]
+    question_state = assess_questions(SimpleNamespace(seed=view.seed,
+        finding_entities=bounded_entities), tasks)
+    if question != "all":
+        personal = question == "public_profiles"
+        question_state["questions"] = [row for row in question_state["questions"]
+            if any((capability in PERSONAL_CAPABILITIES) == personal
+                   for capability in row["next_capabilities"])]
+        kept = {row["id"] for row in question_state["questions"]}
+        question_state["unresolved_gaps"] = [gap for gap in question_state["unresolved_gaps"]
+                                                if gap["question_id"] in kept]
+
+    seed_kind = ObservableType(view.seed.observable_type)
+    root_entity = next((entity for entity in view.entities if
+        (entity.observable_type, entity.namespace, entity.canonical_name) == root), None)
+    attempted = {(row.capability, row.provider_id): row.status for row in tasks}
+    candidates, blocked = [], []
+    for row in sorted(question_state["questions"], key=lambda item: item["id"]):
+        if row["status"] == "ANSWERED":
+            continue
+        for capability_name in sorted(row["next_capabilities"]):
+            capability = service.capability_registry.get_capability(capability_name)
+            if capability is None or seed_kind not in capability.input_types:
+                blocked.append({"question_id": row["id"], "capability": capability_name,
+                                "provider": None, "reason": "CAPABILITY_NOT_AVAILABLE_FOR_TYPED_SEED"})
+                continue
+            for provider_id in sorted(capability.default_providers):
+                adapter = service.provider_manager.get_adapter(provider_id)
+                decision = assess_provider(adapter, seed_kind, capability_name)
+                reason = decision.reason if not decision.applicable else (
+                    "UNMETERED_PROVIDER" if not adapter.request_budget_supported else None)
+                if (capability_name, provider_id) in attempted:
+                    reason = "ALREADY_ATTEMPTED_IN_SNAPSHOT"
+                if root_entity is None:
+                    reason = "TYPED_SEED_ENTITY_NOT_MATERIALIZED"
+                if reason:
+                    blocked.append({"question_id": row["id"], "capability": capability_name,
+                                    "provider": provider_id, "reason": reason,
+                                    "task_status": attempted.get((capability_name, provider_id))})
+                    continue
+                candidate = {"question_id": row["id"], "question_version": row["version"],
+                    "capability": capability_name, "provider": provider_id,
+                    "entity_id": root_entity.id, "observable_type": seed_kind.value,
+                    "namespace": view.seed.namespace, "direct_seed": True,
+                    "required_evidence_ids": [], "dispatch": False,
+                    "basis": "UNRESOLVED_QUESTION_AND_REGISTERED_TYPED_CAPABILITY",
+                    "verification": {"provider_contract": "REGISTERED_ONLY",
+                                     "provider_live": "NOT_CHECKED"},
+                    "admission_checks": ["POLICY_CHECK", "REQUEST_AND_ENTITY_BUDGET"],
+                    "unverified_before_dispatch": ["PROVIDER_HEALTH"],
+                    "browser_intent_required": capability_name == "BROWSER_PERSONAL_DISCOVERY"}
+                candidate["candidate_key"] = hashlib.sha256(json.dumps(candidate,
+                    sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                candidates.append(candidate)
+    candidates.sort(key=lambda item: (item["question_id"], item["capability"], item["provider"]))
+    blocked.sort(key=lambda item: (item["question_id"], item["capability"], item.get("provider") or ""))
+    plan_core = {"question_registry_version": DEFAULT_QUESTIONS.version,
+                 "capability_registry_version": service.capability_registry.version,
+                 "question_state": question_state, "candidates": candidates, "blocked": blocked}
+    fingerprint = hashlib.sha256(json.dumps(plan_core, sort_keys=True,
+        separators=(",", ":")).encode()).hexdigest()
+    state = "READY" if candidates else ("SATISFIED" if not question_state["unresolved_gaps"] else "BLOCKED")
+    return {"case_id": case_id, "target_id": view.seed.id, "question": question,
+            "snapshot": snapshot, "plan_schema_version": "1", "plan_fingerprint": fingerprint,
+            "state": state, "deterministic_from_snapshot": True,
+            "automatic_dispatch": False, **plan_core}
 
 
 async def graph_neighbors(session, service, case_id, target_id, entity_id, limit=20,

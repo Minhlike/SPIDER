@@ -15,7 +15,8 @@ Current slice:
 - nullable total time/request budgets, P0-A browser correctness and Phase P0-B
   durable Stop/checkpoint/resume implemented; P0-C versioned direct-edge rule
   registry, question/gap projection, claim lifecycle and scoped justification
-  DAG implemented; full suite 482 tests PASS in 200.89 seconds on 11/09/2026;
+  DAG and deterministic plan preview implemented; full suite 483 tests PASS in
+  225.62 seconds on 11/09/2026;
 - provider quotas, rate limits, per-action timeout, concurrency, dedup and policy
   remain enforced in unlimited mode;
 - final diff/document review completed; the suite included its existing public/
@@ -35,9 +36,11 @@ Current slice:
   typed basis, target/entity scope and required evidence context. Conflicting
   registries fail at load; missing or old evidence remains OPEN/UNKNOWN and
   temporal status is NOT_INFERRED without a source-specific expiry rule. Rebuild
-  reproduces the same materialized proof DAG in the vertical fixture. Next:
-  source-specific freshness eligibility and full plan replay benchmark before
-  P0-C PASS.
+  reproduces the same materialized proof DAG in the vertical fixture. A relevant
+  account now leaves a question PARTIAL until its registered capabilities finish;
+  `plan_preview` reproduces the same candidate plan/fingerprint from the same
+  scoped snapshot and never dispatches. Next: source-specific freshness
+  eligibility before P0-C PASS.
 
 Do not claim manual-investigation parity, live browser reliability, provider
 adoption or the full reasoning engine complete without the master plan gates.

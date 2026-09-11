@@ -30,10 +30,18 @@ rules:
         AssertionRuleRegistry(rules)
 
 
-def test_question_registry_reports_answered_and_open_without_absence_claim():
-    answered = assess_questions(SimpleNamespace(
+def test_question_registry_requires_evidence_and_capability_coverage_to_answer():
+    view = SimpleNamespace(
         seed=SimpleNamespace(observable_type="USERNAME"),
-        finding_entities=[SimpleNamespace(observable_type="ACCOUNT", id="account-1")]), [])
+        finding_entities=[SimpleNamespace(observable_type="ACCOUNT", id="account-1")])
+    partial = assess_questions(view, [])
+    question = partial["questions"][0]
+    assert question["status"] == "PARTIAL"
+    assert question["reason"] == "EVIDENCE_AVAILABLE_COVERAGE_INCOMPLETE"
+
+    completed = [SimpleNamespace(capability=name, status="COMPLETED")
+                 for name in question["next_capabilities"]]
+    answered = assess_questions(view, completed)
     question = answered["questions"][0]
     assert question["id"] == "USERNAME_PUBLIC_ACCOUNTS"
     assert question["status"] == "ANSWERED" and question["answer_entity_ids"] == ["account-1"]
@@ -43,6 +51,11 @@ def test_question_registry_reports_answered_and_open_without_absence_claim():
         seed=SimpleNamespace(observable_type="EMAIL"), finding_entities=[]), [])
     assert all(row["status"] == "OPEN" for row in open_state["questions"])
     assert all(row["reason"] == "NO_COLLECTION_ATTEMPT" for row in open_state["unresolved_gaps"])
+
+    unrelated = assess_questions(SimpleNamespace(
+        seed=SimpleNamespace(observable_type="USERNAME"), finding_entities=[]),
+        [SimpleNamespace(capability="DNS_ENUMERATION", status="FAILED")])
+    assert unrelated["questions"][0]["status"] == "OPEN"
 
 
 def test_question_registry_rejects_duplicate_ids(tmp_path):

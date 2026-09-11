@@ -54,27 +54,33 @@ def assess_questions(view, tasks, registry=DEFAULT_QUESTIONS):
     finding_by_type = {}
     for entity in view.finding_entities:
         finding_by_type.setdefault(entity.observable_type, []).append(entity.id)
-    noncompleted = any(task.status not in {"COMPLETED", "SUCCESS"} for task in tasks)
-    attempted = bool(tasks)
     results, gaps = [], []
     for question in registry.for_input(view.seed.observable_type):
         entity_ids = sorted({entity_id for kind in question.answer_entity_types
                              for entity_id in finding_by_type.get(kind.value, [])})
-        if entity_ids:
+        relevant_tasks = [task for task in tasks if task.capability in question.next_capabilities]
+        completed = {task.capability for task in relevant_tasks
+                     if task.status in {"COMPLETED", "SUCCESS"}}
+        remaining = [capability for capability in question.next_capabilities
+                     if capability not in completed]
+        if entity_ids and not remaining:
             status, reason = "ANSWERED", "RELEVANT_EVIDENCE_AVAILABLE"
-        elif noncompleted:
+        elif entity_ids:
+            status, reason = "PARTIAL", "EVIDENCE_AVAILABLE_COVERAGE_INCOMPLETE"
+        elif any(task.status not in {"COMPLETED", "SUCCESS"} for task in relevant_tasks):
             status, reason = "UNKNOWN", "COLLECTION_INCOMPLETE"
-        elif attempted:
+        elif relevant_tasks:
             status, reason = "UNKNOWN", "NO_RELEVANT_EVIDENCE_OBSERVED"
         else:
             status, reason = "OPEN", "NO_COLLECTION_ATTEMPT"
         row = {"id": question.id, "version": question.version, "status": status,
                "reason": reason, "answer_entity_ids": entity_ids,
-               "next_capabilities": question.next_capabilities if status != "ANSWERED" else [],
+               "completed_capabilities": sorted(completed),
+               "next_capabilities": remaining if status != "ANSWERED" else [],
                "absence_verified": False}
         results.append(row)
         if status != "ANSWERED":
             gaps.append({"question_id": question.id, "reason": reason,
-                         "next_capabilities": question.next_capabilities})
+                         "next_capabilities": remaining})
     return {"registry_version": registry.version, "questions": results,
             "unresolved_gaps": gaps}

@@ -37,6 +37,7 @@ controlled benchmark and limits; these measurements do not verify live sources.
 | `get_evidence` | Scoped provenance, versions and artifact hash; no raw page payload |
 | `graph_neighbors` | Scoped edges, typed entities and potential transforms; no dispatch |
 | `explain_claim` | Scoped claim lifecycle and evidence-rule justification DAG |
+| `plan_preview` | Stable question→capability candidates from one scoped snapshot; no dispatch |
 | `compare_runs` | Added identities and identities not observed in the later run |
 | `run_coverage` | Outcomes and gaps for one target and run |
 | `telemetry` | Measured latency and request sample counts; missing measurements stay unknown |
@@ -131,8 +132,10 @@ restart; request a fresh digest when that happens. `graph_neighbors` has the
 same snapshot/continuation contract for edges.
 
 The digest also evaluates versioned questions for the selected target. Each row
-is `ANSWERED`, `OPEN`, or `UNKNOWN`, includes evidence entity IDs or a concrete
-gap reason, and never converts missing collection into verified absence.
+is `ANSWERED`, `PARTIAL`, `OPEN`, or `UNKNOWN`, includes evidence entity IDs or
+a concrete gap reason, and never converts missing collection into verified
+absence. Finding one relevant entity is `PARTIAL` until the registered question
+capabilities have completed; unrelated task failures do not contaminate it.
 `explain_claim` checks the same target scope, then returns the claim lifecycle
 and an acyclic evidence → rule → claim graph without raw provider payloads.
 Its temporal assessment remains `UNKNOWN`/`NOT_INFERRED` unless a future
@@ -148,6 +151,15 @@ typed-entity basis, target/entity scope and evidence IDs required for a derived
 pivot; a direct seed is marked explicitly and still passes action admission.
 Reliability and useful
 evidence/request remain uncalibrated; telemetry does not control scheduling.
+
+`plan_preview` freezes scoped evidence and task bounds in an opaque snapshot,
+then maps unresolved questions to registered providers that accept the typed
+seed and support request accounting. Every candidate carries question/config
+versions, scope, basis, current admission checks and a deterministic key.
+Provider live health is explicitly `NOT_CHECKED` and listed as unverified before
+dispatch; the preview never dispatches or claims that admission will succeed.
+Reusing the same snapshot reproduces the same plan and
+fingerprint even after later evidence is committed.
 
 `compare_runs` also returns a snapshot-scoped `changes` page with `next_cursor`;
 the original `added` and `not_observed_in_after_run` arrays remain compact
