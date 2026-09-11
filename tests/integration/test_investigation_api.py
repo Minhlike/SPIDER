@@ -9,6 +9,7 @@ from spider.models.enums import ObservableType as T
 from spider.models.observable import NormalizedObservable
 from spider.models.observation import Observation
 from spider.models.provenance import SourceLineage
+from spider.providers.native.public_profiles import PublicProfilesAdapter
 from spider.service.service import SpiderService
 from spider.storage.repositories.observation_repo import ObservationRepository
 from spider.storage.schema import ProviderRunRecord, TaskRunRecord
@@ -17,6 +18,7 @@ from spider.storage.schema import ProviderRunRecord, TaskRunRecord
 @pytest_asyncio.fixture
 async def investigation(tmp_path):
     service = SpiderService(str(tmp_path / "api.db"), str(tmp_path / "runs"))
+    service.provider_manager.register_adapter(PublicProfilesAdapter())
     await service.start()
     case = await service.create_case("Synthetic")
     a = await service.add_target(case["id"], "alpha", T.USERNAME)
@@ -122,9 +124,15 @@ async def test_scoped_run_comparison_telemetry_and_graph(investigation):
     entities = await service.get_case_entities(case)
     foreign = next(e for e in entities if e["canonical_name"] == "foreign@fixture")
     own = next(e for e in entities if e["canonical_name"] == "old@fixture")
+    root = next(e for e in entities if e["canonical_name"] == "alpha")
     assert "error" in await server.handle_tool_call("graph_neighbors", {**scope, "entity_id": foreign["id"]})
     graph = await server.handle_tool_call("graph_neighbors", {**scope, "entity_id": own["id"], "limit": 1})
     assert graph["evidence_ids"] == [observations[0].id]
+    root_graph = await server.handle_tool_call("graph_neighbors", {**scope, "entity_id": root["id"]})
+    assert root_graph["transforms"]
+    assert all(item["basis"] == "REGISTERED_CAPABILITY_FOR_TYPED_ENTITY"
+               and item["scope"]["target_id"] == a and item["scope"]["direct_seed"]
+               and item["required_evidence_ids"] == [] for item in root_graph["transforms"])
     assert "never-export-raw" not in json.dumps(graph)
     proof = await server.handle_tool_call("explain_claim", {
         **scope, "claim_id": graph["edges"][0]["id"]})

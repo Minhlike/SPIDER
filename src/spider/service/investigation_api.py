@@ -92,13 +92,23 @@ async def graph_neighbors(session, service, case_id, target_id, entity_id, limit
     page = edges[start:start + limit]
     ids = {x for a in page for x in (a.source_entity_id, a.target_entity_id)}
     kind = ObservableType(entity.observable_type)
+    root_identity = (view.seed.observable_type, view.seed.namespace, view.seed.canonical_value)
+    direct = (entity.observable_type, entity.namespace, entity.canonical_name) == root_identity
+    action_evidence_ids = sorted(o.id for o in view.evidence_observations
+        if (o.observable_type, o.namespace, o.canonical_value) ==
+           (entity.observable_type, entity.namespace, entity.canonical_name))
     transforms = []
     for cap in service.capability_registry.get_capabilities_for_input(kind):
         for pid in cap.default_providers:
             adapter = service.provider_manager.get_adapter(pid)
             if assess_provider(adapter, kind, cap.name).applicable and adapter.request_budget_supported:
                 transforms.append({"capability": cap.name, "provider": pid,
-                    "network_class": adapter.network_class().value, "dispatch": False})
+                    "network_class": adapter.network_class().value, "dispatch": False,
+                    "basis": "REGISTERED_CAPABILITY_FOR_TYPED_ENTITY",
+                    "scope": {"case_id": case_id, "target_id": view.seed.id,
+                              "entity_id": entity.id, "direct_seed": direct},
+                    "required_evidence_ids": [] if direct else action_evidence_ids,
+                    "target_scope_authorized": bool(view.seed.scope_authorized) if direct else False})
     return {"entity_id": entity_id, "target_id": view.seed.id,
             "entities": [{"id": e.id, "type": e.observable_type,
                           "value": e.canonical_name[:512], "namespace": e.namespace[:128]} for e in view.entities if e.id in ids],

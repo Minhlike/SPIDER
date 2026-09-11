@@ -96,6 +96,8 @@ async def test_vertical_slice_subfinder_and_metabigor(tmp_path):
         assert explanation["claim_lifecycle"]["state"] == "SUPPORTED_RELATION"
         assert explanation["justification_dag"]["acyclic"] is True
         assert explanation["justification_dag"]["proof_complete"] is True
+        assert explanation["temporal_assessment"]["currentness"] == "UNKNOWN"
+        assert explanation["temporal_assessment"]["stale_status"] == "NOT_INFERRED"
         assert any(edge["kind"] == "DERIVES" for edge in explanation["justification_dag"]["edges"])
         node_ids = {node["id"] for node in explanation["justification_dag"]["nodes"]}
         assert len(node_ids) == len(explanation["justification_dag"]["nodes"])
@@ -108,6 +110,8 @@ async def test_vertical_slice_subfinder_and_metabigor(tmp_path):
         assert rebuild_res["status"] == "SUCCESS"
         assert rebuild_res["entities_rebuilt"] == len(entities)
         assert rebuild_res["assertions_rebuilt"] == len(assertions)
+        replayed = await service.explain_assertion(asn_asrt["id"])
+        assert replayed["justification_dag"] == explanation["justification_dag"]
 
     finally:
         await service.stop()

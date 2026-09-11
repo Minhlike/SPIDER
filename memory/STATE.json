@@ -31,7 +31,7 @@
   "security_gate": "PASS: current-user Windows DPAPI, masked API, ignored local settings",
   "launcher_gate": "PASS: exact backend PID, duplicate prevention, readiness, graceful stop",
   "blockers": [],
-  "next_action": "Finish docs/MASTER_INVESTIGATION_ENGINE_PLAN_VI.md Phase P0-C stale/temporal rules and deterministic replay benchmark.",
+  "next_action": "Finish Phase P0-C source-specific freshness eligibility and full plan replay benchmark.",
   "web_ui": {
     "host": "127.0.0.1",
     "port": 8765,
@@ -48,7 +48,7 @@
     "offline_gate": {
       "passed": 482,
       "deselected": 0,
-      "seconds": 257.29,
+      "seconds": 200.89,
       "chromium_ui_included": 15,
       "real_stdio_tests": 2
     },
@@ -57,14 +57,14 @@
     "note": "Top-level release fields are historical v2.0.0 snapshot; use this object and NEXT.md for current development.",
     "mcp_tools": 17,
     "p0_b_gate": "PASS_FIXTURE_LIVE_LONG_RUN_CRASH_NOT_YET_VERIFIED",
-    "p0_c_gate": "PARTIAL_PROOF_CONTRACT_FIXTURE_PASS_STALE_TEMPORAL_AND_REPLAY_PENDING",
+    "p0_c_gate": "PARTIAL_PROOF_AND_ACTION_CONTEXT_FIXTURE_PASS_TEMPORAL_FAIL_CLOSED_PLAN_REPLAY_PENDING",
     "m2_gate": "PASS_FIXTURE_NOT_LIVE_VERIFIED",
     "reader_reports": "SHARED_VI_EN_IMPLEMENTED",
     "default_parallel_providers": 2,
     "m3_gate": "PASS_FIXTURE_NOT_LIVE_VERIFIED",
     "m1_gate": "PARTIAL_STABLE_SNAPSHOTS_AND_SCOPED_CONTINUATION",
     "m1_remaining": "HARD_BOUND_REACHABLE_PROJECTION_NOT_YET_VERIFIED",
-    "latest_development_head": "UNCOMMITTED_AFTER_625c5342df04196fc9f0ccaffb659278db59c427",
+    "latest_development_head": "UNCOMMITTED_AFTER_4e6c472f65eb13991f3b8ead9c890df5c27cd32e",
     "m4_gate": "PARTIAL_FIXTURE_OWNED_TAB_TRACE_NO_LIVE_BENCHMARK",
     "m5_gate": "PARTIAL_PUBLIC_CANDIDATE_PIPELINE_NO_CONSENTED_HOLDOUT",
     "m6_gate": "PARTIAL_MEASURED_UTILITY_AND_NONDISPATCHING_ADVICE_UNCALIBRATED"

@@ -135,12 +135,18 @@ is `ANSWERED`, `OPEN`, or `UNKNOWN`, includes evidence entity IDs or a concrete
 gap reason, and never converts missing collection into verified absence.
 `explain_claim` checks the same target scope, then returns the claim lifecycle
 and an acyclic evidence → rule → claim graph without raw provider payloads.
+Its temporal assessment remains `UNKNOWN`/`NOT_INFERRED` unless a future
+source-specific expiry rule supplies enough evidence; observation age or a
+missing later capture alone never establishes staleness or disappearance.
 
 `case_delta` takes a previous `case_digest` snapshot and returns only evidence
 recorded after that baseline. It has its own frozen page cursor. Empty delta and
 absence from a run never establish disappearance. User seed observations are
 lineage metadata and are excluded from findings/evidence. Graph transforms list
-contracts, not authorization to execute them. Reliability and useful
+contracts, not authorization to execute them. Each transform identifies the
+typed-entity basis, target/entity scope and evidence IDs required for a derived
+pivot; a direct seed is marked explicitly and still passes action admission.
+Reliability and useful
 evidence/request remain uncalibrated; telemetry does not control scheduling.
 
 `compare_runs` also returns a snapshot-scoped `changes` page with `next_cursor`;

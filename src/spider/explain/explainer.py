@@ -114,6 +114,13 @@ class ExplainEngine:
                                     review.role == "SUPPORTING_EVIDENCE" for review in reviews),
                                 "contradicting_evidence": contradictory,
                                 "unknown_relevance": unknown},
+            "temporal_assessment": {
+                "first_observed": asrt.first_observed.isoformat() if asrt.first_observed else None,
+                "last_observed": asrt.last_observed.isoformat() if asrt.last_observed else None,
+                "currentness": "UNKNOWN",
+                "stale_status": "NOT_INFERRED",
+                "reason": "NO_SOURCE_SPECIFIC_EXPIRY_RULE",
+            },
             "justification_dag": {"schema_version": "1", "acyclic": True,
                                   "proof_complete": bool(evidence_list and rule_metadata.get("rule_version")),
                                   "nodes": nodes, "edges": edges},

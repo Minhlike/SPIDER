@@ -1,6 +1,6 @@
 # Current development pointer
 
-Updated: 10/09/2026.
+Updated: 11/09/2026.
 
 The only active development plan is
 `docs/MASTER_INVESTIGATION_ENGINE_PLAN_VI.md`. Historical handoffs, increment
@@ -15,7 +15,7 @@ Current slice:
 - nullable total time/request budgets, P0-A browser correctness and Phase P0-B
   durable Stop/checkpoint/resume implemented; P0-C versioned direct-edge rule
   registry, question/gap projection, claim lifecycle and scoped justification
-  DAG implemented; full suite 482 tests PASS in 257.29 seconds on 10/09/2026;
+  DAG implemented; full suite 482 tests PASS in 200.89 seconds on 11/09/2026;
 - provider quotas, rate limits, per-action timeout, concurrency, dedup and policy
   remain enforced in unlimited mode;
 - final diff/document review completed; the suite included its existing public/
@@ -31,9 +31,13 @@ Current slice:
   UI, HTTP and target-scoped MCP resume are covered by fixtures. Live Cốc Cốc
   long-run crash recovery remains NOT YET VERIFIED.
 - P0-C now records rule provenance, evaluates versioned target questions/gaps,
-  and exposes scoped `explain_claim` DAGs through MCP/Web. Conflicting registries
-  fail at load; missing evidence remains OPEN/UNKNOWN, never verified absence.
-  Next: stale/temporal rules and deterministic replay benchmark before P0-C PASS.
+  exposes scoped `explain_claim` DAGs through MCP/Web, and gives graph transforms
+  typed basis, target/entity scope and required evidence context. Conflicting
+  registries fail at load; missing or old evidence remains OPEN/UNKNOWN and
+  temporal status is NOT_INFERRED without a source-specific expiry rule. Rebuild
+  reproduces the same materialized proof DAG in the vertical fixture. Next:
+  source-specific freshness eligibility and full plan replay benchmark before
+  P0-C PASS.
 
 Do not claim manual-investigation parity, live browser reliability, provider
 adoption or the full reasoning engine complete without the master plan gates.
