@@ -416,6 +416,73 @@ def test_phone_report_preserves_seed_and_disclaims_prefix_allocation(offline_pag
     assert not errors
 
 
+def test_graph_inspector_runs_registry_transform_with_evidence_lineage(offline_page):
+    page, _, errors = offline_page
+    posted = []
+    page.route("**/api/explain?*", lambda route: route.fulfill(status=200,
+        content_type="application/json", body=json.dumps({
+            "entity": {"id": "entity-1", "type": "DOMAIN", "canonical_name": "fixture.test",
+                       "observation_count": 1, "first_seen": "2026-01-01T00:00:00Z"},
+            "provenance_chain": [{"provider_id": "fixture", "upstream_source": "fixture",
+                                  "upstream_family": "SYNTHETIC", "task_id": "task-1"}],
+        })))
+    page.route("**/api/cases/case-1/graph/entity-1/neighbors?*", lambda route: route.fulfill(
+        status=200, content_type="application/json", body=json.dumps({"transforms": [{
+            "capability": "SUBDOMAIN_DISCOVERY", "provider": "fixture",
+            "required_evidence_ids": ["observation-1"], "dispatch": False,
+        }]})))
+    def accept_action(route):
+        posted.append(route.request.post_data_json)
+        route.fulfill(status=200, content_type="application/json", body=json.dumps({
+            "status": "QUEUED", "run_id": "run-1", "receipt_id": "receipt-1"}))
+    page.route("**/api/cases/case-1/graph/actions/run-capability", accept_action)
+    page.evaluate("""() => {
+      currentCaseId = 'case-1';
+      const selector = document.getElementById('insight-target');
+      selector.replaceChildren(new Option('USERNAME: fixture', 'target-1'));
+      selector.value = 'target-1';
+    }""")
+    page.evaluate("openNodeInspector('entity-1')")
+    expect(page.locator("#drawer-transform-list")).to_contain_text(
+        "SUBDOMAIN_DISCOVERY → fixture")
+    expect(page.locator("#side-drawer")).to_contain_text("có giới hạn request")
+    page.locator(".graph-transform").click()
+    expect(page.locator("#drawer-action-status")).to_contain_text("Đã xếp bước")
+    assert posted[0]["entity_id"] == "entity-1"
+    assert posted[0]["target_id"] == "target-1"
+    assert posted[0]["observation_id"] == "observation-1"
+    assert posted[0]["max_requests"] == 20
+    assert not errors
+
+
+def test_compact_guidance_shows_gaps_and_non_dispatching_plan(offline_page):
+    page, _, errors = offline_page
+    page.route("**/api/cases/case-2/digest?*", lambda route: route.fulfill(
+        status=200, content_type="application/json", body=json.dumps({
+            "question_state": {"unresolved_gaps": [{"question_id": "Q1"}]},
+            "reasoning": {"next_best_action": {"action": "REVIEW_SOURCE_COVERAGE"}},
+        })))
+    page.route("**/api/cases/case-2/plan-preview?*", lambda route: route.fulfill(
+        status=200, content_type="application/json", body=json.dumps({
+            "state": "READY", "candidates": [{"capability": "PUBLIC_PROFILE_LOOKUP",
+              "provider": "fixture", "question_id": "Q1", "dispatch": False}],
+        })))
+    page.evaluate("""() => {
+      currentCaseId = 'case-2';
+      const selector = document.getElementById('insight-target');
+      selector.replaceChildren(new Option('USERNAME: fixture', 'target-2'));
+      selector.value = 'target-2';
+    }""")
+    page.evaluate("loadInvestigationGuidance('case-2', 'target-2', 'all')")
+    expect(page.locator("#investigation-guidance")).to_contain_text(
+        "Khoảng trống chưa giải quyết: 1")
+    expect(page.locator("#investigation-plan")).to_contain_text(
+        "Đây là bản xem trước; không tự chạy")
+    expect(page.locator("#investigation-plan")).to_contain_text(
+        "PUBLIC_PROFILE_LOOKUP → fixture · Q1")
+    assert not errors
+
+
 def test_reader_report_safe_rendering_language_and_markdown_download(offline_page):
     from spider.service.reporting import reader_report, markdown_report
     page, _, errors = offline_page

@@ -14,9 +14,13 @@ from spider.models.observable import NormalizedObservable
 from spider.models.observation import Observation
 from spider.models.provenance import SourceLineage
 from spider.providers.fake.provider_a import FakeProviderA
+from spider.providers.fake.provider_b import FakeProviderB
 from spider.service.service import SpiderService
 from spider.storage.repositories.observation_repo import ObservationRepository
-from spider.storage.schema import InvestigationActionRecord, ProviderRunRecord, TaskRunRecord
+from spider.storage.schema import (InvestigationActionRecord, ProviderRunRecord,
+                                   TaskRunRecord, ObservationRecord)
+from spider.service.actions import RunCapabilityInput
+from spider.web.api.graph import get_graph_neighbors, run_graph_capability
 
 
 class ControlledProvider(FakeProviderA):
@@ -42,8 +46,11 @@ async def actions(tmp_path):
     service = SpiderService(str(tmp_path / "actions.db"), str(tmp_path / "runs"))
     adapter = ControlledProvider()
     service.provider_manager.register_adapter(adapter)
+    service.provider_manager.register_adapter(FakeProviderB())
     service.capability_registry.register_capability(CapabilityDefinition(name="SUBDOMAIN_DISCOVERY", description="Synthetic",
         input_types=[T.DOMAIN], output_types=[T.HOSTNAME, T.IP_ADDRESS], default_providers=["fake_a"]))
+    service.capability_registry.register_capability(CapabilityDefinition(name="INFRASTRUCTURE_DISCOVERY", description="Synthetic pivot",
+        input_types=[T.IP_ADDRESS], output_types=[T.ASN, T.CIDR, T.ORGANIZATION], default_providers=["fake_b"]))
     await service.start()
     case = (await service.create_case("Synthetic action test"))["id"]
     a = (await service.add_target(case, "alpha", T.USERNAME, scope_authorized=True))["id"]
@@ -108,6 +115,56 @@ async def test_dispatch_retry_scope_receipts_and_resolution(actions):
         "case_id": request["case_id"], "target_id": request["target_id"], "run_id": receipt["run_id"]})
     assert "error" not in coverage
     assert any(e["canonical_name"] == "api.fixture.example" for e in await service.get_case_entities(request["case_id"]))
+
+
+@pytest.mark.asyncio
+async def test_web_graph_workbench_exposes_and_runs_only_scoped_transform(actions):
+    service, _, adapter, request, _, observations = actions
+    neighborhood = await get_graph_neighbors(request["case_id"], request["entity_id"],
+        request["target_id"], limit=20, service=service)
+    transform = next(item for item in neighborhood["transforms"]
+                     if item["provider"] == "fake_a")
+    assert transform["required_evidence_ids"] == [observations[0].id]
+    action = RunCapabilityInput.model_validate({
+        key: value for key, value in request.items() if key != "case_id"})
+    receipt = await run_graph_capability(request["case_id"], action, service)
+    assert receipt["status"] in {"QUEUED", "RUNNING"}
+    await settled(service)
+    assert adapter.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_can_complete_two_evidence_linked_pivots_without_full_graph(actions):
+    service, server, _, request, _, _ = actions
+    first = await server.handle_tool_call("run_capability", request)
+    assert "error" not in first
+    await settled(service)
+    async with service.db_manager.session_factory() as session:
+        ip_observation = await session.scalar(select(ObservationRecord).where(
+            ObservationRecord.run_id == first["run_id"],
+            ObservationRecord.observable_type == "IP_ADDRESS"))
+    evidence = await server.handle_tool_call("get_evidence", {
+        "case_id": request["case_id"], "target_id": request["target_id"],
+        "observation_id": ip_observation.id})
+    neighborhood = await server.handle_tool_call("graph_neighbors", {
+        "case_id": request["case_id"], "target_id": request["target_id"],
+        "entity_id": evidence["entity_id"]})
+    transform = next(item for item in neighborhood["transforms"]
+                     if item["provider"] == "fake_b")
+    second_request = {
+        "case_id": request["case_id"], "target_id": request["target_id"],
+        "entity_id": evidence["entity_id"], "action_id": str(uuid4()),
+        "capability": transform["capability"], "provider_id": transform["provider"],
+        "observation_id": ip_observation.id,
+    }
+    second = await server.handle_tool_call("run_capability", second_request)
+    assert "error" not in second
+    await settled(service)
+    digest = await server.handle_tool_call("case_digest", {
+        "case_id": request["case_id"], "target_id": request["target_id"], "limit": 100})
+    assert {item["type"] for item in digest["evidence"]} >= {
+        "DOMAIN", "IP_ADDRESS", "ASN", "CIDR", "ORGANIZATION"}
+    assert all("raw_data" not in item for item in digest["evidence"])
 
 
 @pytest.mark.asyncio

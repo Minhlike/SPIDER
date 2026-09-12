@@ -24,6 +24,18 @@ async def digest(case_id: str, target_id: str, question: str = "all",
         except ValueError:
             raise HTTPException(422, "Invalid digest scope or cursor") from None
 
+
+@router.get("/{case_id}/plan-preview")
+async def investigation_plan_preview(case_id: str, target_id: str,
+                                     question: str = "all",
+                                     service: SpiderService = Depends(get_srv)):
+    from spider.service.investigation_api import plan_preview
+    async with service.db_manager.session_factory() as session:
+        try:
+            return await plan_preview(session, service, case_id, target_id, question)
+        except (ValueError, KeyError, TypeError):
+            raise HTTPException(422, "Invalid plan scope") from None
+
 class CreateCaseRequest(BaseModel):
     name: str
     description: Optional[str] = None

@@ -809,6 +809,54 @@ function scopedCaseUrl(caseId, suffix) {
   return `/api/cases/${caseId}/${suffix}?${params}`;
 }
 
+async function loadInvestigationGuidance(caseId, targetId, question) {
+  const guidance = document.getElementById("investigation-guidance");
+  const planBox = document.getElementById("investigation-plan");
+  if (!targetId) {
+    guidance.textContent = currentLanguage === "vi" ? "Chọn mục tiêu để xem khoảng trống và bước tiếp theo." : "Select a target to see gaps and next steps.";
+    planBox.replaceChildren();
+    return;
+  }
+  const query = new URLSearchParams({target_id: targetId, question});
+  try {
+    const [digestResponse, planResponse] = await Promise.all([
+      fetch(`/api/cases/${caseId}/digest?${query}`),
+      fetch(`/api/cases/${caseId}/plan-preview?${query}`),
+    ]);
+    if (!digestResponse.ok || !planResponse.ok) throw new Error("GUIDANCE_UNAVAILABLE");
+    const digest = await digestResponse.json();
+    const plan = await planResponse.json();
+    if (caseId !== currentCaseId || targetId !== document.getElementById("insight-target").value
+        || question !== document.getElementById("insight-question").value) return;
+    const gaps = digest.question_state?.unresolved_gaps || [];
+    const next = digest.reasoning?.next_best_action || {};
+    guidance.textContent = `${currentLanguage === "vi" ? "Khoảng trống chưa giải quyết" : "Unresolved gaps"}: ${gaps.length}` +
+      (next.action ? ` · ${currentLanguage === "vi" ? "Bước nên làm tiếp" : "Suggested next step"}: ${friendlyLabel(next.action)}` : "");
+    planBox.replaceChildren();
+    const candidates = Array.isArray(plan.candidates) ? plan.candidates : [];
+    const intro = document.createElement("p");
+    intro.textContent = `${currentLanguage === "vi" ? "Trạng thái kế hoạch" : "Plan state"}: ${friendlyLabel(plan.state)}. ` +
+      (currentLanguage === "vi" ? "Đây là bản xem trước; không tự chạy." : "This is a preview and does not dispatch automatically.");
+    planBox.appendChild(intro);
+    if (!candidates.length) {
+      const empty = document.createElement("em");
+      empty.textContent = currentLanguage === "vi" ? "Chưa có bước đủ điều kiện trong snapshot này." : "No eligible step exists in this snapshot.";
+      planBox.appendChild(empty);
+      return;
+    }
+    const list = document.createElement("ol");
+    for (const candidate of candidates.slice(0, 20)) {
+      const item = document.createElement("li");
+      item.textContent = `${candidate.capability} → ${candidate.provider} · ${candidate.question_id}`;
+      list.appendChild(item);
+    }
+    planBox.appendChild(list);
+  } catch (_) {
+    guidance.textContent = currentLanguage === "vi" ? "Chưa đọc được kế hoạch cho mục tiêu này." : "The plan for this target is unavailable.";
+    planBox.replaceChildren();
+  }
+}
+
 async function loadCaseDetail(caseId) {
   try {
     const scopeQuery = new URLSearchParams({question: document.getElementById('insight-question').value});
@@ -825,6 +873,7 @@ async function loadCaseDetail(caseId) {
     selector.replaceChildren(new Option(currentLanguage === 'vi' ? 'Chọn mục tiêu' : 'Select target', ''));
     (scope.targets || []).forEach(target => selector.add(new Option(`${target.type}: ${target.value}`, target.id)));
     selector.value = selectedTarget || scope.target_id || '';
+    loadInvestigationGuidance(caseId, selector.value, document.getElementById('insight-question').value);
     document.getElementById('scope-explanation').textContent = scope.selection_required
       ? (currentLanguage === 'vi' ? 'Chọn mục tiêu để xem bằng chứng riêng, tránh lẫn dữ liệu.' : 'Select a target to view its evidence separately.')
       : `${currentLanguage === 'vi' ? 'Bằng chứng chưa xác định mục tiêu bị loại' : 'Unscoped evidence excluded'}: ${scope.unscoped_observations_excluded || 0}`;
@@ -1603,10 +1652,17 @@ async function openNodeInspector(entityId) {
   try {
     const explainParams = new URLSearchParams({case_id: currentCaseId, entity_id: entityId});
     const targetId = document.getElementById('insight-target').value;
-    if (targetId) explainParams.set('target_id', targetId);
-    const res = await fetch(`/api/explain?${explainParams}`);
-    if (!res.ok) throw new Error("Could not fetch provenance trace");
+    if (!targetId) throw new Error(currentLanguage === "vi" ? "Hãy chọn mục tiêu trước." : "Select a target first.");
+    explainParams.set('target_id', targetId);
+    const neighborParams = new URLSearchParams({target_id: targetId});
+    const [res, neighborRes] = await Promise.all([
+      fetch(`/api/explain?${explainParams}`),
+      fetch(`/api/cases/${currentCaseId}/graph/${entityId}/neighbors?${neighborParams}`),
+    ]);
+    if (!res.ok || !neighborRes.ok) throw new Error("Could not fetch scoped investigation context");
     const data = await res.json();
+    const neighborhood = await neighborRes.json();
+    const transforms = Array.isArray(neighborhood.transforms) ? neighborhood.transforms : [];
 
     content.innerHTML = `
       <div style="margin-bottom:18px;">
@@ -1640,10 +1696,60 @@ async function openNodeInspector(entityId) {
           </div>
         `).join("") || "<p style='color:var(--text-muted);'>Không có chuỗi dấu vết bổ sung.</p>"}
       </div>
+      <div class="intelligence-card" style="padding:14px; margin-top:16px;">
+        <div class="intelligence-card-title" style="margin-bottom:8px;">${currentLanguage === "vi" ? "Bước điều tra tiếp từ thực thể này" : "Next investigation steps from this entity"}</div>
+        <p class="scope-note">${currentLanguage === "vi" ? "Mỗi bước chỉ chạy một capability đã đăng ký, có giới hạn request và giữ lineage về bằng chứng này. Bước có thể truyền định danh đã chọn tới nguồn ghi trên nút." : "Each action runs one registered capability with a request cap and evidence lineage. It may send the selected identifier to the named provider."}</p>
+        <div id="drawer-transform-list" style="display:flex;flex-direction:column;gap:8px;">
+          ${transforms.length ? transforms.map((item, index) => `<button class="btn btn-secondary graph-transform" data-transform-index="${index}" style="text-align:left;">${escapeHtml(item.capability)} → ${escapeHtml(item.provider)}</button>`).join("") : `<em>${currentLanguage === "vi" ? "Chưa có bước mở rộng đã kiểm toán cho thực thể này." : "No audited expansion is available for this entity."}</em>`}
+        </div>
+        <p id="drawer-action-status" role="status" style="margin-top:10px;color:var(--text-muted);"></p>
+      </div>
     `;
+    content.querySelectorAll(".graph-transform").forEach(button => button.addEventListener("click", async () => {
+      const item = transforms[Number(button.dataset.transformIndex)];
+      await runGraphTransform(entityId, targetId, item, button);
+    }));
   } catch (e) {
     content.innerHTML = `<div style="color:var(--accent-rose); padding:20px;">Lỗi: ${escapeHtml(e.message)}</div>`;
   }
+}
+
+async function runGraphTransform(entityId, targetId, transform, button) {
+  const status = document.getElementById("drawer-action-status");
+  button.disabled = true;
+  status.textContent = currentLanguage === "vi" ? "Đang xếp bước điều tra..." : "Queueing investigation step...";
+  const required = Array.isArray(transform.required_evidence_ids) ? transform.required_evidence_ids : [];
+  try {
+    const response = await fetch(`/api/cases/${currentCaseId}/graph/actions/run-capability`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        action_id: newActionId(), target_id: targetId, entity_id: entityId,
+        capability: transform.capability, provider_id: transform.provider,
+        observation_id: required[0] || null,
+        question: document.getElementById("insight-question").value,
+        policy_profile: "passive_standard",
+        browser_assisted: transform.capability === "BROWSER_PERSONAL_DISCOVERY",
+        max_requests: 20, max_entities: 20, timeout_seconds: 60,
+      }),
+    });
+    const receipt = await response.json();
+    if (!response.ok) throw new Error(receipt.detail?.code || "ACTION_REJECTED");
+    status.textContent = `${currentLanguage === "vi" ? "Đã xếp bước" : "Step queued"}: ${friendlyLabel(receipt.status)} · ${receipt.run_id || receipt.receipt_id}`;
+    setTimeout(() => currentCaseId && loadCaseDetail(currentCaseId), 1000);
+  } catch (error) {
+    button.disabled = false;
+    status.textContent = `${currentLanguage === "vi" ? "Không thể chạy bước này" : "Could not run this step"}: ${error.message}`;
+  }
+}
+
+function newActionId() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function inspectObservationJson(obsId) {

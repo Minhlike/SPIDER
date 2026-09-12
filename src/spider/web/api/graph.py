@@ -2,12 +2,38 @@ from fastapi import APIRouter, HTTPException, Query, Request, Depends
 from typing import Dict, Any, List, Optional
 from spider.service.service import SpiderService
 from spider.core.factory import create_spider_service
+from spider.service.actions import RunCapabilityInput, ActionError
 
 router = APIRouter(prefix="/cases/{case_id}/graph", tags=["Knowledge Graph"])
 
 def get_srv(request: Request) -> SpiderService:
     from spider.web.app import get_service
     return get_service(request)
+
+
+@router.get("/{entity_id}/neighbors")
+async def get_graph_neighbors(case_id: str, entity_id: str, target_id: str,
+                              limit: int = Query(default=20, ge=1, le=100),
+                              service: SpiderService = Depends(get_srv)):
+    """Return scoped edges and registry-approved, non-dispatching transforms."""
+    from spider.service.investigation_api import graph_neighbors
+    async with service.db_manager.session_factory() as session:
+        try:
+            return await graph_neighbors(session, service, case_id, target_id,
+                                         entity_id, limit)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail={
+                "code": "invalid_graph_scope", "message": str(exc)}) from None
+
+
+@router.post("/actions/run-capability")
+async def run_graph_capability(case_id: str, action: RunCapabilityInput,
+                               service: SpiderService = Depends(get_srv)):
+    """Queue one transform selected from the scoped graph workbench."""
+    try:
+        return await service.actions.run_capability(case_id, action)
+    except ActionError as exc:
+        raise HTTPException(status_code=422, detail={"code": str(exc)}) from None
 
 @router.get("", response_model=Dict[str, Any])
 async def get_case_graph(
