@@ -7,6 +7,7 @@ from spider.models.enums import ObservableType
 from spider.service.projection import project
 from spider.service.coverage import coverage_report
 from spider.service.evidence_analysis import analyze, public_url
+from spider.service.infrastructure_claims import infrastructure_claims
 from spider.service.phone_candidates import public_phone_candidates
 from spider.service.review import hypotheses
 
@@ -100,6 +101,7 @@ def domain_evidence_profile(observations) -> Dict[str, Any]:
                 if isinstance(value, str) and value.strip():
                     _append_unique(profile["technology_signals"], value.strip())
         elif raw.get("record_kind") in {"rdap_network", "bgp_prefix", "whatismyip_ip_intelligence"}:
+            record_kind = raw.get("record_kind")
             network = {key: raw.get(key) for key in (
                 "asn", "cidr", "prefix", "organization", "isp", "network_name", "rir",
                 "country", "region", "city", "start_address", "end_address")
@@ -108,7 +110,19 @@ def domain_evidence_profile(observations) -> Dict[str, Any]:
             if isinstance(observed_ip, str) and observed_ip:
                 network["ip"] = observed_ip
             if network:
+                network["claim_scope"] = {
+                    "rdap_network": "NETWORK_REGISTRY_METADATA",
+                    "bgp_prefix": "ROUTING_ORIGIN_METADATA",
+                    "whatismyip_ip_intelligence": "IP_GEOLOCATION_ESTIMATE",
+                }[record_kind]
+                network["physical_facility_verified"] = False
+                network["provider_id"] = provider_id
+                network["observation_id"] = str(getattr(observation, "id", "") or "")[:128]
+                observed_at = getattr(observation, "created_at", None)
+                network["observed_at"] = observed_at.isoformat() if observed_at is not None else None
                 _append_unique(profile["network_profiles"], network)
+    resolved_ips = profile["dns_records"]["A"] + profile["dns_records"]["AAAA"]
+    profile.update(infrastructure_claims(observations, resolved_ips))
     return profile
 
 class CaseInsightsBuilder:
@@ -201,7 +215,8 @@ class CaseInsightsBuilder:
             "dmarc_record": None,
             "nameservers": [],
             "ip_addresses": [],
-            "accounts": []
+            "accounts": [],
+            "infrastructure_scope": "MAIL_INFRASTRUCTURE_NOT_PERSON_IDENTITY",
         }
 
         # Domain Insights
@@ -276,17 +291,10 @@ class CaseInsightsBuilder:
             val = e.canonical_name
             etype = e.observable_type
             if etype == "HOSTNAME":
-                if "ns." in val or "ns1" in val or "ns2" in val or "ns3" in val:
-                    if val not in domain_insights["nameservers"]:
-                        domain_insights["nameservers"].append(val)
-                elif "mail" in val or "mx" in val or "smtp" in val:
-                    if val not in domain_insights["mail_servers"]:
-                        domain_insights["mail_servers"].append(val)
-                    if val not in email_insights["mail_servers"]:
-                        email_insights["mail_servers"].append(val)
-                else:
-                    if val not in domain_insights["subdomains"]:
-                        domain_insights["subdomains"].append(val)
+                # A hostname's spelling does not establish its DNS role. Exact
+                # MX/NS roles are assigned below from their source observations.
+                if val not in domain_insights["subdomains"]:
+                    domain_insights["subdomains"].append(val)
             elif etype in ("IP_ADDRESS", "IPV6_ADDRESS"):
                 if val not in domain_insights["ip_addresses"]:
                     domain_insights["ip_addresses"].append(val)
@@ -369,12 +377,30 @@ class CaseInsightsBuilder:
         domain_profile = domain_evidence_profile(observations)
         domain_insights.update(domain_profile)
         domain_insights["certificates"] = domain_profile["certificates"]
+        dns_records = domain_profile["dns_records"]
+        domain_insights["ip_addresses"] = list(dict.fromkeys(
+            dns_records["A"] + dns_records["AAAA"]))
+        domain_insights["nameservers"] = list(dns_records["NS"])
+        domain_insights["mail_servers"] = list(dns_records["MX"])
+        infrastructure_hosts = set(domain_insights["nameservers"] + domain_insights["mail_servers"])
+        root_domain = domain_insights.get("domain")
+        domain_insights["subdomains"] = [host for host in domain_insights["subdomains"]
+            if host not in infrastructure_hosts and host != root_domain
+            and (not root_domain or host.endswith("." + root_domain))]
+        if target_type == "EMAIL":
+            email_insights["mail_servers"] = list(domain_insights["mail_servers"])
+            email_insights["nameservers"] = list(domain_insights["nameservers"])
+            email_insights["ip_addresses"] = list(domain_insights["ip_addresses"])
+            email_insights["spf_record"] = next(iter(domain_profile["dns_security"]["spf"]), None)
+            email_insights["dmarc_record"] = next(iter(domain_profile["dns_security"]["dmarc"]), None)
 
         unique_ip_sources = {}
         for source in ip_insights["source_observations"]:
             key = (source["provider_id"], source["upstream_source"], source["record_kind"])
             unique_ip_sources[key] = source
         ip_insights["source_observations"] = list(unique_ip_sources.values())
+        ip_insights.update(infrastructure_claims(observations,
+            [target_val] if target_type in ("IP_ADDRESS", "IPV6_ADDRESS") else []))
 
         # --- B. Provider Contributions ---
         provider_stats: Dict[str, Dict[str, Any]] = {}

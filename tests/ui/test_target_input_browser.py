@@ -154,6 +154,10 @@ def test_ip_report_renders_enrichment_and_source_provenance(offline_page):
         is_proxy: false, is_vpn: null, is_datacenter: null,
         proxy_type: null, proxy_type_description: 'No proxy detected',
         proxy_range: null, associated_hostnames: ['dns.fixture.invalid'], contacts: [],
+        network_roles: [{role: 'ROUTING_ORIGIN', provider_id: 'native_rdap',
+          resource: '8.8.8.8', claim: {asn: 'AS15169', organization: 'Fixture Network'}}],
+        hosting_assessment: {status: 'NETWORK_OPERATOR_OR_EDGE_ONLY',
+          physical_data_center: null, origin_server_verified: false},
         source_observations: [{provider_id: 'whatismyip',
           record_kind: 'whatismyip_ip_intelligence',
           observed_at: '2026-09-05T00:00:00+00:00', confidence: 0.72}]
@@ -164,7 +168,10 @@ def test_ip_report_renders_enrichment_and_source_provenance(offline_page):
     expect(report).to_contain_text("AS15169")
     expect(report).to_contain_text("No proxy detected")
     expect(report).to_contain_text("whatismyip")
+    expect(report).to_contain_text("Mạng công bố tuyến BGP")
+    expect(report).to_contain_text("không phải bằng chứng vị trí vật lý")
     expect(report).to_contain_text("không xác định cá nhân hoặc địa chỉ nhà")
+    expect(report).to_contain_text("Chưa xác minh máy chủ gốc hoặc trung tâm dữ liệu vật lý cụ thể")
     assert not errors
 
 
@@ -207,6 +214,8 @@ def test_domain_report_renders_only_collected_security_and_service_facts(offline
         certificates: [{issuer_name: 'Fixture CA', not_before: '2026-01-01', not_after: '2027-01-01'}],
         public_services: [{engine: 'shodan', host: 'www.example.test', port: 443}],
         technology_signals: ['nginx'],
+        hosting_assessment: {status: 'NETWORK_OPERATOR_OR_EDGE_ONLY',
+          physical_data_center: null, origin_server_verified: false},
         network_profiles: [{ip: '192.0.2.8', asn: 'AS64500', organization: 'Fixture Network',
           city: 'Hanoi', country: 'VN', prefix: '192.0.2.0/24'}]
       }
@@ -219,6 +228,23 @@ def test_domain_report_renders_only_collected_security_and_service_facts(offline
     expect(report).to_contain_text("nginx")
     expect(report).to_contain_text("Fixture Network")
     expect(report).to_contain_text("có thể là CDN/edge")
+    expect(report).to_contain_text("Chưa xác định trung tâm dữ liệu vật lý")
+    assert not errors
+
+
+def test_email_infrastructure_explicitly_disclaims_person_identity(offline_page):
+    page, _, errors = offline_page
+    page.evaluate("""() => {
+      renderTypeSpecificInsights({target_type: 'EMAIL', investigation_mode: 'INFRASTRUCTURE', entities_count: 3,
+        email_insights: {email: 'fixture@example.test', extracted_domain: 'example.test',
+          mail_servers: ['mx.example.test'], ip_addresses: ['192.0.2.9'],
+          spf_record: 'v=spf1 -all', dmarc_record: 'v=DMARC1; p=reject',
+          infrastructure_scope: 'MAIL_INFRASTRUCTURE_NOT_PERSON_IDENTITY'},
+        domain_insights: {dns_security: {}, hosting_assessment: {status: 'UNKNOWN'}}});
+    }""")
+    report = page.locator("#type-specific-container")
+    expect(report).to_contain_text("IP phân giải trực tiếp từ domain email")
+    expect(report).to_contain_text("không xác định người đứng sau email")
     assert not errors
 
 

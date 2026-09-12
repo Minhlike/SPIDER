@@ -21,8 +21,11 @@ Current slice:
   emitting an ACCOUNT candidate. It now extracts only bounded `rel=me` and
   top-level JSON-LD `sameAs` metadata already rendered in that page, strips URL
   query/fragment data, builds namespace-separated ownership hypotheses and
-  chooses a non-dispatching evidence-based next action. The full suite is 494
-  tests PASS in 202.56 seconds on 12/09/2026;
+  chooses a non-dispatching evidence-based next action. P1-B now assigns DNS
+  roles from exact record types, separates EMAIL account and mail-infrastructure
+  questions, and keeps registry, routing, geolocation, datacenter-network and
+  physical-facility semantics distinct. The full suite is 496 tests PASS in
+  211.88 seconds on 12/09/2026;
 - provider quotas, rate limits, per-action timeout, concurrency, dedup and policy
   remain enforced in unlimited mode;
 - final diff/document review completed; the suite included its existing public/
@@ -57,6 +60,13 @@ Current slice:
   hypotheses, never verified identity; digest/UI explain the next corroboration
   action. Next: Phase P1-B EMAIL/DOMAIN/IP reasoning. The consented live/manual
   USERNAME holdout remains required before any parity claim.
+- P1-B EMAIL/DOMAIN/IP is PASS on fixtures. Reports now state that MX/SPF/DMARC
+  cannot identify a person, resolved domain IP can be a CDN edge, RDAP/BGP
+  country is not a server location, and IP geolocation/datacenter classification
+  does not identify a physical facility. Every structured role/location claim
+  carries provider, observation and time context. Physical facility and origin
+  stay UNKNOWN because no bundled audited source supports those contracts.
+  Next: Phase P1-C PHONE and remaining-input first-class audit.
 
 Do not claim manual-investigation parity, live browser reliability, provider
 adoption or the full reasoning engine complete without the master plan gates.

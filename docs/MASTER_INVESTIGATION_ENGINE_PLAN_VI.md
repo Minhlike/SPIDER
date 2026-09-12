@@ -593,7 +593,8 @@ Mỗi phase phải ghi:
 | P0-B budget/Stop/checkpoint/resume | **EXPERIMENT RESULT — fixture PASS: nullable totals, bounded samples, per-run Stop, versioned frontier, crash recovery, no automatic replay và resume qua UI/API/MCP; live long-run crash chưa kiểm chứng** |
 | P0-C rule registry/planning/proof graph | **EXPERIMENT RESULT — fixture PASS: versioned fail-closed edge/question registries, capability-aware PARTIAL coverage, claim lifecycle, scoped justification DAG, action scope/evidence context và deterministic plan preview; cùng snapshot tái hiện cùng plan/fingerprint, rebuild tái hiện materialized proof DAG; DNS TTL tạo REVALIDATION_DUE nhưng currentness vẫn UNKNOWN. Nguồn không có freshness contract vẫn NOT_INFERRED** |
 | Username vertical slice v2 | **EXPERIMENT RESULT — fixture PASS cho direct route → search lead → mở lại đúng profile với tối đa 3 tab → URL → ACCOUNT lineage → self-published/reciprocal link proof → namespace-separated ownership hypotheses → deterministic next action. Liên kết tìm kiếm chưa mở lại chỉ là URL, kết quả bị chặn được giữ PARTIAL và identity ownership luôn chưa xác minh. Live consented holdout chưa kiểm chứng** |
-| Email/domain/IP/phone reasoning v2 | **NOT YET VERIFIED** |
+| Email/domain/IP reasoning v2 | **EXPERIMENT RESULT — fixture PASS: email public-account và mail-infrastructure questions tách riêng; MX/NS/A/AAAA lấy theo record type thay vì đoán từ hostname; registry/routing/IP-geolocation/datacenter-network roles có observation provenance; origin và physical facility fail-closed UNKNOWN khi không có nguồn chuyên biệt đã audit. Live accuracy chưa kiểm chứng** |
+| Phone/remaining-input reasoning v2 | **NOT YET VERIFIED** |
 | Manual parity benchmark | **NOT YET VERIFIED** |
 
 ## 15. Nguồn thiết kế chính

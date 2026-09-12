@@ -1079,12 +1079,13 @@ function renderTypeSpecificInsights(insights) {
           <div class="chips-container">
             ${(em.mail_servers && em.mail_servers.length) ? em.mail_servers.map(m => `<span class="chip chip-primary">${escapeHtml(m)}</span>`).join("") : "<em>Chưa có máy chủ MX</em>"}
           </div>
-          <div class="detail-key" style="margin-top:12px;">Địa chỉ IP máy chủ thư giải quyết được:</div>
+          <div class="detail-key" style="margin-top:12px;">IP phân giải trực tiếp từ domain email (không phải vị trí người dùng):</div>
           <div class="chips-container">
             ${(em.ip_addresses && em.ip_addresses.length) ? em.ip_addresses.map(ip => `<span class="chip">${escapeHtml(ip)}</span>`).join("") : "<em>Chưa có IP</em>"}
           </div>
         </div>
       </div>
+      <p class="form-hint" style="margin-top:14px;">${escapeHtml(friendlyLabel(em.infrastructure_scope || "MAIL_INFRASTRUCTURE_NOT_PERSON_IDENTITY"))}</p>
     `;
     container.appendChild(card);
   }
@@ -1092,6 +1093,8 @@ function renderTypeSpecificInsights(insights) {
   // B. DOMAIN INTELLIGENCE CARD
   if ((targetType === "DOMAIN" || targetType === "HOSTNAME" || (targetType === "EMAIL" && investigationMode === "INFRASTRUCTURE" && insights.domain_insights)) && insights.domain_insights) {
     const dom = insights.domain_insights;
+    const hosting = dom.hosting_assessment || {};
+    const physicalFacility = hosting.physical_data_center;
     const card = document.createElement("div");
     card.className = "intelligence-card";
     card.innerHTML = `
@@ -1152,8 +1155,14 @@ function renderTypeSpecificInsights(insights) {
         ${(dom.web_metadata || []).length ? `<ul class="detail-list">${dom.web_metadata.slice(0, 5).map(item => `<li><strong>${escapeHtml(String(item.http_status || ""))}</strong> · ${escapeHtml(item.url || "")}<br><small>${escapeHtml(item.title || "Không có tiêu đề")} · HSTS: ${item.has_hsts ? "có" : "chưa thấy"} · CSP: ${item.has_csp ? "có" : "chưa thấy"}</small></li>`).join("")}</ul>` : "<em>Chỉ chạy khi bạn xác nhận phạm vi được ủy quyền và chọn profile kiểm tra chủ động.</em>"}
       </div>
       <div style="margin-top:16px;">
-        <div class="detail-key">Mạng và vị trí ước lượng của IP quan sát được:</div>
-        ${(dom.network_profiles || []).length ? `<ul class="detail-list">${dom.network_profiles.slice(0, 12).map(item => `<li><strong>${escapeHtml(item.ip || "IP theo nguồn")}</strong> · ${escapeHtml(item.asn || "ASN chưa rõ")} · ${escapeHtml(item.organization || item.isp || item.network_name || "Tổ chức chưa rõ")}<br><small>${escapeHtml([item.city, item.region, item.country].filter(Boolean).join(", ") || "Vị trí chưa có nguồn")}${item.prefix || item.cidr ? ` · ${escapeHtml(item.prefix || item.cidr)}` : ""} · Đây có thể là CDN/edge, không khẳng định máy chủ gốc.</small></li>`).join("")}</ul>` : "<em>Chưa có phản hồi registry/IP intelligence cho các IP đã quan sát.</em>"}
+        <div class="detail-key">Mạng vận hành và vị trí do từng nguồn mô tả:</div>
+        ${(dom.network_profiles || []).length ? `<ul class="detail-list">${dom.network_profiles.slice(0, 12).map(item => `<li><strong>${escapeHtml(item.ip || "IP theo nguồn")}</strong> · ${escapeHtml(item.asn || "ASN chưa rõ")} · ${escapeHtml(item.organization || item.isp || item.network_name || "Tổ chức chưa rõ")}<br><small>${escapeHtml(friendlyLabel(item.claim_scope || "UNKNOWN"))} · ${escapeHtml(item.provider_id || "nguồn chưa rõ")} · ${escapeHtml([item.city, item.region, item.country].filter(Boolean).join(", ") || "Không có trường địa lý")}${item.prefix || item.cidr ? ` · ${escapeHtml(item.prefix || item.cidr)}` : ""} · Không khẳng định máy chủ gốc hoặc cơ sở vật lý.</small></li>`).join("")}</ul>` : "<em>Chưa có phản hồi registry/IP intelligence cho các IP đã quan sát.</em>"}
+      </div>
+      <div style="margin-top:16px;">
+        <div class="detail-key">${currentLanguage === "vi" ? "Kết luận về nơi host / trung tâm dữ liệu" : "Hosting / data-center conclusion"}:</div>
+        <div class="detail-row"><span class="detail-key">${currentLanguage === "vi" ? "Mức kết luận" : "Finding"}:</span><span class="detail-val">${escapeHtml(friendlyLabel(hosting.status || "UNKNOWN"))}</span></div>
+        <div class="detail-row"><span class="detail-key">${currentLanguage === "vi" ? "Máy chủ gốc" : "Origin server"}:</span><span class="detail-val">${hosting.origin_server_verified ? (currentLanguage === "vi" ? "Đã xác minh" : "Verified") : (currentLanguage === "vi" ? "Chưa xác minh; IP có thể là CDN/edge" : "Unverified; the IP may be a CDN/edge")}</span></div>
+        <div class="detail-row"><span class="detail-key">${currentLanguage === "vi" ? "Cơ sở vật lý" : "Physical facility"}:</span><span class="detail-val">${physicalFacility ? escapeHtml([physicalFacility.facility_name, physicalFacility.facility_region, physicalFacility.facility_country].filter(Boolean).join(", ")) : (currentLanguage === "vi" ? "Chưa xác định trung tâm dữ liệu vật lý" : "Physical data center unknown")}</span></div>
       </div>
     `;
     container.appendChild(card);
@@ -1162,6 +1171,7 @@ function renderTypeSpecificInsights(insights) {
   // C. IP & BGP INTELLIGENCE CARD
   if ((targetType === "IP_ADDRESS" || targetType === "IPV6_ADDRESS") && insights.ip_insights) {
     const ip = insights.ip_insights;
+    const hosting = ip.hosting_assessment || {};
     const yesNoUnknown = value => value === true ? (currentLanguage === "vi" ? "Có" : "Yes")
       : value === false ? (currentLanguage === "vi" ? "Không" : "No") : (currentLanguage === "vi" ? "Chưa xác định" : "Unknown");
     const location = [ip.city, ip.region, ip.country].filter(Boolean).join(", ") || "-";
@@ -1173,6 +1183,11 @@ function renderTypeSpecificInsights(insights) {
       <td>${escapeHtml(friendlyLabel("UNCALIBRATED"))}</td></tr>`).join("");
     const contacts = (ip.contacts || []).flatMap(contact => (contact.emails || []).map(email =>
       `${(contact.roles || []).join(", ") || "contact"}: ${email}`));
+    const networkRoles = (ip.network_roles || []).map(item => {
+      const claim = item.claim || {};
+      const subject = claim.organization || claim.isp || claim.network_name || claim.asn || claim.prefix || "—";
+      return `<li>${escapeHtml(friendlyLabel(item.role || "UNKNOWN"))}: ${escapeHtml(String(subject))}<br><small>${escapeHtml(item.provider_id || "—")} · ${escapeHtml(item.resource || ip.ip || "—")} · ${currentLanguage === "vi" ? "không phải bằng chứng vị trí vật lý" : "not physical-location evidence"}</small></li>`;
+    }).join("");
     const card = document.createElement("div");
     card.className = "intelligence-card";
     card.innerHTML = `
@@ -1192,7 +1207,7 @@ function renderTypeSpecificInsights(insights) {
             <span class="detail-val"><code>${escapeHtml(ip.cidr || "-")}</code></span>
           </div>
           <div class="detail-row">
-            <span class="detail-key">Tổ chức quản lý (Org):</span>
+            <span class="detail-key">Tổ chức liên quan (xem vai trò nguồn):</span>
             <span class="detail-val">${escapeHtml(ip.organization || "-")}</span>
           </div>
           <div class="detail-row"><span class="detail-key">ISP:</span><span class="detail-val">${escapeHtml(ip.isp || "-")}</span></div>
@@ -1218,7 +1233,12 @@ function renderTypeSpecificInsights(insights) {
         <div class="detail-key">Liên hệ vận hành công khai:</div>
         <div class="chips-container">${contacts.length ? contacts.map(item => `<span class="chip">${escapeHtml(item)}</span>`).join("") : "<em>Chưa có trong RDAP</em>"}</div>
       </div>
+      <div style="margin-top:14px;">
+        <div class="detail-key">Vai trò hạ tầng theo từng nguồn:</div>
+        ${networkRoles ? `<ul class="detail-list">${networkRoles}</ul>` : "<em>Chưa có claim vai trò hạ tầng.</em>"}
+      </div>
       <p class="form-hint" style="margin-top:14px;">Vị trí IP là ước lượng cấp mạng và không xác định cá nhân hoặc địa chỉ nhà.</p>
+      <p class="form-hint">${escapeHtml(friendlyLabel(hosting.status || "UNKNOWN"))}. ${hosting.origin_server_verified ? (currentLanguage === "vi" ? "Máy chủ gốc đã được nguồn xác minh." : "The source verified the origin server.") : (currentLanguage === "vi" ? "Chưa xác minh máy chủ gốc hoặc trung tâm dữ liệu vật lý cụ thể." : "The origin server and physical data center are unverified.")}</p>
       <div style="margin-top:14px; overflow-x:auto;">
         <div class="detail-key">Nguồn và thời điểm quan sát:</div>
         <table><thead><tr><th>Nguồn</th><th>Loại dữ liệu</th><th>Quan sát lúc</th><th>Độ tin cậy</th></tr></thead>

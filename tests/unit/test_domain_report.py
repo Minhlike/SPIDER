@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 import json
+from datetime import datetime, timezone
 
 from spider.service.insights import domain_evidence_profile
 from spider.providers.native.dns import NativeDnsAdapter
@@ -34,9 +35,39 @@ def test_domain_profile_only_reports_observed_dns_certificate_and_scanner_fields
     assert profile["technology_signals"] == ["nginx"]
     assert profile["web_metadata"] == [{"url": "https://example.test/", "http_status": 200,
                                          "title": "Fixture", "has_hsts": True, "has_csp": False}]
-    assert profile["network_profiles"] == [{"asn": "AS64500", "prefix": "192.0.2.0/24",
-                                             "organization": "Fixture Network", "country": "VN",
-                                             "ip": "192.0.2.8"}]
+    network = profile["network_profiles"][0]
+    assert {key: network[key] for key in ("asn", "prefix", "organization", "country", "ip")} == {
+        "asn": "AS64500", "prefix": "192.0.2.0/24",
+        "organization": "Fixture Network", "country": "VN", "ip": "192.0.2.8"}
+    assert network["claim_scope"] == "ROUTING_ORIGIN_METADATA"
+    assert network["physical_facility_verified"] is False
+    assert profile["network_roles"][0]["role"] == "ROUTING_ORIGIN"
+    assert profile["hosting_assessment"]["status"] == "NETWORK_OPERATOR_OR_EDGE_ONLY"
+    assert profile["hosting_assessment"]["physical_data_center"] is None
+    assert profile["hosting_assessment"]["origin_server_verified"] is False
+
+
+def test_datacenter_classification_and_rdap_country_do_not_invent_a_physical_facility():
+    observed = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    observations = [
+        SimpleNamespace(id="geo", provider_id="whatismyip", created_at=observed,
+            parent_observable_value="203.0.113.7", raw_data_json={
+                "record_kind": "whatismyip_ip_intelligence", "ip": "203.0.113.7",
+                "country": "VN", "city": "Hanoi", "isp": "Fixture ISP",
+                "is_datacenter": True, "facility_name": "must-not-promote"}),
+        SimpleNamespace(id="rdap", provider_id="native_rdap", created_at=observed,
+            parent_observable_value="203.0.113.7", raw_data_json={
+                "record_kind": "rdap_network", "country": "US", "network_name": "FIXTURE"}),
+    ]
+
+    profile = domain_evidence_profile(observations)
+
+    assert profile["hosting_assessment"]["status"] == "DATACENTER_NETWORK_CLASSIFICATION_ONLY"
+    assert profile["hosting_assessment"]["physical_data_center"] is None
+    assert profile["location_claims"][0]["claim"] == {"country": "VN", "city": "Hanoi"}
+    assert all(item["physical_facility_verified"] is False
+               for item in profile["network_roles"] + profile["location_claims"])
+    assert not profile["facility_claims"]
 
 
 def test_dns_parser_retains_domain_level_security_records_as_evidence():

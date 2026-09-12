@@ -61,6 +61,10 @@ async def test_whatismyip_runs_through_engine_and_builds_sourced_report(tmp_path
         assert report["is_proxy"] is False
         assert report["proxy_type_description"] == "No proxy detected"
         assert report["source_observations"][0]["provider_id"] == "whatismyip"
+        assert report["location_claims"][0]["claim_type"] == "IP_GEOLOCATION_ESTIMATE"
+        assert report["location_claims"][0]["physical_facility_verified"] is False
+        assert report["hosting_assessment"]["physical_data_center"] is None
+        assert report["hosting_assessment"]["origin_server_verified"] is False
         dumped = json.dumps(insights)
         assert secret not in dumped and secret not in caplog.text
         assert all(secret.encode() not in path.read_bytes()

@@ -41,14 +41,14 @@
   "handoff": "docs/RELEASE_V2_0_0.md",
   "current_development": {
     "baseline_head": "069fa49a2b9eb500f1fa150775547d3851d2b509",
-    "phase": "MASTER_INVESTIGATION_ENGINE_P1_B",
-    "status": "P1_A_FIXTURE_PASS_P1_B_NEXT",
+    "phase": "MASTER_INVESTIGATION_ENGINE_P1_C",
+    "status": "P1_A_P1_B_FIXTURE_PASS_P1_C_NEXT",
     "plan": "docs/MASTER_INVESTIGATION_ENGINE_PLAN_VI.md",
     "report": "docs/AGENT_INVESTIGATION_INCREMENT_3.md",
     "offline_gate": {
-      "passed": 494,
+      "passed": 496,
       "deselected": 0,
-      "seconds": 202.56,
+      "seconds": 211.88,
       "chromium_ui_included": 15,
       "real_stdio_tests": 2
     },
@@ -64,9 +64,11 @@
     "m3_gate": "PASS_FIXTURE_NOT_LIVE_VERIFIED",
     "m1_gate": "PARTIAL_STABLE_SNAPSHOTS_AND_SCOPED_CONTINUATION",
     "m1_remaining": "HARD_BOUND_REACHABLE_PROJECTION_NOT_YET_VERIFIED",
-    "latest_development_head": "UNCOMMITTED_AFTER_6b6e2c87b2c4029c730fae2ad44e31fe1891f0f5",
+    "latest_development_head": "UNCOMMITTED_AFTER_d6bacc7ebc67e947b2ab13dc7edea270ec3c48ce",
     "m4_gate": "PASS_FIXTURE_SEARCH_REVALIDATE_LINK_PROOF_NO_LIVE_BENCHMARK",
     "p1_a_gate": "PASS_FIXTURE_FULL_LOOP_LIVE_CONSENTED_HOLDOUT_PENDING",
+    "p1_b_gate": "PASS_FIXTURE_ROLE_SCOPED_INFRASTRUCTURE_LIVE_ACCURACY_PENDING",
+    "question_registry": "1.1.0",
     "m5_gate": "PARTIAL_PUBLIC_CANDIDATE_PIPELINE_NO_CONSENTED_HOLDOUT",
     "m6_gate": "PARTIAL_MEASURED_UTILITY_AND_NONDISPATCHING_ADVICE_UNCALIBRATED"
   }

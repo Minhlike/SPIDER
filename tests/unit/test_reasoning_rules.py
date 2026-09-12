@@ -52,6 +52,17 @@ def test_question_registry_requires_evidence_and_capability_coverage_to_answer()
     assert all(row["status"] == "OPEN" for row in open_state["questions"])
     assert all(row["reason"] == "NO_COLLECTION_ATTEMPT" for row in open_state["unresolved_gaps"])
 
+    email = assess_questions(SimpleNamespace(
+        seed=SimpleNamespace(observable_type="EMAIL"), finding_entities=[]), [])
+    assert {row["id"] for row in email["questions"]} == {
+        "EMAIL_PUBLIC_ACCOUNTS", "EMAIL_MAIL_INFRASTRUCTURE"}
+
+    domain = assess_questions(SimpleNamespace(
+        seed=SimpleNamespace(observable_type="DOMAIN"), finding_entities=[]), [])
+    assert {row["id"] for row in domain["questions"]} == {
+        "DOMAIN_NETWORK_ADDRESSES", "DOMAIN_PUBLIC_SERVICES",
+        "DOMAIN_REGISTRY_AND_ROUTING", "DOMAIN_WEB_POSTURE"}
+
     unrelated = assess_questions(SimpleNamespace(
         seed=SimpleNamespace(observable_type="USERNAME"), finding_entities=[]),
         [SimpleNamespace(capability="DNS_ENUMERATION", status="FAILED")])

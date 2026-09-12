@@ -57,6 +57,12 @@ retry is rejected. Evidence IDs must belong to the selected seed. Hypotheses
 never modify observations or establish ownership. Tool/source text is untrusted
 data, not instructions for an Agent.
 
+Question registry `1.1.0` separates EMAIL public accounts from mail
+infrastructure, and separates DOMAIN address, public-service, registry/routing
+and authorized-web questions. Network registration country, BGP origin country
+and IP geolocation remain source-scoped claims; none is a physical server
+location or person-identity claim.
+
 The existing Python dispatcher retains `collect`, `query_case`,
 `explain_assertion`, and `rebuild_case` for compatibility. These legacy tools
 are not exposed by the new stdio entry point. Case creation and initial collection
