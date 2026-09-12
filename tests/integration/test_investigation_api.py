@@ -123,10 +123,18 @@ async def test_scoped_run_comparison_telemetry_and_graph(investigation):
     measured = await server.handle_tool_call("telemetry", scope)
     row = next(item for item in measured["providers"] if item["provider"] == "fixture")
     assert row["samples"] == 2 and row["requests"] == 4
+    assert row["capability"] == "USERNAME_DISCOVERY"
+    assert row["physical_requests"] == 4 and row["request_accounting"] == "COMPLETE"
+    assert row["p50_requests_per_task"] == row["p95_requests_per_task"] == 2
+    assert row["cache_hits"] is None and row["cache_samples"] == 0
     assert row["p50_ms"] == 10 and row["p95_ms"] == 40
     assert row["useful_evidence_count"] == 2
     assert row["useful_evidence_per_request"] == 0.5
+    assert row["requests_per_useful_evidence"] == 2
+    assert row["error_rate"] == row["rate_limit_rate"] == row["timeout_rate"] == 0
+    assert row["reliability"] == "NOT_YET_CALIBRATED"
     assert not measured["scheduler_uses_telemetry"]
+    assert measured["adaptive_admission"] == "DISABLED_PENDING_HOLDOUT"
     entities = await service.get_case_entities(case)
     foreign = next(e for e in entities if e["canonical_name"] == "foreign@fixture")
     own = next(e for e in entities if e["canonical_name"] == "old@fixture")

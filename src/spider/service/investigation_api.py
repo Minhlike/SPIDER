@@ -371,6 +371,40 @@ async def phone_candidate_digest(session, case_id, target_id):
             **public_phone_candidates(view.evidence_observations, view.seed.canonical_value)}
 
 
+_TELEMETRY_SIGNAL_KEYS = {"reason", "state", "outcome", "collection_state",
+                          "budget_reason", "credential_state"}
+_RATE_LIMIT_SIGNALS = {"HTTP_429", "RATE_LIMIT", "RATE_LIMITED", "QUOTA_LIMIT",
+                       "NO_QUERY_CREDITS", "DAILY_LIMIT_REACHED"}
+_TIMEOUT_SIGNALS = {"TIMEOUT", "TIMED_OUT"}
+
+
+def _task_signal_codes(value, key=None):
+    """Read bounded structured status fields; never mine log/error prose."""
+    found = set()
+    if isinstance(value, dict):
+        for child_key, child in list(value.items())[:200]:
+            found.update(_task_signal_codes(child, str(child_key)))
+    elif isinstance(value, list):
+        for child in value[:200]:
+            found.update(_task_signal_codes(child, key))
+    elif key in _TELEMETRY_SIGNAL_KEYS and isinstance(value, str) and len(value) <= 128:
+        found.add(value.upper())
+    return found
+
+
+def _reliability_band(samples, noncompleted_rate, error_rate, rate_limit_rate,
+                      timeout_rate, accounting_complete):
+    """A descriptive observed band, never a probability or live-health claim."""
+    if samples < 20 or not accounting_complete:
+        return "NOT_YET_CALIBRATED"
+    disruption = error_rate + rate_limit_rate + timeout_rate
+    if noncompleted_rate <= .05 and disruption <= .05:
+        return "OBSERVED_HIGH"
+    if noncompleted_rate <= .20 and disruption <= .20:
+        return "OBSERVED_MEDIUM"
+    return "OBSERVED_LOW"
+
+
 async def telemetry(session, case_id, target_id):
     view = await project(session, case_id, target_id)
     if view.seed is None:
@@ -382,7 +416,8 @@ async def telemetry(session, case_id, target_id):
         m = task.metadata_json or {}
         if m.get("seed_id") != target_id:
             continue
-        key = (task.provider_id, m.get("provider_version"), m.get("adapter_version"))
+        key = (task.provider_id, task.capability, m.get("provider_version"),
+               m.get("adapter_version"))
         groups.setdefault(key, []).append(task)
     # A useful item is a newly observed typed identity in this scoped question
     # with a recorded source family.  Seed input and duplicate identities are
@@ -404,14 +439,54 @@ async def telemetry(session, case_id, target_id):
         counted = [t.metadata_json["request_count"] for t in rows
                    if type(t.metadata_json.get("request_count")) is int
                    and t.metadata_json["request_count"] >= 0]
-        requests = sum(counted) if len(counted) == len(rows) else None
+        accounting_complete = len(counted) == len(rows)
+        requests = sum(counted) if accounting_complete else None
+        cache_counted = [t.metadata_json["cache_hits_count"] for t in rows
+                         if type(t.metadata_json.get("cache_hits_count")) is int
+                         and t.metadata_json["cache_hits_count"] >= 0]
+        cache_hits = sum(cache_counted) if len(cache_counted) == len(rows) else None
+        new_identity_counted = [t.metadata_json["new_typed_identities_count"] for t in rows
+            if type(t.metadata_json.get("new_typed_identities_count")) is int
+            and t.metadata_json["new_typed_identities_count"] >= 0]
         useful = sum(useful_by_task.get(task.id, 0) for task in rows)
-        output.append({"provider": key[0], "version": key[1], "adapter_version": key[2],
+        signal_codes = [_task_signal_codes(task.metadata_json or {}) for task in rows]
+        noncompleted_rate = sum(t.status != "COMPLETED" for t in rows) / len(rows)
+        error_rate = sum(t.status in {"FAILED", "ERROR"} for t in rows) / len(rows)
+        rate_limit_rate = sum(bool(codes & _RATE_LIMIT_SIGNALS) for codes in signal_codes) / len(rows)
+        timeout_rate = sum(bool(codes & _TIMEOUT_SIGNALS) for codes in signal_codes) / len(rows)
+        selected = sum((t.metadata_json.get("coverage") or {}).get("selected", 0) for t in rows
+                       if isinstance(t.metadata_json.get("coverage"), dict))
+        decided = sum(sum((t.metadata_json.get("coverage") or {}).get(field, 0)
+                          for field in ("found", "not_found", "invalid")) for t in rows
+                      if isinstance(t.metadata_json.get("coverage"), dict))
+        request_counts = sorted(counted)
+        output.append({"provider": key[0], "capability": key[1],
+            "version": key[2], "adapter_version": key[3],
             "samples": len(rows), "latency_samples": len(durations),
             "p50_ms": durations[math.ceil(len(durations)*.5)-1] if durations else None,
             "p95_ms": durations[math.ceil(len(durations)*.95)-1] if durations else None,
-            "requests": requests, "request_samples": len(counted), "noncompleted_rate": sum(t.status != "COMPLETED" for t in rows)/len(rows),
+            "physical_requests": requests, "requests": requests,
+            "p50_requests_per_task": request_counts[math.ceil(len(request_counts)*.5)-1]
+                if request_counts else None,
+            "p95_requests_per_task": request_counts[math.ceil(len(request_counts)*.95)-1]
+                if request_counts else None,
+            "request_samples": len(counted),
+            "request_accounting": "COMPLETE" if accounting_complete else "INCOMPLETE",
+            "cache_hits": cache_hits, "cache_samples": len(cache_counted),
+            "new_typed_identities": (sum(new_identity_counted)
+                if len(new_identity_counted) == len(rows) else None),
+            "new_identity_samples": len(new_identity_counted),
+            "noncompleted_rate": noncompleted_rate,
+            "error_rate": error_rate, "rate_limit_rate": rate_limit_rate,
+            "timeout_rate": timeout_rate,
             "useful_evidence_count": useful,
             "useful_evidence_per_request": useful / requests if requests else None,
-            "reliability": "NOT_YET_CALIBRATED"})
-    return {"providers": output, "scheduler_uses_telemetry": False}
+            "requests_per_useful_evidence": requests / useful if requests is not None and useful else None,
+            "decision_samples": selected,
+            "decision_coverage": decided / selected if selected else None,
+            "reliability": _reliability_band(len(rows), noncompleted_rate, error_rate,
+                                               rate_limit_rate, timeout_rate,
+                                               accounting_complete)})
+    return {"providers": output, "scheduler_uses_telemetry": False,
+            "adaptive_admission": "DISABLED_PENDING_HOLDOUT",
+            "reader_note": "Observed task metrics are version-scoped and are not provider guarantees."}

@@ -185,9 +185,16 @@ class ProviderManager:
                 result = ProviderExecutionResult(raw_content=b"", observations=[], outcome="FAILED",
                                                  error_message="Observation scope mismatch")
             if ledger is not None:
-                accepted = [obs for obs in result.observations if ledger.admit_entity(budget, task.case_id, obs.observable)]
+                accepted, new_typed_identities = [], 0
+                for observation in result.observations:
+                    admitted, novel = ledger.admit_entity_with_novelty(
+                        budget, task.case_id, observation.observable)
+                    if admitted:
+                        accepted.append(observation)
+                        new_typed_identities += int(novel)
                 dropped = len(result.observations) - len(accepted)
                 result.observations = accepted
+                result.metadata["new_typed_identities_count"] = new_typed_identities
                 if dropped:
                     result.outcome = "PARTIAL"
                     result.metadata.update(budget_reason="ENTITY_LIMIT", budget_dropped=dropped)

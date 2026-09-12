@@ -64,16 +64,21 @@ class BudgetLedger(SpiderBaseModel):
             return self._task_request_counts.get(task_id, 0)
 
     def admit_entity(self, budget: ExecutionBudget, case_id: str, observable) -> bool:
+        admitted, _ = self.admit_entity_with_novelty(budget, case_id, observable)
+        return admitted
+
+    def admit_entity_with_novelty(self, budget: ExecutionBudget, case_id: str, observable):
+        """Atomically admit an identity and report whether it was new to this run."""
         key = (case_id, *observable.identity)
         with self._lock:
             if key in self._entities:
-                return True
+                return True, False
             if self.entities_count >= budget.max_entities:
                 self.entities_rejected_count += 1
-                return False
+                return False, False
             self._entities.add(key)
             self.entities_count += 1
-            return True
+            return True, True
 
     def record_observation_yield(self, count: int) -> None:
         if count == 0:

@@ -16,7 +16,7 @@ from spider.providers.fake.provider_a import FakeProviderA
 from spider.providers.base import ProviderExecutionResult
 from spider.capability.definitions import CapabilityDefinition
 from spider.service.service import SpiderService
-from spider.storage.schema import ObservationRecord, ProviderRunRecord
+from spider.storage.schema import ObservationRecord, ProviderRunRecord, TaskRunRecord
 
 
 class _Recorder:
@@ -157,6 +157,9 @@ async def test_entity_ingest_cap_persists_and_rebuild_cannot_bypass(tmp_path):
             assert len((await session.execute(select(ObservationRecord))).scalars().all()) == 3
             saved = await session.get(ProviderRunRecord, run["run_id"])
             assert saved.metadata_json["budget_ledger"] == run["budget_ledger"]
+            task = (await session.scalars(select(TaskRunRecord).where(
+                TaskRunRecord.run_id == run["run_id"]))).one()
+            assert task.metadata_json["new_typed_identities_count"] == 2
         rebuilt = await service.rebuild_case(case["id"])
         assert rebuilt["entities_rebuilt"] == 3
     finally:
