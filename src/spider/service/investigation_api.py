@@ -17,6 +17,21 @@ from spider.storage.schema import TaskRunRecord, ProviderRunRecord, CaseRecord, 
 from spider.explain.explainer import ExplainEngine
 
 
+# A target is selectable only when the current release can collect relevant
+# evidence, evaluate a versioned question, and render a target-specific report.
+# Keeping this explicit prevents a registered adapter from making a half-built
+# input look production-ready in the UI.
+INPUT_REPORT_CONTRACTS = {
+    ObservableType.USERNAME: "USERNAME_PUBLIC_ACCOUNTS_V1",
+    ObservableType.EMAIL: "EMAIL_IDENTITY_AND_MAIL_INFRASTRUCTURE_V1",
+    ObservableType.DOMAIN: "DOMAIN_INFRASTRUCTURE_V1",
+    ObservableType.HOSTNAME: "DOMAIN_INFRASTRUCTURE_V1",
+    ObservableType.IP_ADDRESS: "IP_NETWORK_CONTEXT_V1",
+    ObservableType.IPV6_ADDRESS: "IP_NETWORK_CONTEXT_V1",
+    ObservableType.PHONE: "PHONE_PUBLIC_CANDIDATES_V1",
+}
+
+
 async def list_context(session, case_id=None, limit=20, after=None):
     """ID-ordered navigation without loading graph, metadata or raw evidence."""
     if type(limit) is not int or not 1 <= limit <= 100:
@@ -55,14 +70,42 @@ async def explain_claim(session, case_id, target_id, claim_id):
 def input_catalogue(service):
     result = []
     for kind in ObservableType:
-        providers = sorted({pid
-            for cap in service.capability_registry.get_capabilities_for_input(kind)
-            for pid in cap.default_providers
-            if assess_provider(service.provider_manager.get_adapter(pid), kind, cap.name).applicable
-            and service.provider_manager.get_adapter(pid).request_budget_supported})
+        questions = DEFAULT_QUESTIONS.for_input(kind)
+        question_ids = [question.id for question in questions]
+        routes = []
+        for question in questions:
+            answer_types = set(question.answer_entity_types)
+            for capability_name in question.next_capabilities:
+                capability = service.capability_registry.get_capability(capability_name)
+                if capability is None or kind not in capability.input_types:
+                    continue
+                for provider_id in capability.default_providers:
+                    adapter = service.provider_manager.get_adapter(provider_id)
+                    if (not assess_provider(adapter, kind, capability_name).applicable
+                            or not adapter.request_budget_supported):
+                        continue
+                    if not answer_types.intersection(adapter.produces()):
+                        continue
+                    routes.append({"question_id": question.id,
+                                   "capability": capability_name,
+                                   "provider": provider_id})
+        routes.sort(key=lambda row: (row["question_id"], row["capability"], row["provider"]))
+        providers = sorted({row["provider"] for row in routes})
+        report_contract = INPUT_REPORT_CONTRACTS.get(kind)
+        if not questions:
+            reason = "NO_QUESTION_CONTRACT"
+        elif not routes:
+            reason = "NO_METERED_ANSWERING_ROUTE"
+        elif report_contract is None:
+            reason = "NO_TARGET_REPORT_CONTRACT"
+        else:
+            reason = "READY_ON_REGISTERED_CONTRACT"
+        supported = reason == "READY_ON_REGISTERED_CONTRACT"
         result.append({"type": kind.value, "providers": providers,
-                       "supported": bool(providers), "live_verified": False,
-                       "reason": "CAPABILITY_AVAILABLE" if providers else "NO_METERED_CAPABILITY"})
+                       "question_ids": question_ids, "answering_routes": routes,
+                       "report_contract": report_contract,
+                       "supported": supported, "support_state": "SUPPORTED" if supported else "DISABLED",
+                       "live_verified": False, "reason": reason})
     return result
 
 

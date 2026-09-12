@@ -22,7 +22,12 @@ def offline_page(tmp_path, monkeypatch):
     from spider.models.enums import ObservableType
     monkeypatch.setattr(web_app, "input_catalogue", lambda _service: [
         {"type": kind.value, "supported": kind.value in
-         {"USERNAME", "EMAIL", "DOMAIN", "HOSTNAME", "IP_ADDRESS", "IPV6_ADDRESS", "ASN"}}
+         {"USERNAME", "EMAIL", "DOMAIN", "HOSTNAME", "IP_ADDRESS", "IPV6_ADDRESS"},
+         "reason": ("READY_ON_REGISTERED_CONTRACT" if kind.value in
+          {"USERNAME", "EMAIL", "DOMAIN", "HOSTNAME", "IP_ADDRESS", "IPV6_ADDRESS"}
+          else "NO_TARGET_REPORT_CONTRACT" if kind.value == "ORGANIZATION"
+          else "NO_METERED_ANSWERING_ROUTE" if kind.value == "PHONE"
+          else "NO_QUESTION_CONTRACT")}
         for kind in ObservableType])
     monkeypatch.setattr(web_app, "source_preflight", lambda _service, observable_type, _mode=None,
                         _browser=False: {
@@ -87,6 +92,24 @@ def test_dotted_username_and_explicit_marker(offline_page):
     assert dispatches[0]["investigation_mode"] == "AUTO"
     assert dispatches[0]["browser_assisted"] is True
     assert dispatches[0]["budget"]["username_source_scope"] == "VN_COMMON_CORE"
+    assert not errors
+
+
+@pytest.mark.parametrize(("raw", "kind"), [
+    ("reader@example.test", "EMAIL"),
+    ("host.internal", "HOSTNAME"),
+    ("2001:4860:4860::8888", "IPV6_ADDRESS"),
+])
+def test_each_additional_enabled_input_can_reach_dispatch(offline_page, raw, kind):
+    page, dispatches, errors = offline_page
+    page.locator("#target-input").fill(raw)
+    page.locator("#target-type-select").select_option(kind)
+    expect(page.locator("#type-preview")).to_have_text(kind)
+    with page.expect_response("**/api/investigate") as queued:
+        page.locator("#btn-start-investigate").click()
+    assert queued.value.status == 200
+    assert dispatches[-1]["target"] == raw
+    assert dispatches[-1]["target_type"] == kind
     assert not errors
 
 
@@ -362,8 +385,35 @@ def test_unsupported_input_cannot_dispatch_even_through_auto(offline_page):
     page.locator("#target-input").fill("https://example.com/path")
     expect(page.locator("#type-preview")).to_have_text("URL")
     page.locator("#btn-start-investigate").click()
-    expect(page.locator("#classification-explanation")).to_contain_text("Chưa khởi chạy")
+    expect(page.locator("#classification-explanation")).to_contain_text("chưa có câu hỏi điều tra đã kiểm chứng")
     assert not dispatches and not errors
+
+
+def test_disabled_inputs_explain_distinct_readiness_gaps(offline_page):
+    page, _, errors = offline_page
+    status = page.locator("#input-support-status")
+    expect(status).to_contain_text("PHONE: chưa có nguồn tạo bằng chứng")
+    expect(status).to_contain_text("ORGANIZATION: chưa có báo cáo riêng")
+    expect(status).to_contain_text("CIDR: chưa có câu hỏi điều tra")
+    assert page.locator('#target-type-select option[value="PHONE"]').get_attribute("title")
+    assert not errors
+
+
+def test_phone_report_preserves_seed_and_disclaims_prefix_allocation(offline_page):
+    page, _, errors = offline_page
+    page.evaluate("""() => renderTypeSpecificInsights({target_type: 'PHONE', entities_count: 1,
+      phone_insights: {phone: '+84327152369', original_seed: '0327 152 369',
+        e164: '+84327152369', region: 'VN', number_type: 'MOBILE',
+        original_allocation: 'Fixture Telecom', current_carrier: 'UNKNOWN',
+        assignment_verified: false, public_candidate_digest: {candidates: [], contradictions: []}}
+    })""")
+    report = page.locator("#type-specific-container")
+    expect(report).to_contain_text("0327 152 369")
+    expect(report).to_contain_text("+84327152369")
+    expect(report).to_contain_text("VN · MOBILE")
+    expect(report).to_contain_text("không chứng minh nhà mạng hiện tại")
+    expect(report).not_to_contain_text("Chủ sở hữu")
+    assert not errors
 
 
 def test_reader_report_safe_rendering_language_and_markdown_download(offline_page):

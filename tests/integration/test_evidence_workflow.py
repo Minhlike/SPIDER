@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 from spider.service.evidence_analysis import analyze, link_proofs, assess_hypothesis, temporal_events
 from spider.service.phone_candidates import public_phone_candidates
+from spider.service.insights import CaseInsightsBuilder
 from spider.service.drift import CanaryReport, ingest_canary
 from spider.service.bundle import evidence_bundle
 from spider.service.review import EvidenceReview, save_review
@@ -114,6 +115,30 @@ def test_public_phone_candidates_need_literal_evidence_and_keep_competition():
     assert result["contradictions"][0]["state"] == "COMPETING_PUBLIC_CANDIDATES"
     assert not result["identity_verified"] and "discard" not in json.dumps(result)
     assert public_phone_candidates([], phone)["unknowns"] == ["NO_PUBLIC_PHONE_MENTION"]
+
+
+@pytest.mark.asyncio
+async def test_phone_seed_report_keeps_raw_and_canonical_without_owner_claim(tmp_path):
+    service = SpiderService(db_path=str(tmp_path / "phone.db"),
+                            artifacts_dir=str(tmp_path / "runs"))
+    await service.start()
+    try:
+        case = await service.create_case("Synthetic phone metadata")
+        target = await service.add_target(case["id"], "0901 234 567", T.PHONE)
+        async with service.db_manager.session_factory() as session:
+            insights = await CaseInsightsBuilder.build_insights(
+                session, case["id"], None, target["id"])
+        report = insights["phone_insights"]
+        assert report["original_seed"] == "0901 234 567"
+        assert report["e164"] == "+84901234567"
+        assert report["region"] == "VN" and report["number_type"] == "MOBILE"
+        assert report["current_carrier"] == "UNKNOWN"
+        assert report["assignment_verified"] is False
+        assert "owner" not in report and "subscriber" not in report
+        assert "không chứng minh nhà mạng hiện tại" in json.dumps(
+            insights["reader_report"], ensure_ascii=False)
+    finally:
+        await service.stop()
 
 
 def test_link_metadata_parser_is_bounded_and_does_not_read_nested_unrelated_people():

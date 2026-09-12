@@ -500,6 +500,15 @@ function renderReaderReport(insights) {
 // --- 5. New Investigation Classifier & Start ---
 let inputCatalogue = null;
 let inputCatalogueRequest = null;
+function inputSupportReason(item) {
+  const vi = currentLanguage === "vi";
+  const labels = {
+    NO_QUESTION_CONTRACT: vi ? "chưa có câu hỏi điều tra đã kiểm chứng" : "no verified investigation question",
+    NO_METERED_ANSWERING_ROUTE: vi ? "chưa có nguồn tạo bằng chứng với request được kiểm toán" : "no evidence source with audited request accounting",
+    NO_TARGET_REPORT_CONTRACT: vi ? "chưa có báo cáo riêng cho loại này" : "no target-specific report",
+  };
+  return labels[item?.reason] || (vi ? "luồng điều tra chưa hoàn chỉnh" : "investigation workflow is incomplete");
+}
 async function loadInputCatalogue() {
   if (inputCatalogue) return inputCatalogue;
   if (inputCatalogueRequest) return inputCatalogueRequest;
@@ -513,12 +522,14 @@ async function loadInputCatalogue() {
       const unsupported = [];
       for (const option of document.getElementById("target-type-select").options) {
         if (!option.value) continue;
-        option.disabled = inputCatalogue.get(option.value)?.supported !== true;
-        if (option.disabled) unsupported.push(option.value);
+        const contract = inputCatalogue.get(option.value);
+        option.disabled = contract?.supported !== true;
+        option.title = option.disabled ? inputSupportReason(contract) : "";
+        if (option.disabled) unsupported.push(`${option.value}: ${inputSupportReason(contract)}`);
       }
       status.textContent = unsupported.length ? (currentLanguage === "vi"
-        ? `Chưa có luồng thu thập khả dụng: ${unsupported.join(", ")}. Các lựa chọn này đang tắt.`
-        : `No available collection workflow: ${unsupported.join(", ")}. These options are disabled.`) : "";
+        ? `Đang tắt các đầu vào chưa hoàn chỉnh — ${unsupported.join("; ")}.`
+        : `Incomplete inputs are disabled — ${unsupported.join("; ")}.`) : "";
       return inputCatalogue;
     } catch (_) {
       status.textContent = currentLanguage === "vi"
@@ -677,10 +688,11 @@ async function startInvestigation(browserAssisted = "auto") {
       return;
     }
     const catalogue = await loadInputCatalogue();
-    if (!catalogue || catalogue.get(classification.type)?.supported !== true) {
+    const inputContract = catalogue?.get(classification.type);
+    if (!catalogue || inputContract?.supported !== true) {
       document.getElementById("classification-explanation").textContent = currentLanguage === "vi"
-        ? "Loại này chưa có luồng thu thập khả dụng. Chưa khởi chạy điều tra."
-        : "No available collection workflow exists for this type. Investigation has not started.";
+        ? `Chưa khởi chạy: ${inputSupportReason(inputContract)}.`
+        : `Investigation not started: ${inputSupportReason(inputContract)}.`;
       return;
     }
     // Clicking the primary action is the explicit start signal. Personal
@@ -1286,14 +1298,17 @@ function renderTypeSpecificInsights(insights) {
       </div>
       <div class="card-grid-2">
         <div class="detail-row">
-          <span class="detail-key">Số chuẩn E.164:</span>
-          <span class="detail-val"><code>${escapeHtml(ph.phone || "-")}</code></span>
+          <span class="detail-key">${currentLanguage === "vi" ? "Đầu vào gốc" : "Original input"}:</span>
+          <span class="detail-val"><code>${escapeHtml(ph.original_seed || "-")}</code></span>
         </div>
         <div class="detail-row">
-          <span class="detail-key">Quốc gia nhận diện:</span>
-          <span class="detail-val"><strong>${escapeHtml(ph.country || "Chưa rõ")}</strong></span>
+          <span class="detail-key">${currentLanguage === "vi" ? "Số chuẩn E.164" : "E.164 number"}:</span>
+          <span class="detail-val"><code>${escapeHtml(ph.e164 || ph.phone || "-")}</code></span>
         </div>
+        <div class="detail-row"><span class="detail-key">${currentLanguage === "vi" ? "Vùng / loại số" : "Region / number type"}:</span><span class="detail-val">${escapeHtml([ph.region, ph.number_type].filter(Boolean).join(" · ") || "-")}</span></div>
+        <div class="detail-row"><span class="detail-key">${currentLanguage === "vi" ? "Phân bổ đầu số ban đầu" : "Original prefix allocation"}:</span><span class="detail-val">${escapeHtml(ph.original_allocation || (currentLanguage === "vi" ? "Chưa rõ" : "Unknown"))}</span></div>
       </div>
+      <p class="scope-note">${currentLanguage === "vi" ? "Phân bổ đầu số không chứng minh nhà mạng hiện tại, người dùng hiện tại hay chủ thuê bao." : "Prefix allocation does not prove the current carrier, current user, or subscriber."}</p>
       <div style="margin-top:14px;">
         <div class="detail-key">${currentLanguage === "vi" ? "Liên hệ công khai có bằng chứng" : "Publicly evidenced links"}:</div>
         ${candidates.length ? `<ul class="detail-list">${candidates.map(item => `<li><strong>${escapeHtml(item.type)}:</strong> ${escapeHtml(item.value)}<br><small>${escapeHtml((item.rank_reasons || []).join(" · "))}</small></li>`).join("")}</ul>` :

@@ -4,6 +4,7 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy import select
 from spider.storage.schema import TargetRecord, EntityRecord, AssertionRecord, ObservationRecord, TaskRunRecord, ProviderRunRecord
 from spider.models.enums import ObservableType
+from spider.models.phone import phone_metadata
 from spider.service.projection import project
 from spider.service.coverage import coverage_report
 from spider.service.evidence_analysis import analyze, public_url
@@ -278,10 +279,26 @@ class CaseInsightsBuilder:
             "profile_urls": []
         }
 
-        # Phone Insights
+        # Phone Insights. Allocation metadata is offline numbering-plan context;
+        # it is never presented as the current carrier or subscriber identity.
+        phone_seed = {}
+        if target_type == "PHONE" and seed_target:
+            try:
+                phone_seed = phone_metadata(seed_target.raw_input)
+            except ValueError:
+                # Historical records may predate strict phone validation. Keep
+                # the report readable without inventing metadata.
+                phone_seed = {"e164": target_val, "assignment_verified": False}
         phone_insights = {
             "phone": target_val if target_type == "PHONE" else None,
+            "original_seed": seed_target.raw_input if target_type == "PHONE" and seed_target else None,
+            "e164": phone_seed.get("e164"),
             "country": infer_phone_country(target_val) if target_type == "PHONE" else None,
+            "region": phone_seed.get("region"),
+            "number_type": phone_seed.get("number_type"),
+            "original_allocation": phone_seed.get("original_allocation"),
+            "current_carrier": phone_seed.get("current_carrier"),
+            "assignment_verified": phone_seed.get("assignment_verified", False),
             "carrier": None,
             "public_candidate_digest": public_phone_candidates(observations, target_val) if target_type == "PHONE" else None,
         }

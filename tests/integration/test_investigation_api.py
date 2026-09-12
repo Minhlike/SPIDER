@@ -205,12 +205,21 @@ async def test_plan_preview_is_deterministic_for_a_scoped_snapshot(investigation
     assert fresh["plan_fingerprint"] != first["plan_fingerprint"]
 
 
-def test_catalogue_uses_registered_metered_contract_only(tmp_path):
+def test_catalogue_requires_question_metered_route_and_target_report(tmp_path):
     from spider.core.factory import create_spider_service
     from spider.service.investigation_api import input_catalogue
     service = create_spider_service(db_path=str(tmp_path / "catalogue.db"), artifacts_dir=str(tmp_path / "runs"))
     inputs = {item["type"]: item for item in input_catalogue(service)}
-    assert inputs["IPV6_ADDRESS"]["supported"]
-    for kind in ("URL", "CIDR", "ACCOUNT", "PHONE"):
-        assert not inputs[kind]["supported"]
+    assert {kind for kind, item in inputs.items() if item["supported"]} == {
+        "USERNAME", "EMAIL", "DOMAIN", "HOSTNAME", "IP_ADDRESS", "IPV6_ADDRESS"}
+    assert inputs["IPV6_ADDRESS"]["question_ids"] == ["IP_NETWORK_OPERATOR"]
+    assert inputs["IPV6_ADDRESS"]["report_contract"] == "IP_NETWORK_CONTEXT_V1"
+    assert inputs["URL"]["reason"] == "NO_QUESTION_CONTRACT"
+    assert inputs["CIDR"]["reason"] == "NO_QUESTION_CONTRACT"
+    assert inputs["ACCOUNT"]["reason"] == "NO_QUESTION_CONTRACT"
+    assert inputs["PHONE"]["reason"] == "NO_METERED_ANSWERING_ROUTE"
+    assert inputs["ORGANIZATION"]["reason"] == "NO_TARGET_REPORT_CONTRACT"
+    assert inputs["ASN"]["reason"] == "NO_QUESTION_CONTRACT"
+    assert all(item["question_ids"] and item["answering_routes"] and item["report_contract"]
+               for item in inputs.values() if item["supported"])
     assert all(item["live_verified"] is False for item in inputs.values())

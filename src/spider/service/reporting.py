@@ -192,6 +192,10 @@ def reader_report(insights, language="vi"):
         sections[2]["items"].append(choose("Máy chủ thư và IP của dịch vụ email mô tả hạ tầng của nhà cung cấp, không phải IP hay danh tính người dùng email.", "Mail servers and email-service IPs describe the provider's infrastructure, not the email user's IP or identity."))
     if insights.get("target_type") in {"IP_ADDRESS", "IPV6_ADDRESS"}:
         sections[2]["items"].append(choose("Vị trí IP là thông tin ước lượng của nguồn; không xác định địa chỉ nhà hoặc vị trí chính xác của một người.", "IP location is a source estimate; it does not establish a person's home address or exact position."))
+    if insights.get("target_type") == "PHONE":
+        sections[2]["items"].append(choose(
+            "Loại số và phân bổ đầu số là metadata viễn thông ngoại tuyến; không chứng minh nhà mạng hiện tại, người đang dùng hoặc chủ thuê bao.",
+            "Number type and prefix allocation are offline numbering metadata; they do not establish the current carrier, user, or subscriber."))
     return {"version": "1", "language": language,
             "title": choose("Kết quả và cách hiểu", "Results and how to read them"),
             "conclusion": conclusion, "sections": sections,
