@@ -158,6 +158,68 @@ async def test_direct_sources_use_at_most_three_parallel_tabs(monkeypatch):
     assert len(rows) == 8 and peak == 3
 
 
+@pytest.mark.asyncio
+async def test_direct_profile_keeps_only_sanitized_self_published_metadata():
+    metadata_html = (
+        '<title>Alice public profile</title>'
+        '<meta property="og:description" content="Public biography">'
+        '<a rel="me" href="https://example.test/alice?token=discard#private">Website</a>'
+        '<a rel="me" href="javascript:alert(1)">Bad</a>'
+        '<script type="application/ld+json">'
+        '{"@type":"Person","sameAs":["https://social.test/alice"]}'
+        '</script>'
+    )
+
+    class Response:
+        status = 200
+
+    class Locator:
+        def __init__(self, selector):
+            self.selector = selector
+
+        async def inner_text(self, **_kwargs):
+            return "Alice public profile"
+
+        async def evaluate_all(self, _script):
+            if 'og:url' in self.selector:
+                return ["https://github.com/alice"]
+            return metadata_html
+
+    class Page:
+        url = "https://github.com/alice"
+
+        async def goto(self, *_args, **_kwargs):
+            return Response()
+
+        async def wait_for_timeout(self, _timeout):
+            return None
+
+        async def title(self):
+            return "Alice public profile"
+
+        async def close(self):
+            return None
+
+        def locator(self, selector):
+            return Locator(selector)
+
+    class Context:
+        async def new_page(self):
+            return Page()
+
+    row = await CocCocBrowserAdapter()._inspect_direct_source(
+        Context(), "GitHub", "github.com", "alice", "https://github.com/alice", 1000)
+
+    assert row["state"] == "CANDIDATE"
+    assert row["display_name"] == "Alice public profile"
+    assert row["bio"] == "Public biography"
+    assert row["explicit_links"] == [
+        {"url": "https://example.test/alice", "basis": "rel_me"},
+        {"url": "https://social.test/alice", "basis": "jsonld_sameAs"},
+    ]
+    assert "discard" not in json.dumps(row)
+
+
 def test_parser_keeps_candidates_unverified_and_rejects_unlisted_hosts():
     raw = b'\n'.join([
         json.dumps({"source": "Instagram", "state": "CANDIDATE",
@@ -209,6 +271,28 @@ def test_revalidated_search_lead_creates_an_account_linked_from_its_url():
     assert account.lineage.parent_observable_value == "https://www.instagram.com/alice/"
     assert account.raw_data["match_basis"] == "coccoc_search_lead_revalidated"
     assert account.raw_data["identity_verified"] is False
+
+
+def test_browser_account_observation_preserves_only_safe_explicit_links():
+    raw = json.dumps({"source": "GitHub", "state": "CANDIDATE",
+        "reason": "PROFILE_PAGE_SIGNALS", "account_candidate": True,
+        "url": "https://github.com/alice", "display_name": "Alice",
+        "explicit_links": [
+            {"url": "https://example.test/alice?token=discard", "basis": "rel_me"},
+            {"url": "javascript:alert(1)", "basis": "rel_me"},
+            {"url": "https://unrelated.test/", "basis": "arbitrary_anchor"},
+        ]}).encode()
+    lineage = SourceLineage(case_id="c", run_id="r", task_id="t",
+        provider_id="coccoc_browser", provider_version="local-coccoc",
+        parent_observable_value="alice", parent_observable_type=ObservableType.USERNAME)
+
+    account = next(obs for obs in CocCocBrowserAdapter().parse(raw, lineage)
+                   if obs.observable.type == ObservableType.ACCOUNT)
+
+    assert account.raw_data["display_name"] == "Alice"
+    assert account.raw_data["explicit_links"] == [
+        {"url": "https://example.test/alice", "basis": "rel_me"}]
+    assert "discard" not in json.dumps(account.raw_data)
 
 
 @pytest.mark.asyncio

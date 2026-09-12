@@ -32,7 +32,7 @@ controlled benchmark and limits; these measurements do not verify live sources.
 | Tool | Effect |
 | --- | --- |
 | `input_catalogue` | Registered, metered input contracts; not proof of live availability |
-| `case_digest` | Scoped evidence page, counts, unknowns, recent task history |
+| `case_digest` | Scoped evidence page, counts, unknowns, recent task history, bounded ownership hypotheses/link proofs and non-dispatching next action |
 | `case_delta` | Evidence recorded after a prior digest snapshot; never an absence claim |
 | `get_evidence` | Scoped provenance, versions and artifact hash; no raw page payload |
 | `graph_neighbors` | Scoped edges, typed entities and potential transforms; no dispatch |
@@ -134,6 +134,12 @@ are integrity protected and reject another case, target, question or read
 surface. They contain no raw evidence or source content and expire on a service
 restart; request a fresh digest when that happens. `graph_neighbors` has the
 same snapshot/continuation contract for edges.
+
+The digest `reasoning` block keeps ACCOUNT namespaces separate, lists at most 20
+sanitized public link proofs and ownership hypotheses, and reports whether it was
+truncated. Its next action progresses from collecting self-published links, to
+checking a reciprocal public link, to comparing independent profile evidence.
+None of these states verifies a common owner or dispatches work automatically.
 
 The digest also evaluates versioned questions for the selected target. Each row
 is `ANSWERED`, `PARTIAL`, `OPEN`, or `UNKNOWN`, includes evidence entity IDs or

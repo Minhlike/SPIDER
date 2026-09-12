@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 import pytest
-from spider.service.evidence_analysis import link_proofs, assess_hypothesis, temporal_events
+from spider.service.evidence_analysis import analyze, link_proofs, assess_hypothesis, temporal_events
 from spider.service.phone_candidates import public_phone_candidates
 from spider.service.drift import CanaryReport, ingest_canary
 from spider.service.bundle import evidence_bundle
@@ -10,6 +10,8 @@ from spider.service.review import EvidenceReview, save_review
 from spider.service.service import SpiderService
 from spider.providers.fake.provider_a import FakeProviderA
 from spider.models.enums import ObservableType as T
+from spider.models.provenance import SourceLineage
+from spider.providers.browser.coccoc import CocCocBrowserAdapter
 from spider.models.budget import ExecutionBudget
 from spider.providers.maigret.profile_metadata import public_metadata
 
@@ -27,6 +29,55 @@ def test_explicit_links_and_reciprocity_never_verify_identity():
     assert len(proofs) == 2 and all(p["kind"] == "RECIPROCAL_LINK" and not p["identity_verified"] for p in proofs)
     assert not link_proofs([obs(3, website="javascript:alert(1)")])
     assert "secret" not in json.dumps(link_proofs([obs(4, website="https://other.test/bob?token=secret")]))
+
+
+def test_browser_self_published_link_enters_proof_graph_without_verifying_owner():
+    lineage = SourceLineage(case_id="case", run_id="run", task_id="task",
+        provider_id="coccoc_browser", provider_version="local-coccoc",
+        parent_observable_value="alice", parent_observable_type=T.USERNAME)
+    raw = json.dumps({"source": "GitHub", "state": "CANDIDATE",
+        "reason": "PROFILE_PAGE_SIGNALS", "account_candidate": True,
+        "url": "https://github.com/alice", "explicit_links": [
+            {"url": "https://example.test/alice", "basis": "rel_me"}]}).encode()
+    account = next(item for item in CocCocBrowserAdapter().parse(raw, lineage)
+                   if item.observable.type == T.ACCOUNT)
+    record = SimpleNamespace(id="browser-proof", observable_type="ACCOUNT",
+        namespace=account.observable.namespace, canonical_value=account.observable.canonical_value,
+        raw_data_json=account.raw_data, created_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+
+    proofs = link_proofs([record])
+
+    assert len(proofs) == 1
+    assert proofs[0]["kind"] == "SELF_ASSERTED_LINK"
+    assert proofs[0]["basis"] == "rel_me"
+    assert proofs[0]["identity_verified"] is False
+    analysis = analyze([record])
+    hypothesis = analysis["ownership_hypotheses"][0]
+    assert hypothesis["account"] == {
+        "type": "ACCOUNT", "namespace": "github", "canonical_value": "alice@github"}
+    assert hypothesis["status"] == "SELF_ASSERTED_LINK_ONLY"
+    assert hypothesis["evidence_ids"] == ["browser-proof"]
+    assert not hypothesis["identity_verified"]
+    assert analysis["next_best_action"]["action"] == "CHECK_RECIPROCAL_PUBLIC_LINK"
+    assert not analysis["next_best_action"]["dispatch"]
+
+
+def test_account_hypotheses_remain_separate_and_choose_missing_link_action():
+    rows = [
+        SimpleNamespace(id="one", observable_type="ACCOUNT", namespace="instagram",
+            canonical_value="alice@instagram", created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            raw_data_json={"profile_url": "https://instagram.com/alice"}),
+        SimpleNamespace(id="two", observable_type="ACCOUNT", namespace="github",
+            canonical_value="alice@github", created_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            raw_data_json={"profile_url": "https://github.com/alice"}),
+    ]
+
+    analysis = analyze(rows)
+
+    assert len(analysis["ownership_hypotheses"]) == 2
+    assert all(item["candidate_set_size"] == 2 and item["alternatives_unresolved"]
+               and not item["identity_verified"] for item in analysis["ownership_hypotheses"])
+    assert analysis["next_best_action"]["action"] == "COLLECT_SELF_PUBLISHED_LINKS"
 
 
 def test_mirrors_and_contradictions_do_not_become_independent_votes():

@@ -60,6 +60,72 @@ def assess_hypothesis(evidence):
             "identity_verified": False, "decision": "REVIEW_REQUIRED" if contradict or unknown else "LINK_EVIDENCE_ONLY"}
 
 
+def ownership_hypotheses(observations, proofs=None):
+    """Build one reviewable ownership hypothesis per typed account candidate.
+
+    Accounts with the same username on different platforms remain separate.
+    Public links support a relationship only and never verify a common owner.
+    """
+    proofs = proofs if proofs is not None else link_proofs(observations)
+    proofs_by_observation = {}
+    for proof in proofs:
+        proofs_by_observation.setdefault(proof["observation_id"], []).append(proof)
+    grouped = {}
+    for obs in sorted(observations, key=lambda item: (item.created_at, item.id)):
+        if obs.observable_type != "ACCOUNT":
+            continue
+        raw = obs.raw_data_json if isinstance(obs.raw_data_json, dict) else {}
+        profile = public_url(raw.get("profile_url"))
+        if not profile:
+            continue
+        namespace = str(getattr(obs, "namespace", "") or "")[:128]
+        account = str(getattr(obs, "canonical_value", "") or "")[:512]
+        key = (namespace, account)
+        row = grouped.setdefault(key, {"namespace": namespace, "account": account,
+            "profile_urls": set(), "evidence_ids": set(), "proof_ids": set(),
+            "proof_kinds": set(), "evidence_basis": set()})
+        row["profile_urls"].add(profile)
+        row["evidence_ids"].add(obs.id)
+        row["evidence_basis"].add(str(raw.get("match_basis") or "PROFILE_ROUTE_OBSERVED")[:128])
+        for proof in proofs_by_observation.get(obs.id, []):
+            row["proof_ids"].add(proof["id"])
+            row["proof_kinds"].add(proof["kind"])
+    output = []
+    for (namespace, account), row in sorted(grouped.items()):
+        hypothesis_id = hashlib.sha256(
+            f"ACCOUNT_MAY_RELATE_TO_SEED|{namespace}|{account}".encode()).hexdigest()
+        proof_kinds = sorted(row["proof_kinds"])
+        output.append({"id": hypothesis_id, "claim_type": "ACCOUNT_MAY_RELATE_TO_SEED",
+            "account": {"type": "ACCOUNT", "namespace": namespace,
+                        "canonical_value": account},
+            "profile_urls": sorted(row["profile_urls"])[:20],
+            "evidence_ids": sorted(row["evidence_ids"])[:20],
+            "link_proof_ids": sorted(row["proof_ids"])[:20],
+            "evidence_basis": sorted(row["evidence_basis"]),
+            "status": "RECIPROCAL_LINK_AVAILABLE" if "RECIPROCAL_LINK" in proof_kinds
+                      else "SELF_ASSERTED_LINK_ONLY" if proof_kinds else "PROFILE_CANDIDATE",
+            "identity_verified": False})
+    total = len(output)
+    for row in output:
+        row["candidate_set_size"] = total
+        row["alternatives_unresolved"] = total > 1
+    return output
+
+
+def evidence_next_action(hypotheses, proofs):
+    """Return deterministic advice only; it never dispatches a request."""
+    if not hypotheses:
+        action, basis = "REVIEW_SOURCE_COVERAGE", "NO_ACCOUNT_CANDIDATE"
+    elif any(not row["link_proof_ids"] for row in hypotheses):
+        action, basis = "COLLECT_SELF_PUBLISHED_LINKS", "PROFILE_WITHOUT_LINK_PROOF"
+    elif any(proof["kind"] == "SELF_ASSERTED_LINK" for proof in proofs):
+        action, basis = "CHECK_RECIPROCAL_PUBLIC_LINK", "ONE_WAY_SELF_ASSERTED_LINK"
+    else:
+        action, basis = "COMPARE_INDEPENDENT_PROFILE_EVIDENCE", "RECIPROCAL_LINK_AVAILABLE"
+    return {"action": action, "basis": basis, "dispatch": False,
+            "identity_verified": False}
+
+
 def temporal_events(observations):
     grouped, events = {}, []
     for obs in sorted(observations, key=lambda o: (o.created_at, o.id)):
@@ -83,9 +149,12 @@ def temporal_events(observations):
 
 def analyze(observations):
     links = link_proofs(observations)
+    ownership = ownership_hypotheses(observations, links)
     evidence = []
     for link in links:
         evidence.append({"id": link["id"], "role": "SUPPORTING_EVIDENCE", "dependency": "UNKNOWN_DEPENDENCY"})
     return {"label": "EXPERIMENT RESULT", "link_proofs": links,
+            "ownership_hypotheses": ownership,
+            "next_best_action": evidence_next_action(ownership, links),
             "link_assessment": assess_hypothesis(evidence), "temporal_events": temporal_events(observations),
             "limitations": ["Public links do not establish common ownership", "Missing archive capture does not prove disappearance"]}

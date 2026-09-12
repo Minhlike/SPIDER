@@ -5,6 +5,7 @@ from spider.service.projection import project
 from spider.service.read_snapshot import make_cursor, make_snapshot, read_cursor, read_snapshot
 from spider.storage.schema import CaseRecord, TaskRunRecord
 from spider.service.questions import assess_questions
+from spider.service.evidence_analysis import analyze
 
 
 def _stamp(value):
@@ -60,6 +61,7 @@ async def case_digest(session, case_id, target_id=None, question="all", limit=20
     unresolved = sum(t.status != "COMPLETED" for t in tasks)
     entity_ids = {(e.observable_type, e.namespace, e.canonical_name): e.id for e in view.entities}
     question_state = assess_questions(view, tasks)
+    evidence_analysis = analyze(observations)
     return {
         "explanation": {"vi": "Đây là trang bằng chứng của mục tiêu đã chọn. Bằng chứng còn thiếu hoặc nguồn chưa kiểm tra được không chứng minh tài khoản không tồn tại.",
                         "en": "This is an evidence page for the selected target. Missing evidence or unchecked sources do not establish that an account does not exist."},
@@ -83,6 +85,11 @@ async def case_digest(session, case_id, target_id=None, question="all", limit=20
                      "unscoped_observations": view.excluded_unscoped,
                      "source_independence": "NOT_YET_VERIFIED"},
         "question_state": question_state,
+        "reasoning": {"ownership_hypotheses": evidence_analysis["ownership_hypotheses"][:20],
+                      "link_proofs": evidence_analysis["link_proofs"][:20],
+                      "next_best_action": evidence_analysis["next_best_action"],
+                      "truncated": (len(evidence_analysis["ownership_hypotheses"]) > 20 or
+                                    len(evidence_analysis["link_proofs"]) > 20)},
         "next_action": {"action": "REVIEW_TASK_OUTCOMES" if unresolved else "REVIEW_EVIDENCE",
                         "basis": "noncompleted_tasks" if unresolved else "collected_evidence",
                         "dispatch": False},

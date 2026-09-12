@@ -14,6 +14,7 @@ from spider.models.observable import NormalizedObservable
 from spider.models.observation import Observation
 from spider.models.base import utc_now
 from spider.providers.base import BaseProviderAdapter, ProviderExecutionResult, ProviderHealth
+from spider.providers.maigret.profile_metadata import public_metadata
 
 
 DIRECT_USERNAME_SOURCES = (
@@ -426,7 +427,7 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
 
     async def _inspect_direct_source(self, context, source, host, username, requested_url,
                                      timeout_ms):
-        page, status = None, None
+        page, status, metadata = None, None, {}
         try:
             page = await context.new_page()
             try:
@@ -454,6 +455,20 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 ).evaluate_all("els => els.slice(0, 10).map(el => el.content || el.href || '')")
             except Exception:
                 declared_urls = []
+            try:
+                # Keep only bounded, explicitly self-published metadata. The
+                # rendered page, cookies and arbitrary links are never stored.
+                metadata_html = await page.locator(
+                    'title, meta[property="og:title"], meta[property="og:description"], '
+                    'meta[name="description"], meta[name="twitter:title"], '
+                    'meta[name="twitter:description"], a[rel~="me"], link[rel~="me"], '
+                    'script[type="application/ld+json"]'
+                ).evaluate_all(
+                    "els => els.slice(0, 60).map(el => (el.outerHTML || '').slice(0, 32768)).join('').slice(0, 524288)"
+                )
+                metadata = public_metadata(metadata_html)
+            except Exception:
+                metadata = {}
             state, reason = classify_direct_result(
                 host, username, status, final_url, title, body, declared_urls
             )
@@ -466,11 +481,16 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                     await page.close()
                 except Exception:
                     pass
-        return {"kind": "site", "source": source, "state": state,
-                "reason": reason,
-                "url": safe_result_url(final_url) if state == "CANDIDATE" else requested_url,
-                "http_status": status,
-                "content_sha256": hashlib.sha256(f"{title}\n{body}".encode("utf-8", "replace")).hexdigest()}
+        result = {"kind": "site", "source": source, "state": state,
+                  "reason": reason,
+                  "url": safe_result_url(final_url) if state == "CANDIDATE" else requested_url,
+                  "http_status": status,
+                  "content_sha256": hashlib.sha256(f"{title}\n{body}".encode("utf-8", "replace")).hexdigest()}
+        if state == "CANDIDATE":
+            result.update({key: metadata[key] for key in
+                           ("display_name", "bio", "metadata_basis", "explicit_links")
+                           if key in metadata})
+        return result
 
     async def _search_sources(self, page, identifier, is_exhausted, timeout_ms):
         rows = []
@@ -682,6 +702,17 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                                               if is_search_lead else "CANDIDATE_REVIEW_REQUIRED",
                         "browser": "Cốc Cốc",
                         "search_engine": row.get("search_engine") if is_search_lead or is_revalidated else None}
+            for field in ("display_name", "bio", "metadata_basis"):
+                if isinstance(row.get(field), str):
+                    evidence[field] = row[field]
+            explicit_links = []
+            for link in (row.get("explicit_links") if isinstance(row.get("explicit_links"), list) else [])[:50]:
+                target = safe_result_url(link.get("url")) if isinstance(link, dict) else None
+                if (target and target != url
+                        and link.get("basis") in {"rel_me", "jsonld_sameAs"}):
+                    explicit_links.append({"url": target, "basis": link["basis"]})
+            if explicit_links:
+                evidence["explicit_links"] = explicit_links
             item_lineage = lineage.model_copy(update={"upstream_source": "coccoc_browser",
                 "upstream_family": "BROWSER_ASSISTED"})
             if (lineage.parent_observable_type == ObservableType.USERNAME

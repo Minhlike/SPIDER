@@ -99,6 +99,8 @@ async def test_scoped_run_comparison_telemetry_and_graph(investigation):
     service, server, case, a, b, observations = investigation
     scope = {"case_id": case, "target_id": a}
     digest = await server.handle_tool_call("case_digest", scope)
+    assert digest["reasoning"]["next_best_action"]["action"] == "REVIEW_SOURCE_COVERAGE"
+    assert digest["reasoning"]["truncated"] is False
     question = digest["question_state"]["questions"][0]
     assert question["id"] == "USERNAME_PUBLIC_ACCOUNTS" and question["status"] == "PARTIAL"
     assert question["reason"] == "EVIDENCE_AVAILABLE_COVERAGE_INCOMPLETE"

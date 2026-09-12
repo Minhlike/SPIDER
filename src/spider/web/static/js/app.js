@@ -830,6 +830,8 @@ async function loadCaseDetail(caseId) {
     const analysis = insightsRes.evidence_analysis || {};
     document.getElementById('evidence-analysis').textContent = [
       ...(analysis.link_proofs || []).map(p => `${friendlyLabel(p.kind)}: ${p.source} → ${p.target} [${p.observation_id}]`),
+      ...(analysis.ownership_hypotheses || []).map(h => `${friendlyLabel("OWNERSHIP_HYPOTHESIS")}: ${h.account?.canonical_value || "—"} · ${friendlyLabel(h.status)} · ${currentLanguage === "vi" ? "chưa xác minh chủ sở hữu" : "owner unverified"}`),
+      ...(analysis.next_best_action?.action ? [`${currentLanguage === "vi" ? "Bước nên làm tiếp" : "Suggested next step"}: ${friendlyLabel(analysis.next_best_action.action)} (${friendlyLabel(analysis.next_best_action.basis)})`] : []),
       ...(analysis.temporal_events || []).map(e => `${friendlyLabel(e.view)}: ${friendlyLabel(e.event)} | ${e.observed_at} [${e.observation_id}]`),
       ...(analysis.hypotheses || []).map(h => `${h.claim_id}: ${friendlyLabel(h.decision)} | ${friendlyLabel("SUPPORTING_EVIDENCE")}: ${h.SUPPORTING_EVIDENCE.length}; ${friendlyLabel("CONTRADICTING_EVIDENCE")}: ${h.CONTRADICTING_EVIDENCE.length}; ${friendlyLabel("UNKNOWN")}: ${h.UNKNOWN.length}`),
       currentLanguage === 'vi' ? 'Liên kết công khai chưa xác minh cùng chủ sở hữu.' : 'Public links do not verify common ownership.'
