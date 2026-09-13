@@ -21,6 +21,26 @@ their installed source files. Results record versions and engine-source hashes.
 SPIDER adds structured progress, partial-result retention and public metadata
 extraction around Maigret; its detection logic still depends on Maigret.
 
+## Score consented holdouts without exposing identifiers
+
+Store de-identified JSONL only under an ignored local folder such as
+`test-results/holdouts/`. Each row must match the exact schema enforced in
+`benchmarks/research_protocols.py`; `fixture_id` must be a one-way 64-character
+lowercase hexadecimal digest. Extra fields such as raw username, email, phone,
+URL, cookie or credential are rejected by the scorer. The command prints
+aggregate metrics only and never echoes input rows or fixture IDs:
+
+```powershell
+.\runtime\venv\Scripts\python.exe -m benchmarks.score_research_dataset username-manual test-results\holdouts\username.jsonl
+.\runtime\venv\Scripts\python.exe -m benchmarks.score_research_dataset email test-results\holdouts\email.jsonl
+.\runtime\venv\Scripts\python.exe -m benchmarks.score_research_dataset scheduler test-results\holdouts\scheduler.jsonl
+```
+
+The email protocol keeps OVERLAP accuracy separate from audited HOLEHE_ONLY
+incremental coverage. The scheduler gate requires paired STATIC/ADAPTIVE rows
+and remains closed below 50 cases. A PASS only authorizes a reviewed rollout;
+the scorer never changes runtime configuration.
+
 ## Protocol
 
 | Fixture | Ground truth | HTTP behavior |
