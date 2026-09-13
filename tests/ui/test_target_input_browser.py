@@ -349,7 +349,8 @@ def test_research_controls_light_default_and_empty_result_explanation(offline_pa
       switchCaseTab('sources');
       await loadCaseSources();
     }""")
-    expect(page.locator("#sources-tbody")).to_contain_text("Không áp dụng cho loại mục tiêu này")
+    expect(page.locator("#sources-tbody")).to_contain_text(
+        "Chưa có thông tin đóng góp từ nguồn")
     expect(page.locator("#sources-tbody")).not_to_contain_text("Chưa cấu hình API Key tìm kiếm")
     diagnostic = page.evaluate("""coverageDescription({coverage: {
       selected: 3, checked: 3, found: 0, not_found: 0, unknown: 3, invalid: 0,

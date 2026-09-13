@@ -56,6 +56,53 @@ FATAL_BROWSER_REASONS = frozenset({
 })
 
 
+async def close_page_bounded(page, timeout_seconds=2.0):
+    if page is None:
+        return
+    try:
+        await asyncio.wait_for(page.close(), timeout=timeout_seconds)
+    except Exception:
+        pass
+
+
+async def close_context_bounded(context, timeout_seconds=5.0):
+    if context is None:
+        return
+    try:
+        await asyncio.wait_for(context.close(), timeout=timeout_seconds)
+    except Exception:
+        pass
+
+
+async def gather_rows_until(definitions, worker, deadline, timeout_row):
+    """Keep completed evidence when an interactive browser stage reaches its deadline."""
+    if not definitions:
+        return []
+    tasks = [asyncio.create_task(worker(definition)) for definition in definitions]
+    timeout = None if deadline is None else max(0.0, deadline - time.monotonic())
+    done, pending = await asyncio.wait(tasks, timeout=timeout)
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    rows = []
+    for definition, task in zip(definitions, tasks):
+        if task not in done or task.cancelled():
+            rows.append(timeout_row(definition))
+            continue
+        try:
+            rows.append(task.result())
+        except Exception:
+            row = timeout_row(definition)
+            if isinstance(row, dict):
+                row.update(state="UNKNOWN", reason="BROWSER_ERROR")
+            elif isinstance(row, tuple) and row and isinstance(row[0], dict):
+                row[0].update(revalidation_state="UNKNOWN",
+                              revalidation_reason="BROWSER_ERROR")
+            rows.append(row)
+    return rows
+
+
 def coccoc_installation():
     local = Path(os.environ.get("LOCALAPPDATA", ""))
     candidates = [
@@ -359,68 +406,73 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 # its default tab before opening work so direct checks can never
                 # exceed the three SPIDER-owned tab budget.
                 for initial in list(context.pages):
-                    await initial.close()
+                    await close_page_bounded(initial)
                 rows = []
-                timeout_ms = int(min(15, max(3, options.get("timeout_seconds", 180) / 12)) * 1000)
+                workflow_seconds = min(60.0, max(20.0,
+                    float(options.get("timeout_seconds", 180)) * 0.4))
+                workflow_deadline = time.monotonic() + workflow_seconds
+                timeout_ms = int(min(10, max(3, options.get("timeout_seconds", 180) / 18)) * 1000)
 
                 if target.type == ObservableType.USERNAME:
                     username = target.canonical_value.lstrip("@")
                     parallel_tabs = min(3, max(1, int(options.get("browser_parallel_tabs", 3))))
                     direct_rows = await self._collect_direct_sources(
-                        context, username, timeout_ms, lambda: exhausted, parallel_tabs
+                        context, username, timeout_ms, lambda: exhausted, parallel_tabs,
+                        deadline=workflow_deadline
                     )
-                    if not exhausted:
+                    if not exhausted and time.monotonic() < workflow_deadline:
                         page = await context.new_page()
                         try:
-                            direct_rows = await self._search_direct_fallbacks(
-                                page, username, direct_rows, lambda: exhausted, timeout_ms
-                            )
+                            try:
+                                direct_rows = await asyncio.wait_for(
+                                    self._search_direct_fallbacks(
+                                        page, username, direct_rows, lambda: exhausted,
+                                        timeout_ms),
+                                    timeout=max(0.1, workflow_deadline - time.monotonic()))
+                            except asyncio.TimeoutError:
+                                pass
                         finally:
-                            await page.close()
+                            await close_page_bounded(page)
                         direct_rows = await self._revalidate_search_leads(
                             context, username, direct_rows, lambda: exhausted, timeout_ms,
-                            parallel_tabs
+                            parallel_tabs, deadline=workflow_deadline
                         )
                         rows.extend(direct_rows)
-                        page = await context.new_page()
-                        try:
-                            rows.extend(await self._search_sources(
-                                page, username, lambda: exhausted, timeout_ms))
-                        finally:
-                            await page.close()
+                        rows.extend(await self._collect_search_sources(
+                            context, SEARCH_SOURCES, username, lambda: exhausted,
+                            timeout_ms, parallel_tabs=parallel_tabs,
+                            deadline=workflow_deadline))
                     else:
                         rows.extend(direct_rows)
                 elif target.type == ObservableType.PHONE:
                     parallel_tabs = min(3, max(1, int(options.get("browser_parallel_tabs", 3))))
                     rows.extend(await self._collect_phone_sources(
                         context, target.canonical_value, lambda: exhausted,
-                        timeout_ms, parallel_tabs))
+                        timeout_ms, parallel_tabs, deadline=workflow_deadline))
                 else:
-                    page = await context.new_page()
                     sources = tuple((source, host) for source, host, _ in DIRECT_USERNAME_SOURCES) + SEARCH_SOURCES
-                    try:
-                        for source, host in sources:
-                            if exhausted:
-                                break
-                            rows.append(await self._search_one(
-                                page, source, host, target.canonical_value, timeout_ms, require_text=True
-                            ))
-                    finally:
-                        await page.close()
-                return rows, "REQUEST_LIMIT" if exhausted else None
+                    parallel_tabs = min(3, max(1, int(options.get("browser_parallel_tabs", 3))))
+                    rows.extend(await self._collect_search_sources(
+                        context, sources, target.canonical_value, lambda: exhausted,
+                        timeout_ms, require_text=True, parallel_tabs=parallel_tabs,
+                        deadline=workflow_deadline))
+                workflow_timed_out = (time.monotonic() >= workflow_deadline or
+                    any(row.get("reason") == "WORKFLOW_TIMEOUT" for row in rows))
+                return rows, ("REQUEST_LIMIT" if exhausted else
+                              "WORKFLOW_TIMEOUT" if workflow_timed_out else None)
             except Exception as exc:
                 # Do not put Playwright/profile paths or browser diagnostics in
                 # a case report, an API response, or a log artifact.
                 return [], browser_start_reason(exc)
             finally:
-                if context is not None:
-                    try:
-                        await context.close()
-                    except Exception:
-                        pass
+                await close_context_bounded(context)
                 await asyncio.sleep(0)
                 if finish_tasks:
-                    await asyncio.gather(*finish_tasks, return_exceptions=True)
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.gather(*finish_tasks, return_exceptions=True), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        pass
                 for lease in list(leases.values()):
                     lease.release()
                 if recorder:
@@ -428,7 +480,7 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                         await recorder.finish(receipt, "NO_RESPONSE")
 
     async def _collect_direct_sources(self, context, username, timeout_ms,
-                                      is_exhausted, parallel_tabs=3):
+                                      is_exhausted, parallel_tabs=3, deadline=None):
         semaphore = asyncio.Semaphore(min(3, max(1, int(parallel_tabs))))
 
         async def inspect(definition):
@@ -455,7 +507,11 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                     row = apply_negative_control(row, control_row["state"])
                 return row
 
-        return list(await asyncio.gather(*(inspect(item) for item in DIRECT_USERNAME_SOURCES)))
+        return await gather_rows_until(
+            DIRECT_USERNAME_SOURCES, inspect, deadline,
+            lambda item: {"kind": "site", "source": item[0], "state": "UNPROCESSED",
+                          "reason": "WORKFLOW_TIMEOUT", "url": None,
+                          "http_status": None})
 
     async def _inspect_direct_source(self, context, source, host, username, requested_url,
                                      timeout_ms):
@@ -510,7 +566,7 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
         finally:
             if page is not None:
                 try:
-                    await page.close()
+                    await close_page_bounded(page)
                 except Exception:
                     pass
         result = {"kind": "site", "source": source, "state": state,
@@ -524,16 +580,35 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                            if key in metadata})
         return result
 
-    async def _search_sources(self, page, identifier, is_exhausted, timeout_ms):
-        rows = []
-        for source, host in SEARCH_SOURCES:
-            if is_exhausted():
-                break
-            rows.append(await self._search_one(page, source, host, identifier, timeout_ms))
-        return rows
+    async def _collect_search_sources(self, context, sources, identifier, is_exhausted,
+                                      timeout_ms, require_text=False, parallel_tabs=3,
+                                      query_identifier=None, literal_matcher=None,
+                                      deadline=None):
+        """Search independent origins concurrently while keeping a hard tab cap."""
+        semaphore = asyncio.Semaphore(min(3, max(1, int(parallel_tabs))))
+
+        async def search(definition):
+            source, host = definition
+            async with semaphore:
+                if is_exhausted():
+                    return {"kind": "site", "source": source, "state": "UNPROCESSED",
+                            "reason": "REQUEST_LIMIT", "url": None}
+                page = await context.new_page()
+                try:
+                    return await self._search_one(
+                        page, source, host, identifier, timeout_ms,
+                        require_text=require_text, query_identifier=query_identifier,
+                        literal_matcher=literal_matcher)
+                finally:
+                    await close_page_bounded(page)
+
+        return await gather_rows_until(
+            sources, search, deadline,
+            lambda item: {"kind": "site", "source": item[0], "state": "UNPROCESSED",
+                          "reason": "WORKFLOW_TIMEOUT", "url": None})
 
     async def _collect_phone_sources(self, context, phone, is_exhausted, timeout_ms,
-                                     parallel_tabs=3):
+                                     parallel_tabs=3, deadline=None):
         variants = phone_search_variants(phone)
         query_identifier = " OR ".join(f'"{value}"' for value in variants)
         semaphore = asyncio.Semaphore(min(3, max(1, int(parallel_tabs))))
@@ -550,12 +625,15 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                         page, source, host, phone, timeout_ms, require_text=True,
                         query_identifier=query_identifier, literal_matcher=phone_literal_match)
                 finally:
-                    await page.close()
+                    await close_page_bounded(page)
                 if row.get("state") == "CANDIDATE":
                     row.update(phone_e164=phone, evidence_class="SEARCH_SNIPPET")
                 return row
 
-        return list(await asyncio.gather(*(search(item) for item in PHONE_SEARCH_SOURCES)))
+        return await gather_rows_until(
+            PHONE_SEARCH_SOURCES, search, deadline,
+            lambda item: {"kind": "site", "source": item[0], "state": "UNPROCESSED",
+                          "reason": "WORKFLOW_TIMEOUT", "url": None})
 
     async def _search_direct_fallbacks(self, page, username, direct_rows, is_exhausted, timeout_ms):
         """Recover index-visible social profiles when a direct platform page is unreadable.
@@ -580,7 +658,7 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
         )
 
     async def _revalidate_search_leads(self, context, username, rows, is_exhausted,
-                                       timeout_ms, parallel_tabs=3):
+                                       timeout_ms, parallel_tabs=3, deadline=None):
         """Open exact indexed profile routes before promoting a lead to ACCOUNT."""
         leads = [dict(row) for row in rows if row.get("kind") == "search_lead"]
         direct = [dict(row) for row in rows if row.get("kind") != "search_lead"]
@@ -613,7 +691,10 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                            direct_reason=lead.get("direct_reason"))
             return lead, checked
 
-        checked = await asyncio.gather(*(inspect(lead) for lead in leads))
+        checked = await gather_rows_until(
+            leads, inspect, deadline,
+            lambda lead: (dict(lead, revalidation_state="UNPROCESSED",
+                               revalidation_reason="WORKFLOW_TIMEOUT"), None))
         output_leads = []
         for lead, promoted in checked:
             output_leads.append(lead)
@@ -728,6 +809,7 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                   "BROWSER_START_FAILED": "Không thể khởi động phiên Cốc Cốc cho lượt kiểm tra này.",
                   "BROWSER_NETWORK_UNAVAILABLE": "Phiên Cốc Cốc không truy cập được trang kiểm tra công khai. Không kết luận về mục tiêu; hãy kiểm tra kết nối của Cốc Cốc rồi chạy lại.",
                   "REQUEST_LIMIT": "Browser request budget exhausted",
+                  "WORKFLOW_TIMEOUT": "Browser time budget reached; completed checks were retained",
                   "UNRESOLVED_SOURCES": "Some browser sources could not be decided automatically"}
         return ProviderExecutionResult(
             raw_content=raw, observations=observations, exit_code=0 if complete else 1,

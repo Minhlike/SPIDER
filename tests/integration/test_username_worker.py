@@ -8,8 +8,16 @@ from spider.models.enums import ObservableType
 from spider.models.observable import NormalizedObservable
 from spider.models.provenance import SourceLineage
 from spider.providers.maigret.adapter import MaigretAdapter
-from spider.providers.maigret.worker import priority_site_manifest, select_prioritized_sites
+from spider.providers.maigret.worker import (
+    priority_site_manifest, select_prioritized_sites, transport_outcome,
+)
 from spider.discovery.vn_sources import DIRECT_MAIGRET_SITES, SEARCH_ONLY_SITES
+
+
+def test_worker_maps_upstream_sentinel_status_to_connection_failure():
+    assert transport_outcome(200) == "HTTP_200"
+    assert transport_outcome(599) == "HTTP_599"
+    assert transport_outcome(999) == "CONNECTION_FAILED"
 
 
 def target_and_lineage():

@@ -38,6 +38,12 @@ SOCIAL_RESPONSE_RULES = {
 }
 
 
+def transport_outcome(status):
+    """Translate Maigret/aiohttp sentinel statuses into the parent protocol."""
+    return f"HTTP_{status}" if isinstance(status, int) and 100 <= status <= 599 \
+        else "CONNECTION_FAILED"
+
+
 def classify_priority_social_response(site_name, response):
     """Downgrade ambiguous platform pages; never promotes a profile result."""
     rules = SOCIAL_RESPONSE_RULES.get(str(site_name).casefold())
@@ -182,7 +188,8 @@ async def run(spec):
             except BaseException:
                 write({"kind": "request_outcome", "sequence": sequence, "outcome": "UNKNOWN_AFTER_DISPATCH"})
                 raise
-            write({"kind": "request_outcome", "sequence": sequence, "outcome": "HTTP_" + str(response.status)})
+            write({"kind": "request_outcome", "sequence": sequence,
+                   "outcome": transport_outcome(response.status)})
             return response
 
         def metered_session(session, *args, **kwargs):

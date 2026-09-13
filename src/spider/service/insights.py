@@ -476,9 +476,10 @@ class CaseInsightsBuilder:
             pid = o.provider_id or "unknown"
             provider_obs_count[pid] = provider_obs_count.get(pid, 0) + 1
 
-        all_known_providers = ["native_dns", "native_rdap", "native_ct", "native_web", "subfinder", "metabigor", "spiderfoot", "maigret", "github_public", "gravatar_public", "uncover", "coccoc_browser"]
-        provider_ids = list(dict.fromkeys(all_known_providers + sorted(
-            expected_sources | set(provider_stats) | set(provider_obs_count))))
+        # This case report is an execution receipt, not the provider inventory.
+        # Show only sources relevant to this target or actually present in its
+        # lineage. The dedicated provider-status page remains the inventory.
+        provider_ids = sorted(expected_sources | set(provider_stats) | set(provider_obs_count))
         contributions = []
         for pid in provider_ids:
             st = provider_stats.get(pid)

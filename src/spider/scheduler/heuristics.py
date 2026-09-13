@@ -17,10 +17,10 @@ CAPABILITY_YIELD_ESTIMATES = {
     "EMAIL_PUBLIC_PROFILE_LOOKUP": 22.0,
     "SUBDOMAIN_DISCOVERY": 10.0,
     "INFRASTRUCTURE_DISCOVERY": 5.0,
-    "USERNAME_DISCOVERY": 8.0,
-    # An explicit browser action must run before broad catalog enumeration can
-    # consume the shared time/request budget.
-    "BROWSER_PERSONAL_DISCOVERY": 30.0,
+    # Bounded deterministic sources establish a useful baseline before the
+    # slower interactive browser capability consumes the time budget.
+    "USERNAME_DISCOVERY": 30.0,
+    "BROWSER_PERSONAL_DISCOVERY": 18.0,
     "INTERNET_INTELLIGENCE": 6.0,
     "BROAD_OSINT": 15.0
 }

@@ -85,7 +85,7 @@ def test_exact_email_profile_lookup_precedes_broader_public_search():
         "gravatar_public", "github_public"]
 
 
-def test_explicit_browser_discovery_precedes_broad_username_enumeration():
+def test_bounded_username_sources_precede_interactive_browser_discovery():
     registry = CapabilityRegistry(config_path="config/capabilities.yaml")
     scheduler = DeterministicScheduler(registry)
     from spider.providers.maigret.adapter import MaigretAdapter
@@ -100,4 +100,5 @@ def test_explicit_browser_discovery_precedes_broad_username_enumeration():
         depth=0, is_seed=True,
         allowed_capabilities={"PUBLIC_PROFILE_LOOKUP", "USERNAME_DISCOVERY",
                               "BROWSER_PERSONAL_DISCOVERY"})
-    assert candidates[0].provider_id == "coccoc_browser"
+    assert [candidate.provider_id for candidate in candidates] == [
+        "maigret", "github_public", "coccoc_browser"]

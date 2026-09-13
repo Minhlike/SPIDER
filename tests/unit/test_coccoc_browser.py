@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 
 import pytest
 
@@ -10,8 +11,25 @@ from spider.providers.browser.coccoc import (
     apply_indexed_profile_candidates, browser_start_reason, candidate_has_username, coccoc_profile,
     coccoc_search_url, DIRECT_USERNAME_SOURCES, SEARCH_ENGINE_NAME, host_matches, indexed_profile_candidates,
     PHONE_SEARCH_SOURCES, phone_literal_match, phone_search_variants,
-    safe_result_url, select_search_candidate,
+    gather_rows_until, safe_result_url, select_search_candidate,
 )
+
+
+@pytest.mark.asyncio
+async def test_browser_stage_deadline_retains_completed_rows_and_marks_pending():
+    async def worker(value):
+        if value == "slow":
+            await asyncio.sleep(1)
+        return {"source": value, "state": "CANDIDATE"}
+
+    rows = await gather_rows_until(
+        ["fast", "slow"], worker, time.monotonic() + 0.05,
+        lambda value: {"source": value, "state": "UNPROCESSED",
+                       "reason": "WORKFLOW_TIMEOUT"})
+    assert rows == [
+        {"source": "fast", "state": "CANDIDATE"},
+        {"source": "slow", "state": "UNPROCESSED", "reason": "WORKFLOW_TIMEOUT"},
+    ]
 
 
 def test_profile_selection_is_bounded_to_chromium_profile_names(tmp_path):
@@ -194,6 +212,37 @@ async def test_phone_sources_use_at_most_three_parallel_tabs(monkeypatch):
     rows = await adapter._collect_phone_sources(
         Context(), "+84327152369", lambda: False, 1000, parallel_tabs=3)
     assert len(rows) == len(PHONE_SEARCH_SOURCES)
+    assert peak == 3
+
+
+@pytest.mark.asyncio
+async def test_general_search_sources_use_at_most_three_parallel_tabs(monkeypatch):
+    adapter = CocCocBrowserAdapter()
+    active = 0
+    peak = 0
+
+    class Page:
+        async def close(self):
+            return None
+
+    class Context:
+        async def new_page(self):
+            return Page()
+
+    async def search(_page, source, _host, _identifier, _timeout_ms, **_kwargs):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        return {"kind": "site", "source": source, "state": "UNKNOWN",
+                "reason": "NO_EXACT_SEARCH_RESULT", "url": None}
+
+    sources = tuple((f"Source {index}", f"source{index}.test") for index in range(8))
+    monkeypatch.setattr(adapter, "_search_one", search)
+    rows = await adapter._collect_search_sources(
+        Context(), sources, "alice", lambda: False, 1000, parallel_tabs=3)
+    assert [row["source"] for row in rows] == [source for source, _host in sources]
     assert peak == 3
 
 

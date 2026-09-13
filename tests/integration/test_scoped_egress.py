@@ -37,10 +37,10 @@ async def test_two_seeds_shared_account_cannot_leak_evidence_or_plaintext_ledger
                 assert github["execution_state"] == "CALLED"
                 assert github["request_count"] == 1
                 assert github["contributed"]
-                uncover = next(p for p in insight["provider_contributions"] if p["provider_id"] == "uncover")
-                assert uncover["applicability"] == "NOT_APPLICABLE"
-                assert uncover["execution_state"] == "NOT_APPLICABLE"
-                assert uncover["credential_state"] == "NOT_APPLICABLE"
+                # A case receipt lists only relevant or actually executed
+                # sources; the provider inventory lives on its own page.
+                assert "uncover" not in {
+                    p["provider_id"] for p in insight["provider_contributions"]}
             rows = list((await session.scalars(select(EgressRecord))).all())
             assert len(rows) == result["budget_ledger"]["requests_count"] == 2
             dumped = json.dumps([{c.name: str(getattr(r, c.name)) for c in EgressRecord.__table__.columns} for r in rows])
