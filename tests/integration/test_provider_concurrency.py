@@ -1,7 +1,44 @@
 import asyncio
+import time
 import pytest
 from benchmarks.provider_concurrency import trial
 from spider.providers.limits import OriginLimits
+
+
+@pytest.mark.asyncio
+async def test_sliding_window_starts_next_provider_when_one_slot_finishes(tmp_path):
+    from benchmarks.provider_concurrency import Tracker, DelayedFixture
+    from spider.models.budget import ExecutionBudget
+    from spider.models.enums import ObservableType as T
+    from spider.service.service import SpiderService
+
+    starts, finishes = {}, {}
+
+    class TimelineFixture(DelayedFixture):
+        async def execute(self, *args, **kwargs):
+            starts[self.index] = time.perf_counter()
+            try:
+                return await super().execute(*args, **kwargs)
+            finally:
+                finishes[self.index] = time.perf_counter()
+
+    service = SpiderService(str(tmp_path / "sliding.db"), str(tmp_path / "runs"))
+    tracker = Tracker()
+    for index, delay in enumerate((.20, .03, .03)):
+        service.provider_manager.register_adapter(TimelineFixture(index, tracker, delay))
+    service.capability_registry.get_capability("SUBDOMAIN_DISCOVERY").default_providers = \
+        list(service.provider_manager.adapters)
+    await service.start()
+    try:
+        case = (await service.create_case("Sliding window fixture"))["id"]
+        await service.add_target(case, "fixture.test", T.DOMAIN)
+        result = await service.investigate(case, ExecutionBudget(
+            max_depth=0, max_parallel_tasks=2, max_requests=10))
+        assert result["status"] == "COMPLETED" and result["tasks_executed"] == 3
+        assert starts[2] < finishes[0]
+        assert tracker.peak == 2
+    finally:
+        await service.stop()
 
 
 @pytest.mark.asyncio

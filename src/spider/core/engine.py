@@ -240,64 +240,57 @@ class SpiderEngine:
                 },
             )
 
-            for offset in range(0, len(candidates), budget.max_parallel_tasks):
-                batch = []
-                order = CommitOrder()
-                for cand in candidates[offset:offset + budget.max_parallel_tasks]:
-                    # A shared observable can answer different seeds; never reuse unrelated evidence.
-                    cand.execution_key.configuration_hash = seed_id
-                    if cand.execution_key.key_string in executed_key_hashes:
-                        continue
-                    if scheduler.ledger.is_exhausted(budget, current_depth=depth) or not within_deadline():
-                        deferred_candidates = True
-                        break
-
-                    task = TaskRun(
-                        case_id=case_id,
-                        run_id=run_id,
-                        execution_key_hash=cand.execution_key.key_string,
-                        provider_id=cand.provider_id,
-                        capability=cand.capability,
-                        target_observable_value=current_obs.canonical_value,
-                        status=ExecutionStatus.RUNNING,
-                        metadata={"seed_id": seed_id, "target_type": current_obs.type.value,
-                                    "target_namespace": current_obs.namespace}
-                    )
-
-                    lineage = SourceLineage(
-                        case_id=case_id,
-                        run_id=run_id,
-                        task_id=task.id,
-                        provider_id=cand.provider_id,
-                        provider_version=self.provider_manager.adapters[cand.provider_id].version(),
-                        adapter_version=self.provider_manager.adapters[cand.provider_id].adapter_version(),
-                        parent_observable_value=current_obs.canonical_value,
-                        parent_observable_type=current_obs.type,
-                        parent_namespace=current_obs.namespace,
-                        seed_id=seed_id,
-                        configuration_hash=cand.execution_key.configuration_hash
-                    )
-
-                    batch.append((cand, task, lineage))
-                    scheduler.ledger.provider_calls_count += 1
-                if not batch:
-                    # A batch of duplicate execution keys need not be the last batch.
-                    if deferred_candidates:
-                        break
+            scheduled = []
+            order = CommitOrder()
+            for cand in candidates:
+                # A shared observable can answer different seeds; never reuse unrelated evidence.
+                cand.execution_key.configuration_hash = seed_id
+                if cand.execution_key.key_string in executed_key_hashes:
                     continue
+                if scheduler.ledger.is_exhausted(budget, current_depth=depth) or not within_deadline():
+                    deferred_candidates = True
+                    break
+
+                task = TaskRun(
+                    case_id=case_id,
+                    run_id=run_id,
+                    execution_key_hash=cand.execution_key.key_string,
+                    provider_id=cand.provider_id,
+                    capability=cand.capability,
+                    target_observable_value=current_obs.canonical_value,
+                    status=ExecutionStatus.RUNNING,
+                    metadata={"seed_id": seed_id, "target_type": current_obs.type.value,
+                              "target_namespace": current_obs.namespace}
+                )
+                lineage = SourceLineage(
+                    case_id=case_id, run_id=run_id, task_id=task.id,
+                    provider_id=cand.provider_id,
+                    provider_version=self.provider_manager.adapters[cand.provider_id].version(),
+                    adapter_version=self.provider_manager.adapters[cand.provider_id].adapter_version(),
+                    parent_observable_value=current_obs.canonical_value,
+                    parent_observable_type=current_obs.type,
+                    parent_namespace=current_obs.namespace, seed_id=seed_id,
+                    configuration_hash=cand.execution_key.configuration_hash
+                )
+                scheduled.append((cand, task, lineage))
+                scheduler.ledger.provider_calls_count += 1
+
+            if scheduled:
                 action_timeout = budget.per_action_timeout_seconds
                 if deadline is not None:
                     action_timeout = min(action_timeout, max(0.1, deadline - time.monotonic()))
+                execution_slots = asyncio.Semaphore(budget.max_parallel_tasks)
                 jobs = [asyncio.create_task(self.provider_manager.execute_task(
                     task, current_obs, lineage, timeout_seconds=action_timeout,
                     request_ledger=scheduler.ledger, execution_budget=budget,
                     derivation="DIRECT" if depth == 0 else "DERIVED",
                     username_site_limit=budget.username_site_limit,
                     username_source_scope=budget.username_source_scope,
+                    execution_slots=execution_slots,
                     commit_order=order, commit_index=index,
                     resolve_batch=lambda session, observations: self.resolution_engine.resolve_observations(
                         session, observations, case_id)))
-                    for index, (_, task, lineage) in enumerate(batch)]
+                    for index, (_, task, lineage) in enumerate(scheduled)]
                 try:
                     results = await asyncio.gather(*jobs)
                 finally:
@@ -305,7 +298,7 @@ class SpiderEngine:
                         if not job.done() and not job.cancelling():
                             job.cancel()
                     await asyncio.gather(*jobs, return_exceptions=True)
-                for (cand, _, _), exec_result in zip(batch, results):
+                for (cand, _, _), exec_result in zip(scheduled, results):
                     if exec_result.exit_code != 0 or exec_result.outcome in ("PARTIAL", "FAILED"):
                         incomplete_tasks += 1
                         if exec_result.outcome == "FAILED" or (not exec_result.outcome and exec_result.exit_code != 0):
@@ -315,16 +308,14 @@ class SpiderEngine:
                     executed_key_hashes.add(cand.execution_key.key_string)
                     total_tasks_run += 1
                     scheduler.ledger.record_observation_yield(len(exec_result.observations))
-
                     if exec_result.observations:
                         total_observations += len(exec_result.observations)
-                    
-                        # Add newly discovered observables to frontier if within depth budget
                         if depth + 1 <= budget.max_depth:
                             for obs in exec_result.observations:
                                 if obs.observable.identity != current_obs.identity:
                                     frontier.append((obs.observable, seed_id, depth + 1))
-                # Keep the active observable until every candidate batch is accounted for.
+                # The active observable remains resumable until every scheduled
+                # candidate has committed in deterministic order.
                 await persist_checkpoint("RUNNING", [(current_obs, seed_id, depth), *frontier])
 
             if deferred_candidates:

@@ -1,6 +1,6 @@
 import asyncio
 import time
-from contextlib import nullcontext
+from contextlib import asynccontextmanager, nullcontext
 from spider.models.base import utc_now
 from spider.storage.schema import TaskRunRecord, ProviderAuditRecord
 from typing import Dict, List, Optional
@@ -18,6 +18,15 @@ from spider.models.budget import RequestBudgetExceeded
 from spider.service.egress import EgressRecorder
 from spider.providers.limits import OriginLimits
 from spider.providers.http_plane import HTTPPlane
+
+
+@asynccontextmanager
+async def optional_semaphore(semaphore):
+    if semaphore is None:
+        yield
+        return
+    async with semaphore:
+        yield
 
 class ProviderManager:
     def __init__(self, artifact_repo: ArtifactRepository, ingest_queue: IngestQueue, db_writer: SingleDBWriter):
@@ -95,6 +104,7 @@ class ProviderManager:
         resolve_batch = options.pop("resolve_batch", None)
         commit_order = options.pop("commit_order", None)
         commit_index = options.pop("commit_index", 0)
+        execution_slots = options.pop("execution_slots", None)
         options["origin_limits"] = self.origin_limits
         options["http_plane"] = self.http_plane
         options["http_run_scope"] = (task.run_id, adapter.adapter_version()) if adapter else None
@@ -143,7 +153,11 @@ class ProviderManager:
             else:
                 async def dispatch():
                     queued = time.perf_counter()
-                    async with self._provider_slots[task.provider_id], self._global_slots:
+                    # Per-provider admission comes first so duplicate work from
+                    # one provider cannot occupy every slot in this run. The
+                    # run slot is released before deterministic commit/ingest.
+                    async with self._provider_slots[task.provider_id], \
+                            optional_semaphore(execution_slots), self._global_slots:
                         entered = time.perf_counter()
                         task.metadata["provider_wait_ms"] = (entered - queued) * 1000
                         try:
