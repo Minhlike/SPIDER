@@ -92,7 +92,8 @@ async def test_vertical_slice_subfinder_and_metabigor(tmp_path):
         assert explanation["target_entity"]["type"] == "ASN"
         assert explanation["rule"] == {
             "id": "ADDRESS_BELONGS_TO_ASN", "version": "1.0.0",
-            "registry_version": "1.0.0", "evidence_requirement": "DIRECT_OBSERVATION"}
+            "registry_version": "1.1.0", "evidence_requirement": "DIRECT_OBSERVATION",
+            "metadata_requirements": {}}
         assert explanation["claim_lifecycle"]["state"] == "SUPPORTED_RELATION"
         assert explanation["justification_dag"]["acyclic"] is True
         assert explanation["justification_dag"]["proof_complete"] is True

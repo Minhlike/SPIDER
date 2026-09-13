@@ -11,10 +11,14 @@ from spider.service.review import EvidenceReview, save_review
 from spider.service.service import SpiderService
 from spider.providers.fake.provider_a import FakeProviderA
 from spider.models.enums import ObservableType as T
+from spider.models.enums import AssertionType
+from spider.models.observable import NormalizedObservable
+from spider.models.observation import Observation
 from spider.models.provenance import SourceLineage
 from spider.providers.browser.coccoc import CocCocBrowserAdapter
 from spider.models.budget import ExecutionBudget
 from spider.providers.maigret.profile_metadata import public_metadata
+from spider.storage.repositories.observation_repo import ObservationRepository
 
 
 def obs(number, profile="https://profile.test/alice", **raw):
@@ -191,6 +195,46 @@ async def test_phone_seed_report_keeps_raw_and_canonical_without_owner_claim(tmp
         assert "owner" not in report and "subscriber" not in report
         assert "không chứng minh nhà mạng hiện tại" in json.dumps(
             insights["reader_report"], ensure_ascii=False)
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_account_identity_edge_requires_explicit_rule_predicate(tmp_path):
+    service = SpiderService(db_path=str(tmp_path / "identity-rule.db"),
+                            artifacts_dir=str(tmp_path / "runs"))
+    await service.start()
+    try:
+        case = await service.create_case("Synthetic account relationship")
+        parent = Observation(observable=NormalizedObservable(
+            type=T.ACCOUNT, namespace="instagram", value="alice@instagram"),
+            lineage=SourceLineage(case_id=case["id"], run_id="fixture", task_id="parent",
+                provider_id="fixture", provider_version="1", upstream_family="FIXTURE"))
+        children = [Observation(observable=NormalizedObservable(
+            type=T.ACCOUNT, namespace=namespace, value=f"alice@{namespace}"),
+            lineage=SourceLineage(case_id=case["id"], run_id="fixture", task_id=namespace,
+                provider_id="fixture", provider_version="1", upstream_family="FIXTURE",
+                parent_observable_type=T.ACCOUNT, parent_observable_value="alice@instagram",
+                parent_namespace="instagram"), raw_data=raw)
+            for namespace, raw in (("threads", {}),
+                ("github", {"relationship_basis": "RECIPROCAL_LINK"}))]
+
+        async def resolve(session):
+            rows = [parent, *children]
+            await ObservationRepository.append_observations_batch(session, rows)
+            await service.resolution_engine.resolve_observations(session, rows, case["id"])
+        await service.db_writer.submit(resolve)
+
+        assertions = await service.get_case_assertions(case["id"])
+        assert {row["assertion_type"] for row in assertions} == {
+            AssertionType.ASSOCIATED_WITH.value,
+            AssertionType.POSSIBLY_SAME_IDENTITY.value}
+        qualified = next(row for row in assertions
+                         if row["assertion_type"] == AssertionType.POSSIBLY_SAME_IDENTITY.value)
+        explanation = await service.explain_assertion(qualified["id"])
+        assert explanation["rule"]["metadata_requirements"] == {
+            "relationship_basis": ["SELF_ASSERTED_LINK", "RECIPROCAL_LINK"]}
+        assert explanation["claim_lifecycle"]["identity_verified"] is False
     finally:
         await service.stop()
 

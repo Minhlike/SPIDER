@@ -57,7 +57,7 @@ class EntityResolutionEngine:
                     source_entity_id = parent_entity_rec.id
                     source_type = ObservableType(parent_entity_rec.observable_type)
                     
-                    rule = resolve_assertion_rule(source_type, obs_type)
+                    rule = resolve_assertion_rule(source_type, obs_type, obs.raw_data)
                     asrt_type = rule.assertion_type
                     if asrt_type:
                         assertion = Assertion(
@@ -73,7 +73,10 @@ class EntityResolutionEngine:
                             inference_rule=rule.rule_id,
                             metadata={"rule_version": rule.rule_version,
                                       "rule_registry_version": rule.registry_version,
-                                      "evidence_requirement": rule.evidence_requirement},
+                                      "evidence_requirement": rule.evidence_requirement,
+                                      "metadata_requirements": {
+                                          key: list(values)
+                                          for key, values in rule.metadata_requirements.items()}},
                             first_observed=obs.created_at,
                             last_observed=obs.created_at
                         )

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from spider.models.enums import ObservableType, AssertionType
 
@@ -17,7 +17,20 @@ class AssertionRule(BaseModel):
     target_types: list[ObservableType] = Field(min_length=1)
     assertion_type: AssertionType
     evidence_requirement: str = Field(pattern=r"^DIRECT_OBSERVATION$")
+    metadata_requirements: dict[str, list[str]] = Field(default_factory=dict)
     fallback: bool = False
+
+    @model_validator(mode="after")
+    def validate_metadata_requirements(self):
+        if self.fallback and self.metadata_requirements:
+            raise ValueError("Fallback rule cannot require metadata")
+        for key, values in self.metadata_requirements.items():
+            if (not key or len(key) > 64 or not key.replace("_", "").isalnum()
+                    or not values or len(values) > 20
+                    or any(not isinstance(value, str) or not value or len(value) > 96
+                           for value in values)):
+                raise ValueError("Invalid rule metadata requirement")
+        return self
 
 
 class RuleFile(BaseModel):
@@ -33,6 +46,7 @@ class RuleDecision:
     rule_version: str
     registry_version: str
     evidence_requirement: str
+    metadata_requirements: dict[str, tuple[str, ...]]
 
 
 class AssertionRuleRegistry:
@@ -57,19 +71,27 @@ class AssertionRuleRegistry:
         if self._fallback is None:
             raise ValueError("A fallback assertion rule is required")
 
-    def resolve(self, source_type: ObservableType, target_type: ObservableType) -> RuleDecision:
-        rule = self._rules.get((source_type, target_type), self._fallback)
+    def resolve(self, source_type: ObservableType, target_type: ObservableType,
+                evidence_metadata=None) -> RuleDecision:
+        rule = self._rules.get((source_type, target_type))
+        evidence_metadata = evidence_metadata if isinstance(evidence_metadata, dict) else {}
+        if rule is None or any(evidence_metadata.get(key) not in allowed
+                               for key, allowed in rule.metadata_requirements.items()):
+            rule = self._fallback
         return RuleDecision(rule.assertion_type, rule.id, rule.version,
-                            self.version, rule.evidence_requirement)
+                            self.version, rule.evidence_requirement,
+                            {key: tuple(values) for key, values in rule.metadata_requirements.items()})
 
 
 _DEFAULT_REGISTRY = AssertionRuleRegistry()
 
 
-def resolve_assertion_rule(source_type: ObservableType, target_type: ObservableType) -> RuleDecision:
-    return _DEFAULT_REGISTRY.resolve(source_type, target_type)
+def resolve_assertion_rule(source_type: ObservableType, target_type: ObservableType,
+                           evidence_metadata=None) -> RuleDecision:
+    return _DEFAULT_REGISTRY.resolve(source_type, target_type, evidence_metadata)
 
 
-def infer_assertion_type(source_type: ObservableType, target_type: ObservableType) -> Optional[AssertionType]:
+def infer_assertion_type(source_type: ObservableType, target_type: ObservableType,
+                         evidence_metadata=None) -> Optional[AssertionType]:
     """Compatibility API; all pairs resolve through the explicit fallback rule."""
-    return resolve_assertion_rule(source_type, target_type).assertion_type
+    return resolve_assertion_rule(source_type, target_type, evidence_metadata).assertion_type

@@ -1,4 +1,4 @@
-registry_version: "1.0.0"
+registry_version: "1.1.0"
 rules:
   - {id: EMAIL_BELONGS_TO_DOMAIN, version: "1.0.0", source_types: [EMAIL], target_types: [DOMAIN], assertion_type: BELONGS_TO_DOMAIN, evidence_requirement: DIRECT_OBSERVATION}
   - {id: DOMAIN_HAS_SUBDOMAIN, version: "1.0.0", source_types: [DOMAIN], target_types: [HOSTNAME], assertion_type: SUBDOMAIN_OF, evidence_requirement: DIRECT_OBSERVATION}
@@ -7,6 +7,6 @@ rules:
   - {id: INFRASTRUCTURE_OPERATED_BY, version: "1.0.0", source_types: [IP_ADDRESS, IPV6_ADDRESS, ASN], target_types: [ORGANIZATION], assertion_type: OPERATED_BY, evidence_requirement: DIRECT_OBSERVATION}
   - {id: INFRASTRUCTURE_HOSTED_ON_RANGE, version: "1.0.0", source_types: [IP_ADDRESS, IPV6_ADDRESS, ASN], target_types: [CIDR], assertion_type: HOSTED_ON, evidence_requirement: DIRECT_OBSERVATION}
   - {id: USERNAME_ACCOUNT_CANDIDATE, version: "1.0.0", source_types: [USERNAME], target_types: [ACCOUNT], assertion_type: SHARES_USERNAME, evidence_requirement: DIRECT_OBSERVATION}
-  - {id: ACCOUNT_IDENTITY_CANDIDATE, version: "1.0.0", source_types: [ACCOUNT], target_types: [ACCOUNT], assertion_type: POSSIBLY_SAME_IDENTITY, evidence_requirement: DIRECT_OBSERVATION}
+  - {id: ACCOUNT_IDENTITY_CANDIDATE, version: "2.0.0", source_types: [ACCOUNT], target_types: [ACCOUNT], assertion_type: POSSIBLY_SAME_IDENTITY, evidence_requirement: DIRECT_OBSERVATION, metadata_requirements: {relationship_basis: [SELF_ASSERTED_LINK, RECIPROCAL_LINK]}}
   - {id: NAME_USES_CERTIFICATE, version: "1.0.0", source_types: [DOMAIN, HOSTNAME], target_types: [CERTIFICATE], assertion_type: USES_CERTIFICATE, evidence_requirement: DIRECT_OBSERVATION}
   - {id: DIRECT_ASSOCIATION_FALLBACK, version: "1.0.0", source_types: [RAW_DATA], target_types: [RAW_DATA], assertion_type: ASSOCIATED_WITH, evidence_requirement: DIRECT_OBSERVATION, fallback: true}

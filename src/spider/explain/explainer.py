@@ -49,7 +49,8 @@ class ExplainEngine:
                  {"id": rule_node, "kind": "RULE", "rule_id": asrt.inference_rule,
                   "version": rule_metadata.get("rule_version"),
                   "registry_version": rule_metadata.get("rule_registry_version"),
-                  "evidence_requirement": rule_metadata.get("evidence_requirement")}]
+                  "evidence_requirement": rule_metadata.get("evidence_requirement"),
+                  "metadata_requirements": rule_metadata.get("metadata_requirements", {})}]
         edges = [{"from": rule_node, "to": claim_node, "kind": "DERIVES"}]
         known_evidence = set()
         for evidence in evidence_list:
@@ -115,7 +116,8 @@ class ExplainEngine:
             "rule": {"id": asrt.inference_rule,
                      "version": rule_metadata.get("rule_version"),
                      "registry_version": rule_metadata.get("rule_registry_version"),
-                     "evidence_requirement": rule_metadata.get("evidence_requirement")},
+                     "evidence_requirement": rule_metadata.get("evidence_requirement"),
+                     "metadata_requirements": rule_metadata.get("metadata_requirements", {})},
             "claim_lifecycle": {"state": lifecycle, "identity_verified": False,
                                 "supporting_evidence": len(evidence_list) + sum(
                                     review.role == "SUPPORTING_EVIDENCE" for review in reviews),

@@ -10,12 +10,20 @@ def test_versioned_registry_resolves_specific_and_fallback_rules():
     specific = resolve_assertion_rule(ObservableType.USERNAME, ObservableType.ACCOUNT)
     assert specific.assertion_type == AssertionType.SHARES_USERNAME
     assert specific.rule_id == "USERNAME_ACCOUNT_CANDIDATE"
-    assert specific.rule_version == "1.0.0" and specific.registry_version == "1.0.0"
+    assert specific.rule_version == "1.0.0" and specific.registry_version == "1.1.0"
     assert specific.evidence_requirement == "DIRECT_OBSERVATION"
 
     fallback = resolve_assertion_rule(ObservableType.PHONE, ObservableType.URL)
     assert fallback.assertion_type == AssertionType.ASSOCIATED_WITH
     assert fallback.rule_id == "DIRECT_ASSOCIATION_FALLBACK"
+
+    guarded = resolve_assertion_rule(ObservableType.ACCOUNT, ObservableType.ACCOUNT,
+        {"relationship_basis": "SELF_ASSERTED_LINK"})
+    assert guarded.assertion_type == AssertionType.POSSIBLY_SAME_IDENTITY
+    assert guarded.metadata_requirements == {
+        "relationship_basis": ("SELF_ASSERTED_LINK", "RECIPROCAL_LINK")}
+    missing = resolve_assertion_rule(ObservableType.ACCOUNT, ObservableType.ACCOUNT)
+    assert missing.assertion_type == AssertionType.ASSOCIATED_WITH
 
 
 def test_registry_fails_closed_on_conflicting_rules(tmp_path):
