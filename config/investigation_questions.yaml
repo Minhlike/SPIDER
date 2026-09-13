@@ -1,4 +1,4 @@
-registry_version: "1.1.0"
+registry_version: "1.2.0"
 questions:
   - {id: USERNAME_PUBLIC_ACCOUNTS, version: "1.0.0", input_types: [USERNAME], answer_entity_types: [ACCOUNT], next_capabilities: [PUBLIC_PROFILE_LOOKUP, USERNAME_DISCOVERY, BROWSER_PERSONAL_DISCOVERY]}
   - {id: EMAIL_PUBLIC_ACCOUNTS, version: "1.0.0", input_types: [EMAIL], answer_entity_types: [ACCOUNT], next_capabilities: [PUBLIC_PROFILE_LOOKUP, EMAIL_PUBLIC_PROFILE_LOOKUP, BROWSER_PERSONAL_DISCOVERY]}
@@ -8,5 +8,5 @@ questions:
   - {id: DOMAIN_REGISTRY_AND_ROUTING, version: "1.0.0", input_types: [DOMAIN, HOSTNAME], answer_entity_types: [ASN, CIDR, ORGANIZATION], next_capabilities: [REGISTRY_LOOKUP, INFRASTRUCTURE_DISCOVERY]}
   - {id: DOMAIN_WEB_POSTURE, version: "1.0.0", input_types: [DOMAIN, HOSTNAME], answer_entity_types: [URL], next_capabilities: [WEB_METADATA]}
   - {id: IP_NETWORK_OPERATOR, version: "1.0.0", input_types: [IP_ADDRESS, IPV6_ADDRESS], answer_entity_types: [ASN, ORGANIZATION, CIDR], next_capabilities: [IP_ENRICHMENT]}
-  - {id: PHONE_PUBLIC_IDENTITY_CANDIDATES, version: "1.0.0", input_types: [PHONE], answer_entity_types: [ACCOUNT, ORGANIZATION, URL], next_capabilities: [BROAD_OSINT]}
+  - {id: PHONE_PUBLIC_IDENTITY_CANDIDATES, version: "1.1.0", input_types: [PHONE], answer_entity_types: [ACCOUNT, ORGANIZATION, URL], next_capabilities: [BROWSER_PERSONAL_DISCOVERY, BROAD_OSINT]}
   - {id: ORGANIZATION_PUBLIC_INFRASTRUCTURE, version: "1.0.0", input_types: [ORGANIZATION], answer_entity_types: [DOMAIN, IP_ADDRESS, ASN, URL], next_capabilities: [INTERNET_INTELLIGENCE]}

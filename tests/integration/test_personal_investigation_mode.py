@@ -81,3 +81,31 @@ async def test_browser_provider_only_dispatches_after_explicit_opt_in(tmp_path):
         assert with_browser["browser_assisted"] is True
     finally:
         await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_phone_uses_only_browser_route_after_explicit_opt_in(tmp_path):
+    calls = []
+    service = SpiderService(db_path=str(tmp_path / "phone-browser.db"),
+                            artifacts_dir=str(tmp_path / "runs"))
+    service.provider_manager.register_adapter(RecordingAdapter(
+        "coccoc_browser", ["BROWSER_PERSONAL_DISCOVERY"],
+        [ObservableType.EMAIL, ObservableType.PHONE, ObservableType.USERNAME], calls))
+    service.provider_manager.register_adapter(RecordingAdapter(
+        "spiderfoot", ["BROAD_OSINT"], [ObservableType.PHONE], calls))
+    await service.start()
+    try:
+        case = await service.create_case("Synthetic phone browser fixture")
+        await service.add_target(case["id"], "+84327152369", ObservableType.PHONE)
+        passive = await service.investigate(case["id"], ExecutionBudget(
+            max_depth=0, max_requests=20, diminishing_returns_cutoff=10))
+        assert calls == [] and passive["browser_assisted"] is False
+
+        active = await service.investigate(case["id"], ExecutionBudget(
+            max_depth=0, max_requests=20, diminishing_returns_cutoff=10),
+            browser_assisted=True)
+        assert calls == ["coccoc_browser"]
+        assert active["investigation_mode"] == "PERSONAL_FOOTPRINT"
+        assert active["browser_assisted"] is True
+    finally:
+        await service.stop()

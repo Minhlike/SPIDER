@@ -28,11 +28,20 @@ DIRECT_USERNAME_SOURCES = (
     ("X/Twitter", "x.com", "https://x.com/{username}"),
 )
 SEARCH_SOURCES = (("Zalo", "zalo.me"), ("Tinhte", "tinhte.vn"), ("VOZ", "voz.vn"))
+PHONE_SEARCH_SOURCES = (
+    ("Zalo", "zalo.me"), ("Facebook", "facebook.com"),
+    ("TikTok", "tiktok.com"), ("Telegram", "t.me"),
+    ("Tinhte", "tinhte.vn"), ("VOZ", "voz.vn"),
+    ("Chợ Tốt", "chotot.com"), ("Mua Bán", "muaban.net"),
+    ("Trang Vàng Việt Nam", "trangvangvietnam.com"),
+)
 SEARCH_ENGINE_NAME = "Cốc Cốc Search"
 SEARCH_ENGINE_URL = "https://coccoc.com/search?query={query}"
 SEARCH_FALLBACK_SOURCES = frozenset({"Instagram", "Threads", "TikTok"})
 ALLOWED_RESULT_HOSTS = frozenset(
-    [host for _, host, _ in DIRECT_USERNAME_SOURCES] + [host for _, host in SEARCH_SOURCES]
+    [host for _, host, _ in DIRECT_USERNAME_SOURCES]
+    + [host for _, host in SEARCH_SOURCES]
+    + [host for _, host in PHONE_SEARCH_SOURCES]
 )
 NEGATIVE_MARKERS = (
     "page not found", "profile not found", "account not found", "doesn't exist",
@@ -137,7 +146,23 @@ def indexed_profile_candidates(links, username: str) -> dict[str, str]:
     return candidates
 
 
-def select_search_candidate(links, host: str, identifier: str, require_text=False):
+def phone_search_variants(e164):
+    digits = re.sub(r"\D", "", str(e164))
+    if digits.startswith("84") and len(digits) == 11:
+        return (f"+{digits}", "0" + digits[2:])
+    return (f"+{digits}" if str(e164).startswith("+") else digits,)
+
+
+def phone_literal_match(text, e164):
+    expected = {re.sub(r"\D", "", value) for value in phone_search_variants(e164)}
+    for match in re.finditer(r"(?<!\d)(?:\+?84|0)(?:[\s().-]*\d){8,10}(?!\d)", str(text)):
+        if re.sub(r"\D", "", match.group()) in expected:
+            return True
+    return False
+
+
+def select_search_candidate(links, host: str, identifier: str, require_text=False,
+                            literal_matcher=None):
     """Select a host result using link-local text, never the SERP query echo."""
     identifier_key = identifier.casefold()
     for item in links:
@@ -146,7 +171,9 @@ def select_search_candidate(links, host: str, identifier: str, require_text=Fals
         safe = safe_result_url(href)
         if not safe or not host_matches(safe, host):
             continue
-        if require_text and identifier_key not in f"{unquote(safe)}\n{anchor_text}".casefold():
+        text = f"{unquote(safe)}\n{anchor_text}"
+        matched = literal_matcher(text, identifier) if literal_matcher else identifier_key in text.casefold()
+        if require_text and not matched:
             continue
         return safe
     return None
@@ -234,10 +261,10 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
 
     def provider_id(self): return "coccoc_browser"
     def version(self): return "local-coccoc"
-    def adapter_version(self): return "1.3.0"
+    def adapter_version(self): return "1.4.0"
     def capabilities(self): return ["BROWSER_PERSONAL_DISCOVERY"]
     def network_class(self): return NetworkClass.THIRD_PARTY_ONLY
-    def accepts(self): return [ObservableType.EMAIL, ObservableType.USERNAME]
+    def accepts(self): return [ObservableType.EMAIL, ObservableType.PHONE, ObservableType.USERNAME]
     def produces(self): return [ObservableType.ACCOUNT, ObservableType.URL]
     def build_command(self, target): return []
 
@@ -363,6 +390,11 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                             await page.close()
                     else:
                         rows.extend(direct_rows)
+                elif target.type == ObservableType.PHONE:
+                    parallel_tabs = min(3, max(1, int(options.get("browser_parallel_tabs", 3))))
+                    rows.extend(await self._collect_phone_sources(
+                        context, target.canonical_value, lambda: exhausted,
+                        timeout_ms, parallel_tabs))
                 else:
                     page = await context.new_page()
                     sources = tuple((source, host) for source, host, _ in DIRECT_USERNAME_SOURCES) + SEARCH_SOURCES
@@ -500,6 +532,31 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
             rows.append(await self._search_one(page, source, host, identifier, timeout_ms))
         return rows
 
+    async def _collect_phone_sources(self, context, phone, is_exhausted, timeout_ms,
+                                     parallel_tabs=3):
+        variants = phone_search_variants(phone)
+        query_identifier = " OR ".join(f'"{value}"' for value in variants)
+        semaphore = asyncio.Semaphore(min(3, max(1, int(parallel_tabs))))
+
+        async def search(definition):
+            source, host = definition
+            async with semaphore:
+                if is_exhausted():
+                    return {"kind": "site", "source": source, "state": "UNPROCESSED",
+                            "reason": "REQUEST_LIMIT", "url": None}
+                page = await context.new_page()
+                try:
+                    row = await self._search_one(
+                        page, source, host, phone, timeout_ms, require_text=True,
+                        query_identifier=query_identifier, literal_matcher=phone_literal_match)
+                finally:
+                    await page.close()
+                if row.get("state") == "CANDIDATE":
+                    row.update(phone_e164=phone, evidence_class="SEARCH_SNIPPET")
+                return row
+
+        return list(await asyncio.gather(*(search(item) for item in PHONE_SEARCH_SOURCES)))
+
     async def _search_direct_fallbacks(self, page, username, direct_rows, is_exhausted, timeout_ms):
         """Recover index-visible social profiles when a direct platform page is unreadable.
 
@@ -564,21 +621,23 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 direct[positions[promoted["source"]]] = promoted
         return direct + output_leads
 
-    async def _search_one(self, page, source, host, identifier, timeout_ms, require_text=False):
-        query = f'site:{host} "{identifier}"'
+    async def _search_one(self, page, source, host, identifier, timeout_ms, require_text=False,
+                          query_identifier=None, literal_matcher=None):
+        query = f'site:{host} {query_identifier or chr(34) + identifier + chr(34)}'
         try:
             await page.goto(coccoc_search_url(query),
                             wait_until="domcontentloaded", timeout=timeout_ms)
             page_text = (await page.locator("body").inner_text(timeout=2000)).casefold()
             links = await page.locator("a[href]").evaluate_all(
-                "els => els.slice(0, 500).map(a => a.href)"
+                "els => els.slice(0, 500).map(a => ({href: a.href, text: a.innerText || a.textContent || ''}))"
             )
         except Exception:
             return {"kind": "site", "source": source, "state": "UNKNOWN",
                     "reason": "SEARCH_ENGINE_UNAVAILABLE", "url": None,
                     "search_engine": SEARCH_ENGINE_NAME,
                     "content_sha256": hashlib.sha256(b"").hexdigest()}
-        candidate = select_search_candidate(links, host, identifier, require_text)
+        candidate = select_search_candidate(links, host, identifier, require_text,
+                                            literal_matcher)
         valid = candidate is not None
         return {"kind": "search_lead" if valid else "site", "source": source,
                 "state": "CANDIDATE" if valid else "UNKNOWN",
@@ -612,10 +671,13 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
         raw = "\n".join(json.dumps(row, ensure_ascii=False) for row in rows).encode("utf-8")
         observations = self.parse(raw, lineage)
         site_rows = [row for row in rows if row.get("kind") != "search_lead"]
-        search_only_names = {source for source, _ in SEARCH_SOURCES}
+        phone_search = lineage.parent_observable_type == ObservableType.PHONE
+        search_only_names = {source for source, _ in
+                             (PHONE_SEARCH_SOURCES if phone_search else SEARCH_SOURCES)}
         search_only_leads = [row for row in rows if row.get("kind") == "search_lead"
                              and row.get("source") in search_only_names]
-        selected = len(DIRECT_USERNAME_SOURCES) + len(SEARCH_SOURCES)
+        selected = (len(PHONE_SEARCH_SOURCES) if phone_search else
+                    len(DIRECT_USERNAME_SOURCES) + len(SEARCH_SOURCES))
         candidates = sum(row.get("state") == "CANDIDATE" and row.get("kind") != "search_lead"
                          for row in rows)
         not_found = sum(row.get("state") == "NOT_FOUND" for row in site_rows)
@@ -627,7 +689,9 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
         controls = [row.get("control_state") for row in site_rows if "control_state" in row]
         fallback_outcomes = [row.get("search_fallback_outcome") for row in site_rows
                              if row.get("source") in SEARCH_FALLBACK_SOURCES]
-        fallback_outcome = ("SEARCH_LEAD_REVALIDATED" if any(
+        fallback_outcome = ("COCCOC_SEARCH_RESULT" if phone_search and search_only_leads
+                            else "NO_EXACT_SEARCH_RESULT" if phone_search and reason is None
+                            else "SEARCH_LEAD_REVALIDATED" if any(
                                 row.get("reason") == "SEARCH_LEAD_REVALIDATED"
                                 and row.get("source") in SEARCH_FALLBACK_SOURCES for row in rows)
                             else "COCCOC_SEARCH_RESULT" if any(
@@ -662,7 +726,7 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                   "MISSING_RUNTIME": "Cốc Cốc runtime unavailable",
                   "BROWSER_CLOSED": "Cốc Cốc đã đóng trước khi hoàn tất kiểm tra.",
                   "BROWSER_START_FAILED": "Không thể khởi động phiên Cốc Cốc cho lượt kiểm tra này.",
-                  "BROWSER_NETWORK_UNAVAILABLE": "Phiên Cốc Cốc không truy cập được trang kiểm tra công khai. Không kết luận về username; hãy kiểm tra kết nối của Cốc Cốc rồi chạy lại.",
+                  "BROWSER_NETWORK_UNAVAILABLE": "Phiên Cốc Cốc không truy cập được trang kiểm tra công khai. Không kết luận về mục tiêu; hãy kiểm tra kết nối của Cốc Cốc rồi chạy lại.",
                   "REQUEST_LIMIT": "Browser request budget exhausted",
                   "UNRESOLVED_SOURCES": "Some browser sources could not be decided automatically"}
         return ProviderExecutionResult(
@@ -702,6 +766,12 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                                               if is_search_lead else "CANDIDATE_REVIEW_REQUIRED",
                         "browser": "Cốc Cốc",
                         "search_engine": row.get("search_engine") if is_search_lead or is_revalidated else None}
+            if (lineage.parent_observable_type == ObservableType.PHONE
+                    and row.get("evidence_class") == "SEARCH_SNIPPET"
+                    and row.get("phone_e164") == lineage.parent_observable_value):
+                evidence.update(phone_e164=row["phone_e164"],
+                                evidence_class="SEARCH_SNIPPET",
+                                source_url=url, candidate_url=url)
             for field in ("display_name", "bio", "metadata_basis"):
                 if isinstance(row.get(field), str):
                     evidence[field] = row[field]

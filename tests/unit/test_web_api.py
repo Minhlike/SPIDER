@@ -53,6 +53,23 @@ def test_coccoc_preflight_requires_explicit_browser_action(client):
                    if source["provider_id"] == "coccoc_browser")
     assert browser["credential_scope"] == "SIGNED_IN_BROWSER_SESSION"
 
+
+def test_phone_preflight_offers_only_explicit_browser_collection(client):
+    normal = client.post("/api/classify", json={
+        "target": "+84327152369", "target_type": "PHONE"
+    }).json()
+    assert normal["source_preflight"]["investigation_mode"] == "PERSONAL_FOOTPRINT"
+    assert normal["source_preflight"]["sources"] == []
+    deep = client.post("/api/classify", json={
+        "target": "+84327152369", "target_type": "PHONE", "browser_assisted": True
+    }).json()
+    assert [source["provider_id"] for source in deep["source_preflight"]["sources"]] == [
+        "coccoc_browser"]
+    browser = deep["source_preflight"]["sources"][0]
+    assert browser["capability"] == "BROWSER_PERSONAL_DISCOVERY"
+    assert browser["request_accounting"] == "SUPPORTED"
+    assert browser["identifier_disclosure"] == "RAW_TARGET"
+
 def test_api_case_lifecycle(client):
     # 1. Create Case
     create_res = client.post("/api/cases", json={

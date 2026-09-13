@@ -620,7 +620,7 @@ async function classifyCurrentTarget(browserAssisted = true) {
     preview.textContent = data.type;
     preview.className = data.needs_confirmation ? "badge badge-running" : "badge badge-success";
     document.getElementById("btn-browser-investigate").style.display =
-      (!data.needs_confirmation && ["USERNAME", "EMAIL"].includes(data.type)) ? "inline-flex" : "none";
+      (!data.needs_confirmation && ["USERNAME", "EMAIL", "PHONE"].includes(data.type)) ? "inline-flex" : "none";
     explanation.textContent = classificationExplanation(data);
     const sourcePlan = data.source_preflight || {};
     const ready = (sourcePlan.sources || []).filter(s => s.applicability !== "NOT_APPLICABLE" && s.request_accounting === "SUPPORTED").map(s => s.provider_id);
@@ -638,7 +638,7 @@ async function classifyCurrentTarget(browserAssisted = true) {
     }
     if (blocked.length) parts.push(vi ? `Đang khóa vì chưa kiểm toán request: ${blocked.join(", ")}.` : `Blocked until request accounting is audited: ${blocked.join(", ")}.`);
     if (inapplicable.length) parts.push(vi ? `Không chạy do sai loại đầu vào: ${inapplicable.join(", ")}.` : `Skipped for this input type: ${inapplicable.join(", ")}.`);
-    if (!sourcePlan.internet_api_keys_applicable && ["USERNAME", "EMAIL"].includes(data.type)) {
+    if (!sourcePlan.internet_api_keys_applicable && ["USERNAME", "EMAIL", "PHONE"].includes(data.type)) {
       parts.push(vi ? "Shodan/Censys/FOFA không áp dụng cho tìm tài khoản cá nhân." : "Shodan/Censys/FOFA do not apply to personal-account discovery.");
     }
     if ((sourcePlan.sources || []).some(s => s.provider_id === "coccoc_browser" && s.applicability === "APPLICABLE")) {
@@ -698,7 +698,7 @@ async function startInvestigation(browserAssisted = "auto") {
     // Clicking the primary action is the explicit start signal. Personal
     // targets use the visible signed-in browser by default when available.
     const effectiveBrowserAssisted = browserAssisted === true ||
-      (browserAssisted === "auto" && ["USERNAME", "EMAIL"].includes(classification.type));
+      (browserAssisted === "auto" && ["USERNAME", "EMAIL", "PHONE"].includes(classification.type));
     const maxRequests = requestValue === "unlimited" ? null :
       (requestValue === "auto" ? (effectiveBrowserAssisted ? 500 : 100) : parseInt(requestValue, 10));
     const res = await fetch("/api/investigate", {

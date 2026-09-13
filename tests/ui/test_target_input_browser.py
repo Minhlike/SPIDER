@@ -22,21 +22,22 @@ def offline_page(tmp_path, monkeypatch):
     from spider.models.enums import ObservableType
     monkeypatch.setattr(web_app, "input_catalogue", lambda _service: [
         {"type": kind.value, "supported": kind.value in
-         {"USERNAME", "EMAIL", "DOMAIN", "HOSTNAME", "IP_ADDRESS", "IPV6_ADDRESS"},
+         {"USERNAME", "EMAIL", "PHONE", "DOMAIN", "HOSTNAME", "IP_ADDRESS", "IPV6_ADDRESS"},
          "reason": ("READY_ON_REGISTERED_CONTRACT" if kind.value in
-          {"USERNAME", "EMAIL", "DOMAIN", "HOSTNAME", "IP_ADDRESS", "IPV6_ADDRESS"}
+          {"USERNAME", "EMAIL", "PHONE", "DOMAIN", "HOSTNAME", "IP_ADDRESS", "IPV6_ADDRESS"}
           else "NO_TARGET_REPORT_CONTRACT" if kind.value == "ORGANIZATION"
-          else "NO_METERED_ANSWERING_ROUTE" if kind.value == "PHONE"
           else "NO_QUESTION_CONTRACT")}
         for kind in ObservableType])
     monkeypatch.setattr(web_app, "source_preflight", lambda _service, observable_type, _mode=None,
                         _browser=False: {
-        "investigation_mode": ("PERSONAL_FOOTPRINT" if observable_type.value in ("USERNAME", "EMAIL")
+        "investigation_mode": ("PERSONAL_FOOTPRINT" if observable_type.value in ("USERNAME", "EMAIL", "PHONE")
                                else "INFRASTRUCTURE"),
-        "sources": ([{"provider_id": "maigret", "capability": "USERNAME_DISCOVERY",
+        "sources": ([{"provider_id": "coccoc_browser" if observable_type.value == "PHONE" else "maigret",
+                      "capability": "BROWSER_PERSONAL_DISCOVERY" if observable_type.value == "PHONE" else "USERNAME_DISCOVERY",
                       "network_class": "THIRD_PARTY_ONLY", "request_accounting": "SUPPORTED",
-                      "credential_scope": "NOT_REQUIRED"}]
-                    if observable_type.value == "USERNAME" else []),
+                      "credential_scope": "SIGNED_IN_BROWSER_SESSION" if observable_type.value == "PHONE" else "NOT_REQUIRED",
+                      "applicability": "APPLICABLE"}]
+                    if observable_type.value in {"USERNAME", "PHONE"} else []),
         "internet_api_keys_applicable": False,
     })
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(Path(__file__).resolve().parents[2] / "runtime/playwright"))
@@ -97,6 +98,7 @@ def test_dotted_username_and_explicit_marker(offline_page):
 
 @pytest.mark.parametrize(("raw", "kind"), [
     ("reader@example.test", "EMAIL"),
+    ("+84327152369", "PHONE"),
     ("host.internal", "HOSTNAME"),
     ("2001:4860:4860::8888", "IPV6_ADDRESS"),
 ])
@@ -380,7 +382,7 @@ def test_research_controls_light_default_and_empty_result_explanation(offline_pa
 
 def test_unsupported_input_cannot_dispatch_even_through_auto(offline_page):
     page, dispatches, errors = offline_page
-    expect(page.locator('#target-type-select option[value="PHONE"]')).to_be_disabled()
+    expect(page.locator('#target-type-select option[value="PHONE"]')).to_be_enabled()
     expect(page.locator('#target-type-select option[value="URL"]')).to_be_disabled()
     page.locator("#target-input").fill("https://example.com/path")
     expect(page.locator("#type-preview")).to_have_text("URL")
@@ -392,10 +394,24 @@ def test_unsupported_input_cannot_dispatch_even_through_auto(offline_page):
 def test_disabled_inputs_explain_distinct_readiness_gaps(offline_page):
     page, _, errors = offline_page
     status = page.locator("#input-support-status")
-    expect(status).to_contain_text("PHONE: chưa có nguồn tạo bằng chứng")
+    expect(status).not_to_contain_text("PHONE: chưa có nguồn tạo bằng chứng")
     expect(status).to_contain_text("ORGANIZATION: chưa có báo cáo riêng")
     expect(status).to_contain_text("CIDR: chưa có câu hỏi điều tra")
-    assert page.locator('#target-type-select option[value="PHONE"]').get_attribute("title")
+    assert page.locator('#target-type-select option[value="PHONE"]').get_attribute("title") == ""
+    assert not errors
+
+
+def test_phone_primary_action_requests_browser_assisted_workflow(offline_page):
+    page, dispatches, errors = offline_page
+    page.locator("#target-input").fill("+84327152369")
+    page.locator("#target-type-select").select_option("PHONE")
+    expect(page.locator("#type-preview")).to_have_text("PHONE")
+    expect(page.locator("#btn-browser-investigate")).to_be_visible()
+    expect(page.locator("#source-preflight")).to_contain_text("Cốc Cốc")
+    with page.expect_response("**/api/investigate"):
+        page.locator("#btn-start-investigate").click()
+    assert dispatches[-1]["browser_assisted"] is True
+    assert dispatches[-1]["target_type"] == "PHONE"
     assert not errors
 
 

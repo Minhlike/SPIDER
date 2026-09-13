@@ -219,13 +219,17 @@ def test_catalogue_requires_question_metered_route_and_target_report(tmp_path):
     service = create_spider_service(db_path=str(tmp_path / "catalogue.db"), artifacts_dir=str(tmp_path / "runs"))
     inputs = {item["type"]: item for item in input_catalogue(service)}
     assert {kind for kind, item in inputs.items() if item["supported"]} == {
-        "USERNAME", "EMAIL", "DOMAIN", "HOSTNAME", "IP_ADDRESS", "IPV6_ADDRESS"}
+        "USERNAME", "EMAIL", "PHONE", "DOMAIN", "HOSTNAME", "IP_ADDRESS", "IPV6_ADDRESS"}
     assert inputs["IPV6_ADDRESS"]["question_ids"] == ["IP_NETWORK_OPERATOR"]
     assert inputs["IPV6_ADDRESS"]["report_contract"] == "IP_NETWORK_CONTEXT_V1"
     assert inputs["URL"]["reason"] == "NO_QUESTION_CONTRACT"
     assert inputs["CIDR"]["reason"] == "NO_QUESTION_CONTRACT"
     assert inputs["ACCOUNT"]["reason"] == "NO_QUESTION_CONTRACT"
-    assert inputs["PHONE"]["reason"] == "NO_METERED_ANSWERING_ROUTE"
+    assert inputs["PHONE"]["reason"] == "READY_ON_REGISTERED_CONTRACT"
+    assert inputs["PHONE"]["providers"] == ["coccoc_browser"]
+    assert inputs["PHONE"]["answering_routes"] == [{
+        "question_id": "PHONE_PUBLIC_IDENTITY_CANDIDATES",
+        "capability": "BROWSER_PERSONAL_DISCOVERY", "provider": "coccoc_browser"}]
     assert inputs["ORGANIZATION"]["reason"] == "NO_TARGET_REPORT_CONTRACT"
     assert inputs["ASN"]["reason"] == "NO_QUESTION_CONTRACT"
     assert all(item["question_ids"] and item["answering_routes"] and item["report_contract"]

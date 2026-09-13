@@ -194,7 +194,7 @@ async def start_investigation(
     if req.browser_assisted and investigation_mode.value != "PERSONAL_FOOTPRINT":
         raise HTTPException(status_code=422, detail={
             "code": "browser_mode_requires_personal_target",
-            "message": "Cốc Cốc assisted discovery only supports EMAIL or USERNAME targets",
+            "message": "Cốc Cốc assisted discovery only supports EMAIL, PHONE or USERNAME targets",
         })
     if req.browser_assisted and not req.authorized_scope:
         raise HTTPException(status_code=422, detail={

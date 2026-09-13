@@ -1,4 +1,4 @@
-version: "1.0"
+version: "1.1"
 capabilities:
   PUBLIC_PROFILE_LOOKUP:
     description: "Public profile metadata; exact public email evidence or username candidates"
@@ -67,9 +67,9 @@ capabilities:
     output_types: ["ACCOUNT", "URL"]
 
   BROWSER_PERSONAL_DISCOVERY:
-    description: "Explicit, visible browser-assisted discovery using the signed-in Cốc Cốc profile"
+    description: "Explicit, visible Cốc Cốc discovery for public profiles and literal phone mentions"
     default_providers: ["coccoc_browser"]
-    input_types: ["EMAIL", "USERNAME"]
+    input_types: ["EMAIL", "PHONE", "USERNAME"]
     output_types: ["ACCOUNT", "URL"]
 
   INTERNET_INTELLIGENCE:

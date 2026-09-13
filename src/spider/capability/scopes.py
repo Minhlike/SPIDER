@@ -10,7 +10,7 @@ PERSONAL_CAPABILITIES = frozenset({
     "BROWSER_PERSONAL_DISCOVERY",
 })
 
-PERSONAL_INPUTS = frozenset({ObservableType.EMAIL, ObservableType.USERNAME})
+PERSONAL_INPUTS = frozenset({ObservableType.EMAIL, ObservableType.PHONE, ObservableType.USERNAME})
 
 
 def resolve_investigation_mode(
@@ -40,5 +40,7 @@ def capability_allowed(
         if observable_type == ObservableType.USERNAME:
             return capability_name in {"PUBLIC_PROFILE_LOOKUP", "USERNAME_DISCOVERY",
                                        "BROWSER_PERSONAL_DISCOVERY"}
+        if observable_type == ObservableType.PHONE:
+            return capability_name == "BROWSER_PERSONAL_DISCOVERY"
         return False
     return capability_name not in PERSONAL_CAPABILITIES

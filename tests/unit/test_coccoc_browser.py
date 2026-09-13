@@ -9,6 +9,7 @@ from spider.providers.browser.coccoc import (
     CocCocBrowserAdapter, apply_negative_control, classify_direct_candidate, classify_direct_result,
     apply_indexed_profile_candidates, browser_start_reason, candidate_has_username, coccoc_profile,
     coccoc_search_url, DIRECT_USERNAME_SOURCES, SEARCH_ENGINE_NAME, host_matches, indexed_profile_candidates,
+    PHONE_SEARCH_SOURCES, phone_literal_match, phone_search_variants,
     safe_result_url, select_search_candidate,
 )
 
@@ -96,6 +97,27 @@ def test_email_search_candidate_cannot_be_proved_by_query_echo():
         "https://zalo.me/s/public-article"
 
 
+def test_phone_variants_and_literal_match_accept_only_the_same_number():
+    phone = "+84327152369"
+    assert phone_search_variants(phone) == ("+84327152369", "0327152369")
+    assert phone_literal_match("Liên hệ +84 327 152 369", phone)
+    assert phone_literal_match("Hotline 0327.152.369", phone)
+    assert not phone_literal_match("Hotline 0327.152.368", phone)
+    assert not phone_literal_match("ID 99032715236977", phone)
+
+
+def test_phone_search_candidate_requires_link_local_literal_evidence():
+    phone = "+84327152369"
+    unrelated = [{"href": "https://zalo.me/s/public-article", "text": "Public article"}]
+    matching = [{"href": "https://zalo.me/s/public-article",
+                 "text": "Liên hệ 0327 152 369"}]
+    assert select_search_candidate(
+        unrelated, "zalo.me", phone, True, phone_literal_match) is None
+    assert select_search_candidate(
+        matching, "zalo.me", phone, True, phone_literal_match) == \
+        "https://zalo.me/s/public-article"
+
+
 @pytest.mark.asyncio
 async def test_site_search_returns_a_lead_not_a_verified_site():
     class Locator:
@@ -118,6 +140,61 @@ async def test_site_search_returns_a_lead_not_a_verified_site():
     assert row["kind"] == "search_lead"
     assert row["account_candidate"] is False
     assert row["profile_shaped"] is True
+
+
+@pytest.mark.asyncio
+async def test_phone_search_reads_anchor_text_and_keeps_search_lead_unverified():
+    class Locator:
+        async def inner_text(self, **_kwargs):
+            return "SERP"
+
+        async def evaluate_all(self, _script):
+            return [{"href": "https://tinhte.vn/thread/public.1/",
+                     "text": "Liên hệ 0327-152-369"}]
+
+    class Page:
+        async def goto(self, *_args, **_kwargs):
+            return None
+
+        def locator(self, _selector):
+            return Locator()
+
+    row = await CocCocBrowserAdapter()._search_one(
+        Page(), "Tinhte", "tinhte.vn", "+84327152369", 1000,
+        require_text=True, literal_matcher=phone_literal_match)
+    assert row["state"] == "CANDIDATE"
+    assert row["kind"] == "search_lead"
+    assert row["account_candidate"] is False
+
+
+@pytest.mark.asyncio
+async def test_phone_sources_use_at_most_three_parallel_tabs(monkeypatch):
+    adapter = CocCocBrowserAdapter()
+    active = 0
+    peak = 0
+
+    class Page:
+        async def close(self):
+            return None
+
+    class Context:
+        async def new_page(self):
+            return Page()
+
+    async def search(_page, source, _host, _phone, _timeout_ms, **_kwargs):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        return {"kind": "site", "source": source, "state": "UNKNOWN",
+                "reason": "NO_EXACT_SEARCH_RESULT", "url": None}
+
+    monkeypatch.setattr(adapter, "_search_one", search)
+    rows = await adapter._collect_phone_sources(
+        Context(), "+84327152369", lambda: False, 1000, parallel_tabs=3)
+    assert len(rows) == len(PHONE_SEARCH_SOURCES)
+    assert peak == 3
 
 
 def test_negative_control_can_promote_only_a_differential_response():
@@ -254,6 +331,52 @@ def test_search_result_remains_a_url_lead_until_profile_revalidation():
     assert len(observations) == 2
     assert {obs.observable.type for obs in observations} == {ObservableType.URL}
     assert all(obs.raw_data["match_basis"] == "coccoc_search_lead" for obs in observations)
+
+
+def test_phone_search_result_is_url_evidence_without_owner_or_account_claim():
+    phone = "+84327152369"
+    raw = json.dumps({"kind": "search_lead", "source": "Zalo", "state": "CANDIDATE",
+        "reason": "COCCOC_SEARCH_RESULT", "account_candidate": False,
+        "url": "https://zalo.me/s/public-article", "search_engine": "Cốc Cốc",
+        "phone_e164": phone, "evidence_class": "SEARCH_SNIPPET"}).encode()
+    lineage = SourceLineage(case_id="c", run_id="r", task_id="t",
+        provider_id="coccoc_browser", provider_version="local-coccoc",
+        parent_observable_value=phone, parent_observable_type=ObservableType.PHONE)
+
+    observations = CocCocBrowserAdapter().parse(raw, lineage)
+
+    assert len(observations) == 1
+    assert observations[0].observable.type == ObservableType.URL
+    assert observations[0].raw_data["phone_e164"] == phone
+    assert observations[0].raw_data["evidence_class"] == "SEARCH_SNIPPET"
+    assert observations[0].raw_data["identity_verified"] is False
+
+
+@pytest.mark.asyncio
+async def test_phone_execute_uses_vietnam_search_scope_without_verified_identity(monkeypatch):
+    adapter = CocCocBrowserAdapter()
+    phone = "+84327152369"
+
+    async def collect(_target, _options):
+        return [{"kind": "search_lead", "source": "Zalo", "state": "CANDIDATE",
+                 "reason": "COCCOC_SEARCH_RESULT", "account_candidate": False,
+                 "url": "https://zalo.me/s/public-article", "search_engine": "Cốc Cốc",
+                 "phone_e164": phone, "evidence_class": "SEARCH_SNIPPET"}], None
+
+    monkeypatch.setattr(adapter, "_collect", collect)
+    from spider.models.observable import NormalizedObservable
+    target = NormalizedObservable(type=ObservableType.PHONE, value=phone)
+    lineage = SourceLineage(case_id="c", run_id="r", task_id="t",
+        provider_id="coccoc_browser", provider_version="local-coccoc",
+        parent_observable_value=phone, parent_observable_type=ObservableType.PHONE)
+
+    result = await adapter.execute(target, lineage)
+
+    assert result.outcome == "PARTIAL"
+    assert result.metadata["coverage"]["selected"] == len(PHONE_SEARCH_SOURCES)
+    assert result.metadata["coverage"]["search_discovery"]["unverified_leads"] == 1
+    assert len(result.observations) == 1
+    assert result.observations[0].observable.type == ObservableType.URL
 
 
 def test_revalidated_search_lead_creates_an_account_linked_from_its_url():
@@ -401,4 +524,4 @@ async def test_execute_reports_browser_network_failure_without_fake_site_coverag
     assert result.outcome == "FAILED"
     assert result.metadata["coverage"]["checked"] == 0
     assert result.metadata["coverage"]["unprocessed"] == 11
-    assert "Không kết luận về username" in result.error_message
+    assert "Không kết luận về mục tiêu" in result.error_message

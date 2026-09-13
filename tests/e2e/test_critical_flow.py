@@ -114,6 +114,23 @@ def test_email_personal_mode_shows_public_match_without_mail_infrastructure(brow
     assert not errors
 
 
+def test_phone_browser_flow_renders_literal_public_evidence_without_owner_claim(browser_app):
+    page, base_url, errors = browser_app
+    queued = investigate(page, base_url, "+84327152369", "PHONE", "PARTIAL")
+    page.locator("#tab-btn-summary").click()
+    report = page.locator("#type-specific-container")
+    expect(report).to_contain_text("+84327152369")
+    expect(report).to_contain_text("https://zalo.me/s/synthetic-public-mention")
+    expect(report).to_contain_text("SEARCH_SNIPPET")
+    expect(report).not_to_contain_text("Chủ sở hữu")
+    insights = page.request.get(
+        f"{base_url}/api/cases/{queued['case_id']}/insights").json()
+    digest = insights["phone_insights"]["public_candidate_digest"]
+    assert digest["identity_verified"] is False
+    assert digest["candidates"][0]["type"] == "URL"
+    assert not errors
+
+
 @pytest.mark.parametrize("username_sites", [["Present", "Blocked"]], indirect=True)
 def test_partial_source_stays_partial_in_browser(browser_app):
     page, base_url, errors = browser_app

@@ -13,12 +13,50 @@ import uvicorn
 import httpx
 from playwright.sync_api import sync_playwright
 
-from spider.providers.base import ProviderExecutionResult
+from spider.models.enums import NetworkClass, ObservableType, ProviderState
+from spider.models.observable import NormalizedObservable
+from spider.models.observation import Observation
+from spider.providers.base import ProviderExecutionResult, ProviderHealth, BaseProviderAdapter
 from spider.providers.native.dns import NativeDnsAdapter
 from spider.service.service import SpiderService
 from spider.providers.maigret.adapter import MaigretAdapter
 from spider.providers.native.public_profiles import PublicProfilesAdapter
 from benchmarks.public_sites import public_sites
+
+
+class FixturePhoneBrowserAdapter(BaseProviderAdapter):
+    """No-browser deterministic boundary for the real UI/API E2E contract."""
+    request_budget_supported = True
+
+    def provider_id(self): return "coccoc_browser"
+    def version(self): return "fixture"
+    def adapter_version(self): return "fixture"
+    def capabilities(self): return ["BROWSER_PERSONAL_DISCOVERY"]
+    def network_class(self): return NetworkClass.THIRD_PARTY_ONLY
+    def accepts(self): return [ObservableType.PHONE]
+    def produces(self): return [ObservableType.URL]
+    async def health(self): return ProviderHealth(state=ProviderState.READY)
+    def build_command(self, target): return []
+    def normalize(self, raw_item): return NormalizedObservable.model_validate(raw_item)
+    def parse(self, raw_content, lineage): return []
+
+    async def execute(self, target, lineage, **_kwargs):
+        url = "https://zalo.me/s/synthetic-public-mention"
+        observation = Observation(
+            observable=NormalizedObservable(type=ObservableType.URL, value=url),
+            lineage=lineage.model_copy(update={"upstream_source": "fixture_browser",
+                                               "upstream_family": "BROWSER_ASSISTED"}),
+            confidence=0.55,
+            raw_data={"phone_e164": target.canonical_value,
+                      "evidence_class": "SEARCH_SNIPPET", "candidate_url": url,
+                      "source_url": url, "identity_verified": False})
+        return ProviderExecutionResult(
+            raw_content=b"{}", observations=[observation], outcome="PARTIAL", exit_code=1,
+            raw_items_count=1, accepted_count=1,
+            metadata={"coverage": {"selected": 1, "checked": 1, "found": 0,
+                "not_found": 0, "unknown": 1, "unprocessed": 0,
+                "search_discovery": {"engine": "Fixture", "outcome": "COCCOC_SEARCH_RESULT",
+                                     "candidate_profiles": 0, "unverified_leads": 1}}})
 
 
 @pytest.fixture
@@ -62,6 +100,7 @@ def browser_app(tmp_path, monkeypatch, username_sites):
         return httpx.Response(200, json={"login": "fixture-user", "email": "owner@example.org",
             "name": "Synthetic Profile", "bio": "Public biography <script>must not execute</script>"})
     service.provider_manager.register_adapter(PublicProfilesAdapter(httpx.MockTransport(public_profile)))
+    service.provider_manager.register_adapter(FixturePhoneBrowserAdapter())
     monkeypatch.setattr(web_app, "create_spider_service", lambda **kwargs: service)
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))

@@ -175,6 +175,26 @@ def test_public_phone_candidates_need_literal_evidence_and_keep_competition():
     assert public_phone_candidates([], phone)["unknowns"] == ["NO_PUBLIC_PHONE_MENTION"]
 
 
+def test_public_phone_search_snippet_projects_only_an_evidence_url():
+    phone = "+84327152369"
+    rows = [SimpleNamespace(
+        id="search-observation", created_at=datetime(2026, 1, 4, tzinfo=timezone.utc),
+        raw_data_json={"phone_e164": phone, "evidence_class": "SEARCH_SNIPPET",
+            "candidate_url": "https://zalo.me/s/public-article",
+            "source_url": "https://zalo.me/s/public-article"})]
+    result = public_phone_candidates(rows, phone)
+    assert result["candidates"] == [{
+        "type": "URL", "value": "https://zalo.me/s/public-article",
+        "evidence_ids": ["search-observation"], "evidence_classes": ["SEARCH_SNIPPET"],
+        "first_seen": "2026-01-04T00:00:00+00:00",
+        "last_seen": "2026-01-04T00:00:00+00:00",
+        "independence": "NOT_YET_VERIFIED",
+        "rank_reasons": ["best_public_evidence=SEARCH_SNIPPET", "evidence_count=1",
+                         "mirror_mentions=0", "independent_clusters=0", "recency=captured_at"]}]
+    assert result["identity_verified"] is False
+    assert not result["contradictions"]
+
+
 @pytest.mark.asyncio
 async def test_phone_seed_report_keeps_raw_and_canonical_without_owner_claim(tmp_path):
     service = SpiderService(db_path=str(tmp_path / "phone.db"),
