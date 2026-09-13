@@ -41,16 +41,31 @@ class ControlledProvider(FakeProviderA):
         return result
 
 
+class ControlledProviderB(FakeProviderB):
+    def __init__(self):
+        self.calls = 0
+        self.entered, self.release = asyncio.Event(), asyncio.Event()
+        self.release.set()
+
+    async def execute(self, target, lineage, **options):
+        self.calls += 1
+        options["request_ledger"].request(options["execution_budget"], self.provider_id())
+        self.entered.set()
+        await self.release.wait()
+        return await super().execute(target, lineage, **options)
+
+
 @pytest_asyncio.fixture
 async def actions(tmp_path):
     service = SpiderService(str(tmp_path / "actions.db"), str(tmp_path / "runs"))
     adapter = ControlledProvider()
+    adapter_b = ControlledProviderB()
     service.provider_manager.register_adapter(adapter)
-    service.provider_manager.register_adapter(FakeProviderB())
+    service.provider_manager.register_adapter(adapter_b)
     service.capability_registry.register_capability(CapabilityDefinition(name="SUBDOMAIN_DISCOVERY", description="Synthetic",
         input_types=[T.DOMAIN], output_types=[T.HOSTNAME, T.IP_ADDRESS], default_providers=["fake_a"]))
     service.capability_registry.register_capability(CapabilityDefinition(name="INFRASTRUCTURE_DISCOVERY", description="Synthetic pivot",
-        input_types=[T.IP_ADDRESS], output_types=[T.ASN, T.CIDR, T.ORGANIZATION], default_providers=["fake_b"]))
+        input_types=[T.DOMAIN, T.IP_ADDRESS], output_types=[T.ASN, T.CIDR, T.ORGANIZATION], default_providers=["fake_b"]))
     await service.start()
     case = (await service.create_case("Synthetic action test"))["id"]
     a = (await service.add_target(case, "alpha", T.USERNAME, scope_authorized=True))["id"]
@@ -216,6 +231,30 @@ async def test_concurrent_dispatchers_share_idempotent_admission(actions):
     assert first["run_id"] == second["run_id"]
     await settled(service)
     assert adapter.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_independent_graph_actions_run_with_bounded_parallelism(actions):
+    service, server, adapter, request, _, _ = actions
+    adapter_b = service.provider_manager.get_adapter("fake_b")
+    adapter.release.clear()
+    adapter_b.release.clear()
+
+    first = await server.handle_tool_call("run_capability", request)
+    await asyncio.wait_for(adapter.entered.wait(), 3)
+    second_request = {**request, "action_id": str(uuid4()),
+        "capability": "INFRASTRUCTURE_DISCOVERY", "provider_id": "fake_b"}
+    second = await server.handle_tool_call("run_capability", second_request)
+    await asyncio.wait_for(adapter_b.entered.wait(), 3)
+
+    assert first["status"] in {"QUEUED", "RUNNING"}
+    assert second["status"] in {"QUEUED", "RUNNING"}
+    assert adapter.calls == adapter_b.calls == 1
+    adapter.release.set()
+    adapter_b.release.set()
+    await settled(service)
+    assert (await status(server, request))["status"] == "COMPLETED"
+    assert (await status(server, second_request))["status"] == "COMPLETED"
 
 
 @pytest.mark.asyncio

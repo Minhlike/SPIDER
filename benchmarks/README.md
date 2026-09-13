@@ -41,6 +41,16 @@ incremental coverage. The scheduler gate requires paired STATIC/ADAPTIVE rows
 and remains closed below 50 cases. A PASS only authorizes a reviewed rollout;
 the scorer never changes runtime configuration.
 
+The graph/MCP action path has a separate offline concurrency benchmark:
+
+```powershell
+.\runtime\venv\Scripts\python.exe -m benchmarks.action_concurrency
+```
+
+It compares action width 1 and 2 with the same two delayed synthetic providers,
+then checks terminal status, physical request count and the typed-identity hash.
+This measures local scheduling overhead only; it is not an Internet speed claim.
+
 ## Protocol
 
 | Fixture | Ground truth | HTTP behavior |

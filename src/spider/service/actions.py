@@ -65,12 +65,16 @@ def action_key(case_id, action_id):
 
 class InvestigationActions:
     max_pending = 16
+    max_parallel = 2
 
     def __init__(self, service):
         self.service = service
         self._admission = asyncio.Lock()
-        # New actions remain serial until the cross-run transport gate passes.
-        self._execution = asyncio.Lock()
+        # ProviderManager applies the stricter global/provider/origin limits.
+        # This small service-level cap prevents a burst of graph actions from
+        # occupying the whole provider queue while still allowing independent
+        # pivots to overlap.
+        self._execution = asyncio.Semaphore(self.max_parallel)
 
     def _task(self, run_id):
         return next((t for t in self.service.background_tasks
