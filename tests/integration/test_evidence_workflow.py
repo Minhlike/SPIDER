@@ -20,6 +20,10 @@ from spider.providers.maigret.profile_metadata import public_metadata
 def obs(number, profile="https://profile.test/alice", **raw):
     return SimpleNamespace(id=str(number), observable_type="ACCOUNT", namespace="fixture",
         canonical_value="alice@fixture", created_at=datetime(2026, 1, number, tzinfo=timezone.utc),
+        provider_id=raw.pop("provider_id", "fixture"), provider_version="1.0.0",
+        adapter_version="1.0.0", upstream_family="fixture",
+        upstream_source="fixture-profile",
+        configuration_hash=raw.pop("configuration_hash", "a" * 64),
         raw_data_json={"profile_url": profile, **raw})
 
 
@@ -96,6 +100,56 @@ def test_missing_archive_is_not_disappearance_and_archived_is_not_current():
     assert events[0]["view"] == "ARCHIVED"
     assert events[1]["event"] == "NO_ARCHIVED_OBSERVATION"
     assert all(e["event"] != "DISAPPEARED" for e in events)
+
+
+def temporal_contract(*fields):
+    return {"version": "1.0.0", "scope": "public_profile", "complete": True,
+            "fields": list(fields)}
+
+
+def test_temporal_change_requires_same_complete_source_scope():
+    rows = [
+        obs(1, bio="old", temporal_contract=temporal_contract("bio")),
+        obs(2, bio="new", provider_id="other",
+            temporal_contract=temporal_contract("bio")),
+        obs(3, bio="new", configuration_hash="b" * 64,
+            temporal_contract=temporal_contract("bio")),
+        obs(4, bio="new", temporal_contract=temporal_contract("bio")),
+    ]
+
+    events = temporal_events(rows)
+
+    assert [event["event"] for event in events] == ["OBSERVED", "OBSERVED", "OBSERVED", "CHANGED"]
+    assert events[1]["comparison_reason"] == "COMPARABLE_BASELINE_ESTABLISHED"
+    assert events[2]["comparison_reason"] == "COMPARABLE_BASELINE_ESTABLISHED"
+    assert events[3]["baseline_observation_id"] == "1"
+
+
+def test_disappearance_requires_complete_contract_and_positive_baseline():
+    no_contract = temporal_events([obs(
+        1, absence_verified=True, specific_negative_signal="PROFILE_NOT_FOUND")])[0]
+    no_baseline = temporal_events([obs(
+        1, absence_verified=True, specific_negative_signal="PROFILE_NOT_FOUND",
+        temporal_contract=temporal_contract("bio"))])[0]
+    comparable = temporal_events([
+        obs(1, bio="present", temporal_contract=temporal_contract("bio")),
+        obs(2, absence_verified=True, specific_negative_signal="PROFILE_NOT_FOUND",
+            temporal_contract=temporal_contract("bio")),
+    ])
+    vague_signal = temporal_events([
+        obs(1, bio="present", temporal_contract=temporal_contract("bio")),
+        obs(2, absence_verified=True, specific_negative_signal={"status": 404},
+            temporal_contract=temporal_contract("bio")),
+    ])
+
+    assert no_contract["event"] == "UNVERIFIED_ABSENCE_SIGNAL"
+    assert not no_contract["temporal_contract_valid"]
+    assert not no_contract["comparison_performed"]
+    assert no_baseline["event"] == "UNVERIFIED_ABSENCE_SIGNAL"
+    assert comparable[1]["event"] == "DISAPPEARED"
+    assert comparable[1]["comparison_performed"]
+    assert comparable[1]["baseline_observation_id"] == "1"
+    assert vague_signal[1]["event"] == "UNVERIFIED_ABSENCE_SIGNAL"
 
 
 def test_public_phone_candidates_need_literal_evidence_and_keep_competition():

@@ -92,6 +92,7 @@ VOCABULARY = {
     "OBSERVED": ("Đã ghi nhận nội dung", "Content observed"),
     "CHANGED": ("Nội dung khác lần ghi nhận trước", "Content differs from the previous observation"),
     "DISAPPEARED": ("Nguồn có dấu hiệu cụ thể cho thấy nội dung đã mất", "The source provided a specific absence signal"),
+    "UNVERIFIED_ABSENCE_SIGNAL": ("Nguồn có dấu hiệu thiếu nội dung nhưng chưa có lần ghi nhận tương đương để đối chiếu", "The source suggests missing content, but no comparable baseline is available"),
     "NO_ARCHIVED_OBSERVATION": ("Chưa có bản lưu; chưa biết nội dung trước đây ra sao", "No archived observation; earlier content remains unknown"),
     "LOCAL_ONLY": ("Chỉ xử lý dữ liệu trên máy trong phạm vi đã ghi nhận", "Local processing only within the recorded scope"),
     "EGRESS_ATTEMPTED": ("Đã thử gửi thông tin tới nguồn bên ngoài để kiểm tra", "Information was submitted to external sources for checking"),

@@ -1,7 +1,13 @@
 """Conservative analysis of evidence already collected. No network or identity merge."""
 import hashlib
 import json
+import re
 from urllib.parse import urlsplit, urlunsplit
+
+
+TEMPORAL_FIELDS = frozenset({"display_name", "bio", "website", "explicit_links"})
+TEMPORAL_SCOPE = re.compile(r"[A-Za-z0-9_.:-]{1,96}")
+NEGATIVE_SIGNAL = re.compile(r"[A-Z0-9_]{3,96}")
 
 
 def public_url(value):
@@ -126,24 +132,76 @@ def evidence_next_action(hypotheses, proofs):
             "identity_verified": False}
 
 
+def _temporal_comparison_key(obs, raw, view):
+    """Return an auditable comparison key only for an explicit complete snapshot."""
+    contract = raw.get("temporal_contract")
+    required = {"version", "scope", "complete", "fields"}
+    if not isinstance(contract, dict) or set(contract) != required:
+        return None, "MISSING_OR_INVALID_TEMPORAL_CONTRACT"
+    fields = contract.get("fields")
+    if (contract.get("version") != "1.0.0" or contract.get("complete") is not True
+            or not isinstance(contract.get("scope"), str)
+            or TEMPORAL_SCOPE.fullmatch(contract["scope"]) is None
+            or not isinstance(fields, list) or not fields
+            or any(not isinstance(field, str) or field not in TEMPORAL_FIELDS for field in fields)
+            or len(set(fields)) != len(fields)):
+        return None, "MISSING_OR_INVALID_TEMPORAL_CONTRACT"
+    source_identity = tuple(str(getattr(obs, field, "") or "") for field in (
+        "provider_id", "provider_version", "adapter_version", "upstream_family",
+        "upstream_source", "configuration_hash"))
+    if not all(source_identity[:4]) or not source_identity[-1]:
+        return None, "INCOMPLETE_SOURCE_IDENTITY"
+    identity = (str(obs.observable_type), str(getattr(obs, "namespace", "") or ""),
+                str(obs.canonical_value))
+    fields = sorted(fields)
+    key = identity + source_identity + (contract["scope"], tuple(fields), view)
+    fingerprint = json.dumps({field: raw.get(field) for field in fields},
+                             sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return (key, fingerprint), "COMPARABLE_COMPLETE_SNAPSHOT"
+
+
+def _has_specific_negative_signal(raw):
+    signal = raw.get("specific_negative_signal")
+    return (raw.get("absence_verified") is True and isinstance(signal, str)
+            and NEGATIVE_SIGNAL.fullmatch(signal) is not None)
+
+
 def temporal_events(observations):
+    """Describe source-scoped changes without treating provider disagreement as change."""
     grouped, events = {}, []
     for obs in sorted(observations, key=lambda o: (o.created_at, o.id)):
-        key = (obs.observable_type, obs.namespace, obs.canonical_value)
         raw = obs.raw_data_json if isinstance(obs.raw_data_json, dict) else {}
         archived_at = raw.get("archived_at")
+        view = "ARCHIVED" if archived_at else "CURRENT_OBSERVATION"
+        comparison, reason = _temporal_comparison_key(obs, raw, view)
+        baseline_id = None
         if raw.get("archive_capture_missing") is True:
             event = "NO_ARCHIVED_OBSERVATION"
-        elif raw.get("absence_verified") is True and raw.get("specific_negative_signal"):
-            event = "DISAPPEARED"
+            reason = "ARCHIVE_CAPTURE_NOT_AVAILABLE"
+        elif comparison is None:
+            event = ("UNVERIFIED_ABSENCE_SIGNAL" if raw.get("absence_verified") is True
+                     else "OBSERVED")
         else:
+            key, fingerprint = comparison
             prior = grouped.get(key)
-            # Only compare bounded evidence fields, not incidental provider response data.
-            fingerprint = json.dumps({k: raw.get(k) for k in ("display_name", "bio", "website", "explicit_links")}, sort_keys=True)
-            event = "CHANGED" if prior and prior[0] != fingerprint else "OBSERVED"
-            grouped[key] = (fingerprint, obs.id)
+            baseline_id = prior[1] if prior else None
+            if raw.get("absence_verified") is True:
+                if _has_specific_negative_signal(raw) and prior:
+                    event, reason = "DISAPPEARED", "COMPARABLE_VERIFIED_ABSENCE"
+                else:
+                    event, reason = "UNVERIFIED_ABSENCE_SIGNAL", "NO_COMPARABLE_POSITIVE_BASELINE"
+            else:
+                event = "CHANGED" if prior and prior[0] != fingerprint else "OBSERVED"
+                reason = ("COMPARABLE_CONTENT_CHANGED" if event == "CHANGED" else
+                          "COMPARABLE_CONTENT_UNCHANGED" if prior else "COMPARABLE_BASELINE_ESTABLISHED")
+                grouped[key] = (fingerprint, obs.id)
         events.append({"observation_id": obs.id, "event": event, "observed_at": obs.created_at.isoformat(),
-                       "archived_at": archived_at, "view": "ARCHIVED" if archived_at else "CURRENT_OBSERVATION"})
+                       "archived_at": archived_at, "view": view,
+                       "temporal_contract_valid": (comparison is not None
+                                                   and raw.get("archive_capture_missing") is not True),
+                       "comparison_performed": baseline_id is not None,
+                       "comparison_reason": reason,
+                       "baseline_observation_id": baseline_id})
     return events
 
 
