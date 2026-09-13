@@ -48,7 +48,10 @@ class FixturePhoneBrowserAdapter(BaseProviderAdapter):
                                                "upstream_family": "BROWSER_ASSISTED"}),
             confidence=0.55,
             raw_data={"phone_e164": target.canonical_value,
-                      "evidence_class": "SEARCH_SNIPPET", "candidate_url": url,
+                      "evidence_class": "BUSINESS_CONTACT", "candidate_url": url,
+                      "candidate_organization": "Doanh nghiệp Hoa Mai",
+                      "candidate_location_text": "Đà Nẵng",
+                      "literal_basis": "JSONLD_TELEPHONE",
                       "source_url": url, "identity_verified": False})
         return ProviderExecutionResult(
             raw_content=b"{}", observations=[observation], outcome="PARTIAL", exit_code=1,

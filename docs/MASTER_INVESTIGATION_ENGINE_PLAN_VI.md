@@ -333,6 +333,36 @@ redirect revalidation, private/link-local/loopback block, size/content-type cap.
 
 Không gọi thử, SMS/OTP, contact discovery tương tác, breach hoặc suy đoán từ dump.
 
+#### Kế hoạch thực thi chỉ dành cho PHONE
+
+1. **P0 — Chuẩn hóa và giải thích số:** giữ đầu vào gốc, E.164, dạng trong
+   nước, mã quốc gia, loại số tiếng Việt, đầu số di động và nhà mạng được phân
+   bổ đầu số ban đầu. Current carrier luôn UNKNOWN nếu không có nguồn hiện hành.
+2. **P0 — Xác minh lại kết quả tìm kiếm:** một trang trong kết quả Cốc Cốc chỉ
+   là `SEARCH_SNIPPET`. SPIDER phải mở lại trang, ưu tiên kết quả đầu của mỗi
+   website, giới hạn ba tab, kiểm tra đúng literal phone trên nội dung hiển thị
+   hoặc trường `telephone` cùng thực thể JSON-LD. Trang bỏ số, redirect khác
+   nguồn, login wall, CAPTCHA, 403 và 429 không được nâng thành bằng chứng.
+3. **P0 — Trích ứng viên có cấu trúc:** từ trang đã xác minh, trích tối đa các
+   trường NAME, ACCOUNT, ORGANIZATION, URL và LOCATION_TEXT; gắn evidence class,
+   URL nguồn sạch, thời điểm quan sát và ngày do nguồn công bố nếu có. Không lưu
+   body/cookie/query string và không tạo owner/subscriber claim.
+4. **P0 — Báo cáo dễ đọc:** gom khác biệt hoa/thường, xếp theo chất lượng bằng
+   chứng, số website và độ mới; hiện lý do xếp hạng, liên kết mở nguồn và ứng
+   viên cạnh tranh bằng tiếng Việt. Chỉ snippet thì báo cần mở lại nguồn.
+5. **P1 — Temporal/mirror:** cùng nội dung sao chép không tăng tính độc lập;
+   giữ first/last seen và các tên/tổ chức cạnh tranh qua thời gian. Không suy
+   đổi chủ chỉ từ việc nguồn cũ biến mất.
+6. **P1 — Benchmark có kiểm soát:** paired manual/SPIDER trên số doanh nghiệp,
+   số cá nhân tự công khai và hard negative được phép; đo precision ứng viên,
+   false attribution, coverage, request, latency và freshness. Chỉ mở rộng thêm
+   website Việt Nam khi nguồn tạo giá trị mới vượt chi phí bảo trì.
+
+Acceptance của lát P0: search lead không thể tự tạo tên/tổ chức; trang có đúng
+số tạo candidate kèm observation lineage; trang không còn số giữ partial;
+ba tab và số trang mở lại có cap; UI/JSON/báo cáo không có trường chủ sở hữu;
+fixture unit + integration + UI/E2E và full suite đều PASS.
+
 ### 6.6 ORGANIZATION và artifact mới
 
 Organization phải được disambiguate bằng tên pháp lý, namespace registry, official
@@ -596,6 +626,7 @@ Mỗi phase phải ghi:
 | Browser live acceptance repair | **EXPERIMENT RESULT — một case được người dùng cho phép ngày 14/09/2026 (`nitagunawan09`): trước sửa, Cốc Cốc timeout 178–182 giây, Maigret lỗi và báo cáo có 0 observation; sau sửa, lượt hoàn tất PARTIAL với Cốc Cốc 62.1 giây, 8 observation, 7 entity, 7 assertion và 4 hồ sơ công khai cần đối chiếu (Facebook/Instagram/Threads). Scheduler chạy nguồn bounded trước browser; mã 999 của Maigret được ghi nhận là CONNECTION_FAILED; browser giữ phần đã hoàn tất ở deadline 60 giây; receipt UI chỉ hiện 3 nguồn áp dụng. Full suite 543 PASS. Đây là single-case acceptance, không phải holdout hoặc bằng chứng manual parity** |
 | Email/domain/IP reasoning v2 | **EXPERIMENT RESULT — fixture PASS: email public-account và mail-infrastructure questions tách riêng; MX/NS/A/AAAA lấy theo record type thay vì đoán từ hostname; registry/routing/IP-geolocation/datacenter-network roles có observation provenance; origin và physical facility fail-closed UNKNOWN khi không có nguồn chuyên biệt đã audit. Live accuracy chưa kiểm chứng** |
 | Phone/remaining-input reasoning v2 | **EXPERIMENT RESULT — fixture PASS: PHONE giữ đầu vào gốc và E.164, loại số/phân bổ đầu số được gắn nhãn metadata ngoại tuyến, current carrier/assignment vẫn UNKNOWN và không có owner field; public candidates giữ temporal/mirror/contradiction. PHONE đã có route Cốc Cốc metered, chủ động và tối đa 3 tab tới 9 nguồn phổ biến/VN; chỉ URL có literal phone trong link/snippet cục bộ mới thành SEARCH_SNIPPET, luôn identity unverified và không tạo ACCOUNT. Luồng UI/API/SQLite E2E fixture PASS. Input catalogue fail-closed theo đủ question + metered answering route + target report: USERNAME, EMAIL, PHONE, DOMAIN, HOSTNAME, IPv4, IPv6 đang bật; URL, CIDR, ASN, ACCOUNT, ORGANIZATION và artifact nội bộ bị tắt kèm lý do cụ thể. Độ chính xác Cốc Cốc live chưa kiểm chứng** |
+| PHONE public-page verification | **EXPERIMENT RESULT — P0 fixture và UI/E2E PASS ngày 14/09/2026: giữ dạng trong nước, loại số tiếng Việt và đầu số di động; tìm theo dạng hiển thị phổ biến `0xxx xxx xxx`, đọc an toàn search redirect, thử Cốc Cốc/DuckDuckGo/Google trong cùng Cốc Cốc và giới hạn một truy vấn đồng thời trên mỗi search origin. Mỗi website giữ tối đa 3 search lead, mở lại tối đa 12 lead với cap 3 tab; chỉ trang 2xx cùng host có literal phone trong nội dung hiển thị hoặc JSON-LD cùng thực thể mới tạo NAME/ACCOUNT/ORGANIZATION/URL/LOCATION_TEXT candidate. Login/CAPTCHA/403/429/redirect/trang đã bỏ số giữ UNKNOWN hoặc search snippet. Candidate có source/time/freshness, lý do xếp hạng và không owner/subscriber claim. Danh sách 45 số giả lập do người dùng cung cấp được kiểm tra ngoại tuyến: 45/45 hợp lệ, duy nhất, loại MOBILE/VN và chuẩn hóa E.164; không đưa các số lên Internet hoặc lưu vào repo. Full suite 561 PASS; UI/E2E 38 PASS. Live acceptance trên một hotline doanh nghiệp công khai kiểm tra đủ 9 nhóm nguồn nhưng dao động 0–2 search snippet và 0 trang xác minh do search CAPTCHA/nguồn chặn truy cập; SPIDER giữ PARTIAL/UNKNOWN. Đây là bằng chứng fail-closed và giữ kết quả một phần, chưa phải bằng chứng coverage, accuracy hoặc manual parity** |
 | Provider telemetry/adaptive scheduling | **EXPERIMENT RESULT — telemetry fixture PASS theo provider version + adapter version + capability: physical request completeness, p50/p95 latency và request/task, cache, new typed identity, useful evidence/request, decision coverage, error/429/timeout và observed reliability band. Reliability giữ NOT_YET_CALIBRATED khi dưới 20 mẫu hoặc accounting thiếu. Scheduler vẫn STATIC và API ghi DISABLED_PENDING_HOLDOUT vì chưa có consented holdout đủ chuẩn; không dùng observations_count làm useful evidence. Scorer holdout pairwise STATIC/ADAPTIVE chỉ PASS từ 50 case khi time/request không kém và có ít nhất một cải thiện ở cùng correctness, hoặc coverage tăng mà false attribution không tăng; PASS chỉ cho phép rollout được review. Concurrency synthetic 20 lần/width ngày 12/09/2026 giữ correctness 4/4: p50 584.540 ms ở width 1, 390.462 ms ở width 2, 287.025 ms ở width 4; DB queue wait tăng theo width nên mặc định vẫn 2** |
 | Sliding provider window | **EXPERIMENT RESULT — paired local benchmark 20 lần/width ngày 14/09/2026, cùng máy và fixture 4 provider × 80 ms: baseline `b36e3d4` p50 546.512/386.470/270.837 ms ở width 1/2/4; sliding window 430.462/285.465/266.576 ms, giữ correctness 4/4, 4 request và useful evidence/request = 1. Nguồn thứ ba bắt đầu ngay khi một execution slot được trả, dù task trước còn chờ deterministic commit. DB queue peak tăng thành 4 vì task receipt được tạo sớm; mặc định vẫn width 2 và đây chỉ là synthetic scheduling benchmark, không phải live-provider speed claim** |
 | UI/MCP investigation workbench | **EXPERIMENT RESULT — fixture PASS: UI chọn target/question, hiển thị egress/coverage/temporal proof, compact gaps + non-dispatching plan preview; graph node trả scoped transforms và chỉ queue một registry capability sau click với evidence lineage, bounded budget và durable receipt. Hai action khác provider được chạy song song với cap 2; cùng provider, global và origin vẫn chịu giới hạn ProviderManager. Offline action benchmark 10 lần/width ngày 13/09/2026 giữ 2 request, trạng thái COMPLETED và cùng correctness hash: median 355.948 ms ở width 1, 320.956 ms ở width 2; đây chỉ là local scheduling fixture. Hostile Host/Origin cho action mới bị từ chối. MCP hoàn thành hai pivot USERNAME → DOMAIN → IP → ASN/CIDR/ORGANIZATION bằng digest/get_evidence/graph_neighbors/run_capability, không tải raw graph/payload. Synthetic 200-account benchmark (20 mẫu, 12/09/2026): digest 16,078 bytes so với legacy query 47,489 bytes; p50 13.075 ms so với 5.877 ms, p95 30.580 ms so với 8.277 ms. Payload giảm nhưng latency tăng; token count và live Agent workflow chưa kiểm chứng** |

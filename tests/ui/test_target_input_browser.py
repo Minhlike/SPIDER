@@ -420,14 +420,16 @@ def test_phone_report_preserves_seed_and_disclaims_prefix_allocation(offline_pag
     page, _, errors = offline_page
     page.evaluate("""() => renderTypeSpecificInsights({target_type: 'PHONE', entities_count: 1,
       phone_insights: {phone: '+84327152369', original_seed: '0327 152 369',
-        e164: '+84327152369', region: 'VN', number_type: 'MOBILE',
+        e164: '+84327152369', national_format: '0327 152 369', region: 'VN',
+        number_type: 'MOBILE', number_type_label_vi: 'Di động', detected_prefix: '032',
         original_allocation: 'Fixture Telecom', current_carrier: 'UNKNOWN',
         assignment_verified: false, public_candidate_digest: {candidates: [], contradictions: []}}
     })""")
     report = page.locator("#type-specific-container")
     expect(report).to_contain_text("0327 152 369")
     expect(report).to_contain_text("+84327152369")
-    expect(report).to_contain_text("VN · MOBILE")
+    expect(report).to_contain_text("Di động")
+    expect(report).to_contain_text("032")
     expect(report).to_contain_text("không chứng minh nhà mạng hiện tại")
     expect(report).not_to_contain_text("Chủ sở hữu")
     assert not errors

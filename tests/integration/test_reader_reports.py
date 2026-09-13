@@ -50,6 +50,21 @@ def test_markdown_cannot_turn_source_text_into_html_or_links():
     assert '<script>' not in text and '[click](javascript:' not in text
 
 
+def test_phone_report_explains_public_candidate_without_calling_it_an_owner():
+    digest = {"summary": {"named_candidates": 1, "public_links": 2}, "candidates": [{
+        "type": "ORGANIZATION", "value": "Doanh nghiệp Hoa Mai",
+        "evidence_ids": ["evidence-1"], "source_count": 1,
+        "last_seen": "2026-09-14T00:00:00+00:00"}]}
+    report = reader_report(data(target_type="PHONE", observations_count=1,
+        phone_insights={"public_candidate_digest": digest}))
+    text = markdown_report(report)
+    assert "Tìm thấy 1 tên, tài khoản, tổ chức hoặc địa điểm" in report["conclusion"]
+    assert "Các liên hệ công khai có căn cứ" in text
+    assert "Doanh nghiệp Hoa Mai" in text
+    assert "chủ thuê bao đã xác minh" in text
+    assert "Chủ sở hữu" not in text
+
+
 def test_api_ui_exports_share_words_and_latest_run_is_target_scoped(tmp_path, monkeypatch):
     import spider.web.app as web_app
     service = SpiderService(str(tmp_path / "reports.db"), str(tmp_path / "runs"))

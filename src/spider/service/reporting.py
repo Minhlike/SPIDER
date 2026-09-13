@@ -40,6 +40,13 @@ VOCABULARY = {
     "BROWSER_NETWORK_UNAVAILABLE": ("Phiên Cốc Cốc không truy cập được Internet; chưa kiểm tra bất kỳ website nào", "The Cốc Cốc session could not reach the Internet; no websites were checked"),
     "SEARCH_ENGINE_UNAVAILABLE": ("Cốc Cốc Search chưa trả lời; kết quả trên website này chưa xác định", "Cốc Cốc Search did not respond; this website remains unknown"),
     "COCCOC_SEARCH_RESULT": ("Liên kết do Cốc Cốc Search gợi ý; chưa được coi là hồ sơ cho đến khi mở lại và kiểm tra", "Link suggested by Cốc Cốc Search; it is not treated as a profile until reopened and checked"),
+    "SEARCH_RESULT": ("Công cụ tìm kiếm gợi ý một trang có số này; SPIDER sẽ mở lại trang để kiểm tra", "A search engine suggested a page containing this number; SPIDER will reopen it for verification"),
+    "SEARCH_CHALLENGE": ("Công cụ tìm kiếm yêu cầu người dùng xác nhận bảo mật; các nguồn này vẫn chưa có kết luận", "The search engine requires a human security check; these sources remain unresolved"),
+    "PHONE_LITERAL_REVALIDATED": ("Đã mở trang nguồn và thấy đúng số điện thoại xuất hiện công khai", "The source page was opened and the exact phone number was found publicly"),
+    "PHONE_NOT_PRESENT_ON_PAGE": ("Trang tìm kiếm có gợi ý nhưng khi mở nguồn không còn thấy đúng số điện thoại", "Search suggested the page, but the exact phone number was not found when the source was opened"),
+    "PHONE_REVALIDATION_LIMIT": ("Chưa mở trang này vì đã đạt giới hạn số trang cần đối chiếu trong lượt kiểm tra", "This page was not opened because the verification-page limit was reached"),
+    "PHONE_PUBLIC_MENTION_REVALIDATED": ("Đã tìm thấy và kiểm tra lại ít nhất một lần xuất hiện công khai của số điện thoại", "At least one public occurrence of the phone number was found and rechecked"),
+    "RESULT_REDIRECTED_OUTSIDE_SOURCE": ("Liên kết chuyển sang website khác nên chưa dùng làm bằng chứng cho nguồn đã chọn", "The link redirected to another website and is not evidence for the selected source"),
     "SEARCH_LEAD_REVALIDATED": ("Đã mở lại đúng trang hồ sơ và thấy dấu hiệu tài khoản tồn tại; vẫn cần đối chiếu để biết có thuộc đúng người hay không", "The exact profile page was reopened and showed signs of an existing account; ownership still needs corroboration"),
     "SEARCH_LEAD_ONLY": ("Mới có liên kết từ kết quả tìm kiếm; chưa xác minh trang hồ sơ", "Only a search-result link is available; the profile page is not yet verified"),
     "UNSUPPORTED": ("Nguồn này chưa hỗ trợ cách kiểm tra cần thiết", "This source does not support the required check"),
@@ -141,6 +148,10 @@ def reader_report(insights, language="vi"):
     scope = insights.get("scope") or {}
     observed = insights.get("observations_count", 0)
     profiles = len(insights.get("public_profiles") or [])
+    phone_digest = ((insights.get("phone_insights") or {}).get("public_candidate_digest") or {})
+    phone_summary = phone_digest.get("summary") or {}
+    phone_named = int(phone_summary.get("named_candidates") or 0)
+    phone_links = int(phone_summary.get("public_links") or 0)
     unresolved = coverage.get("unknown", 0)
     running = insights.get("status") in {"PENDING", "QUEUED", "RUNNING"}
     if scope.get("selection_required"):
@@ -149,6 +160,14 @@ def reader_report(insights, language="vi"):
         conclusion = choose("Chưa có dữ liệu kiểm tra cho mục tiêu này.", "No check data is available for this target yet.")
     elif running:
         conclusion = choose("Đang kiểm tra. Những dữ liệu đang hiển thị chưa phải kết luận cuối cùng.", "Checks are running. The displayed information is not a final conclusion.")
+    elif insights.get("target_type") == "PHONE" and phone_named:
+        conclusion = choose(
+            f"Tìm thấy {phone_named} tên, tài khoản, tổ chức hoặc địa điểm được nguồn công khai liên hệ với số này. Đây là ứng viên để đối chiếu, không phải chủ thuê bao đã xác minh.",
+            f"{phone_named} names, accounts, organizations or locations are publicly linked to this number. They are review candidates, not verified subscribers.")
+    elif insights.get("target_type") == "PHONE" and phone_links:
+        conclusion = choose(
+            f"Tìm thấy {phone_links} trang công khai có nhắc số này, nhưng chưa trích được danh tính đủ căn cứ.",
+            f"{phone_links} public pages mention this number, but no sufficiently supported identity was extracted.")
     elif profiles:
         conclusion = choose(f"Có {profiles} hồ sơ công khai có dấu hiệu liên quan. Chưa đủ cơ sở xác định cùng một người.", f"{profiles} public profiles may be related. This does not establish that they belong to the same person.")
     elif insights.get("target_type") in {"EMAIL", "USERNAME", "PHONE"} and observed:
@@ -198,6 +217,22 @@ def reader_report(insights, language="vi"):
         sections[2]["items"].append(choose(
             "Loại số và phân bổ đầu số là metadata viễn thông ngoại tuyến; không chứng minh nhà mạng hiện tại, người đang dùng hoặc chủ thuê bao.",
             "Number type and prefix allocation are offline numbering metadata; they do not establish the current carrier, user, or subscriber."))
+        if phone_digest.get("candidates"):
+            type_vi = {"NAME": "Tên", "ACCOUNT": "Tài khoản", "ORGANIZATION": "Tổ chức/doanh nghiệp",
+                       "URL": "Trang công khai", "LOCATION_TEXT": "Địa điểm do nguồn ghi"}
+            type_en = {"NAME": "Name", "ACCOUNT": "Account", "ORGANIZATION": "Organization/business",
+                       "URL": "Public page", "LOCATION_TEXT": "Source-stated location"}
+            items = []
+            for candidate in phone_digest["candidates"][:20]:
+                candidate_type = candidate.get("type", "UNKNOWN")
+                title = (type_vi if vi else type_en).get(candidate_type, candidate_type)
+                sources = candidate.get("source_count", 0)
+                items.append(choose(
+                    f"{title}: {candidate.get('value', '')}. Có {len(candidate.get('evidence_ids') or [])} bằng chứng trên {sources} website; ghi nhận gần nhất {candidate.get('last_seen', 'chưa rõ')}.",
+                    f"{title}: {candidate.get('value', '')}. {len(candidate.get('evidence_ids') or [])} evidence records across {sources} websites; last observed {candidate.get('last_seen', 'unknown')}.") )
+            sections.insert(1, {"key": "phone_candidates",
+                "title": choose("Các liên hệ công khai có căn cứ", "Supported public links"),
+                "items": items})
     return {"version": "1", "language": language,
             "title": choose("Kết quả và cách hiểu", "Results and how to read them"),
             "conclusion": conclusion, "sections": sections,

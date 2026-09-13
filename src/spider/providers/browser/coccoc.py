@@ -5,8 +5,9 @@ import re
 import secrets
 import time
 import hashlib
+from collections import Counter
 from pathlib import Path
-from urllib.parse import quote_plus, unquote, urlsplit, urlunsplit
+from urllib.parse import parse_qs, quote_plus, unquote, urlsplit, urlunsplit
 
 from spider.models.budget import RequestBudgetExceeded
 from spider.models.enums import NetworkClass, ObservableType, ProviderState
@@ -15,6 +16,7 @@ from spider.models.observation import Observation
 from spider.models.base import utc_now
 from spider.providers.base import BaseProviderAdapter, ProviderExecutionResult, ProviderHealth
 from spider.providers.maigret.profile_metadata import public_metadata
+from spider.providers.browser.phone_page import extract_phone_page_evidence
 
 
 DIRECT_USERNAME_SOURCES = (
@@ -37,6 +39,11 @@ PHONE_SEARCH_SOURCES = (
 )
 SEARCH_ENGINE_NAME = "Cốc Cốc Search"
 SEARCH_ENGINE_URL = "https://coccoc.com/search?query={query}"
+PHONE_SEARCH_ENGINES = (
+    (SEARCH_ENGINE_NAME, SEARCH_ENGINE_URL),
+    ("DuckDuckGo Search", "https://html.duckduckgo.com/html/?q={query}"),
+    ("Google Search", "https://www.google.com/search?q={query}"),
+)
 SEARCH_FALLBACK_SOURCES = frozenset({"Instagram", "Threads", "TikTok"})
 ALLOWED_RESULT_HOSTS = frozenset(
     [host for _, host, _ in DIRECT_USERNAME_SOURCES]
@@ -150,6 +157,31 @@ def safe_result_url(url):
         return None
 
 
+def normalize_search_result_url(url):
+    """Unwrap well-known search redirects, then apply the regular URL safety rules."""
+    safe = safe_result_url(url)
+    if not safe:
+        return None
+    parsed = urlsplit(str(url))
+    host = (parsed.hostname or "").casefold()
+    redirect_keys = ()
+    if host == "duckduckgo.com" or host.endswith(".duckduckgo.com"):
+        redirect_keys = ("uddg",)
+    elif host == "google.com" or host.endswith(".google.com"):
+        redirect_keys = ("q", "url") if parsed.path == "/url" else ()
+    elif host == "coccoc.com" or host.endswith(".coccoc.com"):
+        redirect_keys = ("url", "u", "target")
+    if redirect_keys:
+        params = parse_qs(parsed.query, keep_blank_values=False)
+        for key in redirect_keys:
+            values = params.get(key, ())
+            if values:
+                target = safe_result_url(values[0])
+                if target:
+                    return target
+    return safe
+
+
 def coccoc_search_url(query: str) -> str:
     """Build the public Cốc Cốc Search URL without retaining the query in evidence."""
     return SEARCH_ENGINE_URL.format(query=quote_plus(query))
@@ -196,8 +228,16 @@ def indexed_profile_candidates(links, username: str) -> dict[str, str]:
 def phone_search_variants(e164):
     digits = re.sub(r"\D", "", str(e164))
     if digits.startswith("84") and len(digits) == 11:
-        return (f"+{digits}", "0" + digits[2:])
+        subscriber = digits[2:]
+        return (f"+{digits}", "0" + subscriber,
+                f"+84 {subscriber[:3]} {subscriber[3:6]} {subscriber[6:]}",
+                f"0{subscriber[:3]} {subscriber[3:6]} {subscriber[6:]}")
     return (f"+{digits}" if str(e164).startswith("+") else digits,)
+
+
+def phone_search_query(e164):
+    """Use the common Vietnamese display form; long OR expressions degrade search quality."""
+    return f'"{phone_search_variants(e164)[-1]}"'
 
 
 def phone_literal_match(text, e164):
@@ -208,22 +248,52 @@ def phone_literal_match(text, e164):
     return False
 
 
-def select_search_candidate(links, host: str, identifier: str, require_text=False,
-                            literal_matcher=None):
-    """Select a host result using link-local text, never the SERP query echo."""
+def select_search_candidates(links, host: str, identifier: str, require_text=False,
+                             literal_matcher=None, limit=3):
+    """Select unique host results using link-local text, never the SERP query echo."""
     identifier_key = identifier.casefold()
+    candidates = []
     for item in links:
         href = item.get("href") if isinstance(item, dict) else item
         anchor_text = item.get("text", "") if isinstance(item, dict) else ""
-        safe = safe_result_url(href)
+        safe = normalize_search_result_url(href)
         if not safe or not host_matches(safe, host):
             continue
         text = f"{unquote(safe)}\n{anchor_text}"
         matched = literal_matcher(text, identifier) if literal_matcher else identifier_key in text.casefold()
         if require_text and not matched:
             continue
-        return safe
-    return None
+        if safe not in candidates:
+            candidates.append(safe)
+        if len(candidates) >= max(1, min(int(limit), 10)):
+            break
+    return candidates
+
+
+def select_search_candidate(links, host: str, identifier: str, require_text=False,
+                            literal_matcher=None):
+    candidates = select_search_candidates(
+        links, host, identifier, require_text, literal_matcher, limit=1)
+    return candidates[0] if candidates else None
+
+
+def phone_search_snippet_fields(text, phone, source):
+    """Extract a cautious directory/business label from one exact-result snippet."""
+    if source != "Trang Vàng Việt Nam" or not phone_literal_match(text, phone):
+        return {}
+    lines = [" ".join(line.split())[:240] for line in str(text).splitlines()]
+    company_markers = ("công ty", "doanh nghiệp", "cửa hàng", "hộ kinh doanh",
+                       "trung tâm", "bệnh viện", "phòng khám", "nhà hàng", "khách sạn")
+    organization = next((line for line in lines
+                         if 3 <= len(line) <= 200
+                         and any(marker in line.casefold() for marker in company_markers)
+                         and not phone_literal_match(line, phone)
+                         and not line.casefold().startswith("site:")), None)
+    result = {"candidate_organization": organization} if organization else {}
+    match = re.search(r"(?<!\d)([0-3]?\d[./-][01]?\d[./-](?:19|20)?\d{2})(?!\d)", str(text))
+    if match:
+        result["source_date"] = match.group(1)
+    return result
 
 
 def apply_indexed_profile_candidates(rows, candidates, search_outcome):
@@ -308,7 +378,7 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
 
     def provider_id(self): return "coccoc_browser"
     def version(self): return "local-coccoc"
-    def adapter_version(self): return "1.4.0"
+    def adapter_version(self): return "1.5.0"
     def capabilities(self): return ["BROWSER_PERSONAL_DISCOVERY"]
     def network_class(self): return NetworkClass.THIRD_PARTY_ONLY
     def accepts(self): return [ObservableType.EMAIL, ObservableType.PHONE, ObservableType.USERNAME]
@@ -446,9 +516,17 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                         rows.extend(direct_rows)
                 elif target.type == ObservableType.PHONE:
                     parallel_tabs = min(3, max(1, int(options.get("browser_parallel_tabs", 3))))
-                    rows.extend(await self._collect_phone_sources(
+                    phone_rows = await self._collect_phone_sources(
                         context, target.canonical_value, lambda: exhausted,
-                        timeout_ms, parallel_tabs, deadline=workflow_deadline))
+                        timeout_ms, parallel_tabs, deadline=workflow_deadline)
+                    if not exhausted and time.monotonic() < workflow_deadline:
+                        phone_rows = await self._revalidate_phone_leads(
+                            context, target.canonical_value, phone_rows,
+                            lambda: exhausted, timeout_ms, parallel_tabs,
+                            deadline=workflow_deadline,
+                            max_leads=min(30, max(1, int(options.get(
+                                "phone_revalidate_limit", 12)))))
+                    rows.extend(phone_rows)
                 else:
                     sources = tuple((source, host) for source, host, _ in DIRECT_USERNAME_SOURCES) + SEARCH_SOURCES
                     parallel_tabs = min(3, max(1, int(options.get("browser_parallel_tabs", 3))))
@@ -609,31 +687,200 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
 
     async def _collect_phone_sources(self, context, phone, is_exhausted, timeout_ms,
                                      parallel_tabs=3, deadline=None):
-        variants = phone_search_variants(phone)
-        query_identifier = " OR ".join(f'"{value}"' for value in variants)
+        query_identifier = phone_search_query(phone)
         semaphore = asyncio.Semaphore(min(3, max(1, int(parallel_tabs))))
+        engine_limits = {name: asyncio.Semaphore(1) for name, _url in PHONE_SEARCH_ENGINES}
 
         async def search(definition):
             source, host = definition
             async with semaphore:
                 if is_exhausted():
-                    return {"kind": "site", "source": source, "state": "UNPROCESSED",
-                            "reason": "REQUEST_LIMIT", "url": None}
+                    return [{"kind": "site", "source": source, "state": "UNPROCESSED",
+                             "reason": "REQUEST_LIMIT", "url": None}]
                 page = await context.new_page()
                 try:
-                    row = await self._search_one(
-                        page, source, host, phone, timeout_ms, require_text=True,
-                        query_identifier=query_identifier, literal_matcher=phone_literal_match)
+                    rows = await self._search_phone_index(
+                        page, source, host, phone, query_identifier, timeout_ms,
+                        engine_limits=engine_limits)
                 finally:
                     await close_page_bounded(page)
-                if row.get("state") == "CANDIDATE":
-                    row.update(phone_e164=phone, evidence_class="SEARCH_SNIPPET")
+                return rows
+
+        grouped = await gather_rows_until(
+            PHONE_SEARCH_SOURCES, search, deadline,
+            lambda item: [{"kind": "site", "source": item[0], "state": "UNPROCESSED",
+                           "reason": "WORKFLOW_TIMEOUT", "url": None}])
+        return [row for group in grouped for row in group]
+
+    async def _search_phone_index(self, page, source, host, phone, query_identifier,
+                                  timeout_ms, max_results=3, engine_limits=None):
+        query = f"site:{host} {query_identifier}"
+        attempts, content_hash = [], hashlib.sha256(b"").hexdigest()
+        for engine_name, template in PHONE_SEARCH_ENGINES:
+            async def read_page():
+                await page.goto(template.format(query=quote_plus(query)),
+                                wait_until="domcontentloaded", timeout=timeout_ms)
+                await page.wait_for_timeout(500)
+                text = (await page.locator("body").inner_text(timeout=2000)).casefold()
+                anchors = await page.locator("a[href]").evaluate_all(
+                    "els => els.slice(0, 500).map(a => {"
+                    "const parts=[]; let node=a;"
+                    "for(let i=0;i<4 && node;i++,node=node.parentElement){"
+                    "if(node.tagName==='BODY'||node.tagName==='HTML')break;"
+                    "const value=(node.innerText||node.textContent||'').trim();"
+                    "if(value && value.length<=1600)parts.push(value);"
+                    "} return {href:a.href,text:parts.join('\\n').slice(0,2400)};})")
+                return text, anchors
+
+            try:
+                limit = engine_limits.get(engine_name) if engine_limits else None
+                if limit:
+                    async with limit:
+                        page_text, links = await read_page()
+                else:
+                    page_text, links = await read_page()
+            except Exception:
+                attempts.append({"engine": engine_name, "outcome": "NETWORK_ERROR"})
+                continue
+            content_hash = hashlib.sha256(page_text.encode("utf-8", "replace")).hexdigest()
+            if any(marker in page_text for marker in CHALLENGE_MARKERS):
+                attempts.append({"engine": engine_name, "outcome": "HUMAN_REQUIRED"})
+                continue
+            if any(marker in page_text for marker in RATE_LIMIT_MARKERS):
+                attempts.append({"engine": engine_name, "outcome": "RATE_LIMITED"})
+                continue
+            candidates = select_search_candidates(
+                links, host, phone, require_text=True,
+                literal_matcher=phone_literal_match, limit=max_results)
+            attempts.append({"engine": engine_name,
+                             "outcome": "CANDIDATE" if candidates else "NO_EXACT_SEARCH_RESULT"})
+            if candidates:
+                rows = []
+                for index, candidate in enumerate(candidates, start=1):
+                    snippet_text = next((item.get("text", "") for item in links
+                                         if isinstance(item, dict)
+                                         and normalize_search_result_url(item.get("href")) == candidate
+                                         and phone_literal_match(item.get("text", ""), phone)), "")
+                    rows.append({"kind": "search_lead", "source": source,
+                                 "state": "CANDIDATE", "reason": "SEARCH_RESULT",
+                                 "url": candidate, "account_candidate": False,
+                                 "profile_shaped": False, "search_engine": engine_name,
+                                 "search_attempts": attempts, "content_sha256": content_hash,
+                                 "phone_e164": phone, "evidence_class": "SEARCH_SNIPPET",
+                                 "result_rank": index,
+                                 **phone_search_snippet_fields(snippet_text, phone, source)})
+                return rows
+        outcomes = {attempt["outcome"] for attempt in attempts}
+        if "HUMAN_REQUIRED" in outcomes:
+            state, reason = "BLOCKED", "SEARCH_CHALLENGE"
+        elif "RATE_LIMITED" in outcomes:
+            state, reason = "RATE_LIMITED", "RATE_LIMIT"
+        elif attempts and outcomes <= {"NO_EXACT_SEARCH_RESULT"}:
+            state, reason = "UNKNOWN", "NO_EXACT_SEARCH_RESULT"
+        else:
+            state, reason = "UNKNOWN", "SEARCH_ENGINE_UNAVAILABLE"
+        return [{"kind": "site", "source": source, "state": state,
+                 "reason": reason, "url": None, "search_engine": "MULTI_ENGINE",
+                 "search_attempts": attempts, "content_sha256": content_hash}]
+
+    async def _inspect_phone_lead(self, context, lead, phone, timeout_ms):
+        """Open a search lead and require the same phone on the public page."""
+        requested_url = safe_result_url(lead.get("url"))
+        expected_host = dict((source, host) for source, host in PHONE_SEARCH_SOURCES).get(
+            lead.get("source"))
+        if not requested_url or not expected_host:
+            return {"state": "UNKNOWN", "reason": "INVALID_SEARCH_LEAD"}
+        page, status, title, body, metadata_html = None, None, "", "", ""
+        try:
+            page = await context.new_page()
+            try:
+                response = await page.goto(requested_url, wait_until="domcontentloaded",
+                                           timeout=timeout_ms)
+            except Exception as exc:
+                return {"state": "NETWORK_ERROR",
+                        "reason": "NAVIGATION_TIMEOUT" if exc.__class__.__name__ == "TimeoutError"
+                                  else "NAVIGATION_ERROR"}
+            status = response.status if response else None
+            try:
+                await page.wait_for_timeout(800)
+                title = await page.title()
+                body = await page.locator("body").inner_text(timeout=3000)
+            except Exception:
+                pass
+            final_url = safe_result_url(page.url)
+            if not final_url or not host_matches(final_url, expected_host):
+                return {"state": "UNKNOWN", "reason": "RESULT_REDIRECTED_OUTSIDE_SOURCE"}
+            try:
+                metadata_html = await page.locator(
+                    'title, meta[property="og:title"], meta[property="og:description"], '
+                    'meta[name="description"], meta[name="twitter:title"], '
+                    'meta[name="twitter:description"], script[type="application/ld+json"]'
+                ).evaluate_all(
+                    "els => els.slice(0, 60).map(el => (el.outerHTML || '').slice(0, 32768)).join('').slice(0, 524288)"
+                )
+            except Exception:
+                metadata_html = ""
+            page_text = f"{title}\n{body[:100000]}".casefold()
+            if status == 429 or any(marker in page_text for marker in RATE_LIMIT_MARKERS):
+                return {"state": "RATE_LIMITED", "reason": "RATE_LIMIT"}
+            if status in (401, 403) or any(marker in page_text for marker in CHALLENGE_MARKERS):
+                return {"state": "BLOCKED", "reason": "CHALLENGE_OR_ACCESS_DENIED"}
+            login_surface = f"{title}\n{urlsplit(final_url).path}".casefold()
+            if any(marker in login_surface for marker in LOGIN_MARKERS):
+                return {"state": "LOGIN_REQUIRED", "reason": "LOGIN_WALL"}
+            if status is None or not 200 <= status < 400:
+                return {"state": "UNKNOWN", "reason": "NON_SUCCESS_RESPONSE"}
+            evidence = extract_phone_page_evidence(
+                metadata_html, body, phone, final_url, lead.get("source"), phone_literal_match)
+            if not evidence:
+                return {"state": "UNKNOWN", "reason": "PHONE_NOT_PRESENT_ON_PAGE"}
+            return {"kind": "site", "source": lead.get("source"), "state": "CANDIDATE",
+                    "reason": "PHONE_LITERAL_REVALIDATED", "url": final_url,
+                    "http_status": status,
+                    "search_engine": lead.get("search_engine") or SEARCH_ENGINE_NAME,
+                    "search_lead_url": requested_url,
+                    "content_sha256": hashlib.sha256(
+                        f"{title}\n{body}".encode("utf-8", "replace")).hexdigest(),
+                    **evidence}
+        except Exception:
+            return {"state": "UNKNOWN", "reason": "BROWSER_ERROR"}
+        finally:
+            await close_page_bounded(page)
+
+    async def _revalidate_phone_leads(self, context, phone, rows, is_exhausted,
+                                      timeout_ms, parallel_tabs=3, deadline=None,
+                                      max_leads=12):
+        """Upgrade indexed phone mentions only after reading the linked page."""
+        semaphore = asyncio.Semaphore(min(3, max(1, int(parallel_tabs))))
+        source_order = {source: index for index, (source, _host) in enumerate(PHONE_SEARCH_SOURCES)}
+        ranked_leads = sorted(
+            (row for row in rows if row.get("kind") == "search_lead"),
+            key=lambda row: (int(row.get("result_rank") or 1),
+                             source_order.get(row.get("source"), len(source_order))))
+        admitted = {id(row) for row in ranked_leads[:max(1, min(int(max_leads), 30))]}
+
+        async def inspect(row):
+            if row.get("kind") != "search_lead":
                 return row
+            lead = dict(row)
+            if id(row) not in admitted:
+                return dict(lead, revalidation_state="UNPROCESSED",
+                            revalidation_reason="PHONE_REVALIDATION_LIMIT")
+            if is_exhausted():
+                return dict(lead, revalidation_state="UNPROCESSED",
+                            revalidation_reason="REQUEST_LIMIT")
+            async with semaphore:
+                checked = await self._inspect_phone_lead(
+                    context, lead, phone, timeout_ms)
+            if checked.get("state") == "CANDIDATE":
+                return checked
+            return dict(lead, revalidation_state=checked.get("state", "UNKNOWN"),
+                        revalidation_reason=checked.get("reason", "NOT_YET_VERIFIED"))
 
         return await gather_rows_until(
-            PHONE_SEARCH_SOURCES, search, deadline,
-            lambda item: {"kind": "site", "source": item[0], "state": "UNPROCESSED",
-                          "reason": "WORKFLOW_TIMEOUT", "url": None})
+            rows, inspect, deadline,
+            lambda row: dict(row, revalidation_state="UNPROCESSED",
+                             revalidation_reason="WORKFLOW_TIMEOUT"))
 
     async def _search_direct_fallbacks(self, page, username, direct_rows, is_exhausted, timeout_ms):
         """Recover index-visible social profiles when a direct platform page is unreadable.
@@ -734,8 +981,9 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
         """Trace only SPIDER-owned browser work; no cookies, query string or page text."""
         timestamp = utc_now().isoformat()
         return [{"action_id": (action_id or lineage.configuration_hash)[:128], "parent_observation_id": parent_observation_id,
-                "step": "REVALIDATE_PROFILE" if row.get("reason") == "SEARCH_LEAD_REVALIDATED"
-                         else "SEARCH_INDEX" if row.get("reason") == "COCCOC_SEARCH_RESULT"
+                "step": "VERIFY_PHONE_MENTION" if row.get("reason") == "PHONE_LITERAL_REVALIDATED"
+                         else "REVALIDATE_PROFILE" if row.get("reason") == "SEARCH_LEAD_REVALIDATED"
+                         else "SEARCH_INDEX" if row.get("reason") in {"COCCOC_SEARCH_RESULT", "SEARCH_RESULT"}
                          else "READ_PROFILE" if row.get("source") in {name for name, _, _ in DIRECT_USERNAME_SOURCES}
                          else "SEARCH_INDEX", "source": row.get("source", "unknown")[:64],
                  "sanitized_url": safe_result_url(row.get("url")) if row.get("url") else None,
@@ -761,16 +1009,46 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                     len(DIRECT_USERNAME_SOURCES) + len(SEARCH_SOURCES))
         candidates = sum(row.get("state") == "CANDIDATE" and row.get("kind") != "search_lead"
                          for row in rows)
-        not_found = sum(row.get("state") == "NOT_FOUND" for row in site_rows)
-        checked = min(selected, len(site_rows) + len({row.get("source") for row in search_only_leads}))
-        unprocessed = sum(row.get("state") == "UNPROCESSED" for row in site_rows) + max(0, selected - checked)
-        undecided = len(site_rows) - sum(row.get("state") == "CANDIDATE" for row in site_rows) \
-            - not_found - sum(row.get("state") == "UNPROCESSED" for row in site_rows) \
-            + len(search_only_leads)
+        if phone_search:
+            by_source = {source: [row for row in rows if row.get("source") == source]
+                         for source, _host in PHONE_SEARCH_SOURCES}
+            found_sources = {source for source, source_rows in by_source.items()
+                             if any(row.get("state") == "CANDIDATE"
+                                    and row.get("kind") != "search_lead" for row in source_rows)}
+            unprocessed_sources = {source for source, source_rows in by_source.items()
+                                   if not source_rows or all(row.get("state") == "UNPROCESSED"
+                                                             for row in source_rows)}
+            checked = selected - len(unprocessed_sources)
+            unprocessed = len(unprocessed_sources)
+            not_found = 0  # Search silence cannot prove that a public mention is absent.
+            undecided = checked - len(found_sources)
+            priority_sites = {}
+            for source, source_rows in by_source.items():
+                verified = next((row for row in source_rows
+                                 if row.get("reason") == "PHONE_LITERAL_REVALIDATED"), None)
+                lead = next((row for row in source_rows if row.get("kind") == "search_lead"), None)
+                representative = verified or lead or (source_rows[0] if source_rows else {})
+                priority_sites[source] = {
+                    "outcome": representative.get("state", "UNPROCESSED"),
+                    "reason": representative.get("reason", "WORKFLOW_TIMEOUT"),
+                    **({"revalidation_reason": representative["revalidation_reason"]}
+                       if representative.get("revalidation_reason") else {})}
+        else:
+            not_found = sum(row.get("state") == "NOT_FOUND" for row in site_rows)
+            checked = min(selected, len(site_rows) + len({row.get("source") for row in search_only_leads}))
+            unprocessed = sum(row.get("state") == "UNPROCESSED" for row in site_rows) + max(0, selected - checked)
+            undecided = len(site_rows) - sum(row.get("state") == "CANDIDATE" for row in site_rows) \
+                - not_found - sum(row.get("state") == "UNPROCESSED" for row in site_rows) \
+                + len(search_only_leads)
+            priority_sites = {row.get("source", "unknown"): {
+                "outcome": row.get("state", "UNKNOWN"),
+                "reason": row.get("reason", "NOT_YET_VERIFIED")
+            } for row in site_rows + search_only_leads}
         controls = [row.get("control_state") for row in site_rows if "control_state" in row]
         fallback_outcomes = [row.get("search_fallback_outcome") for row in site_rows
                              if row.get("source") in SEARCH_FALLBACK_SOURCES]
-        fallback_outcome = ("COCCOC_SEARCH_RESULT" if phone_search and search_only_leads
+        fallback_outcome = ("PHONE_PUBLIC_MENTION_REVALIDATED" if phone_search and candidates
+                            else "SEARCH_RESULT" if phone_search and search_only_leads
                             else "NO_EXACT_SEARCH_RESULT" if phone_search and reason is None
                             else "SEARCH_LEAD_REVALIDATED" if any(
                                 row.get("reason") == "SEARCH_LEAD_REVALIDATED"
@@ -790,17 +1068,23 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                                                  for row in rows),
                     "parallel_tabs": min(3, max(1, int(kwargs.get("browser_parallel_tabs", 3)))),
                     "source_scope": "VN_COMMON_BROWSER",
-                    "search_discovery": {"engine": SEARCH_ENGINE_NAME, "outcome": fallback_outcome,
+                    "search_discovery": {"engine": "Cốc Cốc + DuckDuckGo + Google Search"
+                                         if phone_search else SEARCH_ENGINE_NAME,
+                                         "outcome": fallback_outcome,
                                          "candidate_profiles": sum(row.get("reason") == "SEARCH_LEAD_REVALIDATED"
                                                                    for row in rows),
-                                         "unverified_leads": sum(row.get("reason") == "COCCOC_SEARCH_RESULT"
-                                                                 for row in rows)},
-                    "priority_sites": {row.get("source", "unknown"): {
-                        "outcome": row.get("state", "UNKNOWN"),
-                        "reason": row.get("reason", "NOT_YET_VERIFIED")
-                    } for row in site_rows + search_only_leads}}
+                                         "unverified_leads": sum(
+                                             row.get("kind") == "search_lead" for row in rows),
+                                         **({"revalidation_reasons": dict(Counter(
+                                             row.get("revalidation_reason") for row in rows
+                                             if row.get("revalidation_reason")))
+                                             } if phone_search else {}),
+                                         **({"verified_phone_mentions": sum(
+                                             row.get("reason") == "PHONE_LITERAL_REVALIDATED"
+                                             for row in rows)} if phone_search else {})},
+                    "priority_sites": priority_sites}
         fatal_browser_failure = reason in FATAL_BROWSER_REASONS
-        complete = reason is None and len(site_rows) == selected and undecided == 0
+        complete = reason is None and checked == selected and undecided == 0
         if reason is None and not complete:
             reason = "UNRESOLVED_SOURCES"
         errors = {"PROFILE_IN_USE": "Cốc Cốc đang mở với profile này; hãy đóng Cốc Cốc rồi chạy lại để SPIDER mở các tab điều tra.",
@@ -836,24 +1120,38 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 continue
             if not any(host_matches(url, host) for host in ALLOWED_RESULT_HOSTS):
                 continue
-            is_search_lead = row.get("reason") == "COCCOC_SEARCH_RESULT"
+            is_search_lead = row.get("reason") in {"COCCOC_SEARCH_RESULT", "SEARCH_RESULT"}
             is_revalidated = row.get("reason") == "SEARCH_LEAD_REVALIDATED"
             evidence = {"platform": row.get("source"), "profile_url": url,
-                        "match_basis": "coccoc_search_lead_revalidated" if is_revalidated
-                                       else "coccoc_search_lead" if is_search_lead
+                        "match_basis": "public_phone_page_revalidated"
+                                       if row.get("reason") == "PHONE_LITERAL_REVALIDATED"
+                                       else "coccoc_search_lead_revalidated" if is_revalidated
+                                       else "coccoc_search_lead"
+                                       if row.get("reason") == "COCCOC_SEARCH_RESULT"
+                                       else "browser_search_lead" if is_search_lead
                                        else "signed_in_browser_candidate",
                         "identity_verified": False,
-                        "verification_state": "PROFILE_ROUTE_REVALIDATED_IDENTITY_UNVERIFIED"
+                        "verification_state": "PHONE_LITERAL_REVALIDATED_IDENTITY_UNVERIFIED"
+                                              if row.get("reason") == "PHONE_LITERAL_REVALIDATED" else
+                                              "PROFILE_ROUTE_REVALIDATED_IDENTITY_UNVERIFIED"
                                               if is_revalidated else "SEARCH_LEAD_ONLY"
                                               if is_search_lead else "CANDIDATE_REVIEW_REQUIRED",
                         "browser": "Cốc Cốc",
-                        "search_engine": row.get("search_engine") if is_search_lead or is_revalidated else None}
+                        "search_engine": row.get("search_engine") if is_search_lead or is_revalidated
+                                         or row.get("reason") == "PHONE_LITERAL_REVALIDATED" else None}
             if (lineage.parent_observable_type == ObservableType.PHONE
-                    and row.get("evidence_class") == "SEARCH_SNIPPET"
+                    and row.get("evidence_class") in {
+                        "PUBLIC_SELF_PUBLISHED", "THIRD_PARTY_MENTION", "BUSINESS_CONTACT",
+                        "DIRECTORY_ENTRY", "SEARCH_SNIPPET", "USER_CONFIRMED"}
                     and row.get("phone_e164") == lineage.parent_observable_value):
                 evidence.update(phone_e164=row["phone_e164"],
-                                evidence_class="SEARCH_SNIPPET",
+                                evidence_class=row["evidence_class"],
                                 source_url=url, candidate_url=url)
+                for field in ("candidate_name", "candidate_account",
+                              "candidate_organization", "candidate_location_text",
+                              "literal_basis", "source_date"):
+                    if isinstance(row.get(field), str):
+                        evidence[field] = row[field]
             for field in ("display_name", "bio", "metadata_basis"):
                 if isinstance(row.get(field), str):
                     evidence[field] = row[field]
@@ -881,7 +1179,9 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                     raw_data=evidence))
             results.append(Observation(
                 observable=self.normalize({"type": ObservableType.URL, "value": url}),
-                lineage=item_lineage, confidence=0.55, raw_data=evidence))
+                lineage=item_lineage,
+                confidence=0.75 if row.get("reason") == "PHONE_LITERAL_REVALIDATED" else 0.55,
+                raw_data=evidence))
         return results
 
     def normalize(self, raw_item):

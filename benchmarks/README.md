@@ -47,6 +47,24 @@ The graph/MCP action path has a separate offline concurrency benchmark:
 .\runtime\venv\Scripts\python.exe -m benchmarks.action_concurrency
 ```
 
+## Visible PHONE acceptance
+
+Run only with a phone number whose public-footprint search is authorized. Cốc
+Cốc is visible, uses no more than three SPIDER-owned tabs and closes those tabs
+when the run ends. The command prints aggregate counts only; it never prints the
+phone, names, page URLs or page content:
+
+PHONE search uses the common Vietnamese display form, keeps at most one active
+query per search origin, and treats CAPTCHA/access checks as unresolved rather
+than as proof that the number is absent.
+
+```powershell
+.\runtime\venv\Scripts\python.exe -m benchmarks.live_phone_acceptance --phone "+84..."
+```
+
+Use `python -m benchmarks.coccoc_launch_probe --real-profile` for a
+navigation-free compatibility check. It does not search or print profile data.
+
 It compares action width 1 and 2 with the same two delayed synthetic providers,
 then checks terminal status, physical request count and the typed-identity hash.
 This measures local scheduling overhead only; it is not an Internet speed claim.

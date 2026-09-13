@@ -266,6 +266,18 @@ function showNotification(msg) {
   }
 }
 
+function safePublicUrl(value) {
+  try {
+    const parsed = new URL(String(value));
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return null;
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch (_) {
+    return null;
+  }
+}
+
 function updateRunControls(status, resumable = false) {
   const button = document.getElementById("btn-stop-run");
   const resume = document.getElementById("btn-resume-run");
@@ -1338,6 +1350,29 @@ function renderTypeSpecificInsights(insights) {
     const ph = insights.phone_insights;
     const digest = ph.public_candidate_digest || {};
     const candidates = Array.isArray(digest.candidates) ? digest.candidates : [];
+    const typeLabels = currentLanguage === "vi" ? {
+      NAME: "Tên/người được nhắc tới", ACCOUNT: "Tài khoản công khai",
+      ORGANIZATION: "Tổ chức hoặc doanh nghiệp", URL: "Trang có nhắc số này",
+      LOCATION_TEXT: "Địa điểm ghi trên nguồn"
+    } : {NAME: "Mentioned name", ACCOUNT: "Public account",
+      ORGANIZATION: "Organization or business", URL: "Page mentioning this number",
+      LOCATION_TEXT: "Location stated by source"};
+    const renderCandidate = (item) => {
+      const candidateUrl = item.type === "URL" ? safePublicUrl(item.value) : null;
+      const value = candidateUrl
+        ? `<a href="${escapeHtml(candidateUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.value)}</a>`
+        : escapeHtml(item.value);
+      const sources = (item.source_urls || []).map(safePublicUrl).filter(Boolean).slice(0, 3);
+      const sourceLinks = sources.length
+        ? `<br><small>${currentLanguage === "vi" ? "Nguồn" : "Sources"}: ${sources.map((url, index) =>
+            `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${index + 1}</a>`).join(" · ")}</small>`
+        : "";
+      const explanation = currentLanguage === "vi"
+        ? (item.rank_explanation_vi || "Ứng viên được giữ lại để người dùng đối chiếu với nguồn.")
+        : (item.rank_reasons || []).join(" · ");
+      return `<li><strong>${escapeHtml(typeLabels[item.type] || item.type)}:</strong> ${value}<br>
+        <small>${escapeHtml(explanation)}</small>${sourceLinks}</li>`;
+    };
     const card = document.createElement("div");
     card.className = "intelligence-card";
     card.innerHTML = `
@@ -1354,13 +1389,15 @@ function renderTypeSpecificInsights(insights) {
           <span class="detail-key">${currentLanguage === "vi" ? "Số chuẩn E.164" : "E.164 number"}:</span>
           <span class="detail-val"><code>${escapeHtml(ph.e164 || ph.phone || "-")}</code></span>
         </div>
-        <div class="detail-row"><span class="detail-key">${currentLanguage === "vi" ? "Vùng / loại số" : "Region / number type"}:</span><span class="detail-val">${escapeHtml([ph.region, ph.number_type].filter(Boolean).join(" · ") || "-")}</span></div>
-        <div class="detail-row"><span class="detail-key">${currentLanguage === "vi" ? "Phân bổ đầu số ban đầu" : "Original prefix allocation"}:</span><span class="detail-val">${escapeHtml(ph.original_allocation || (currentLanguage === "vi" ? "Chưa rõ" : "Unknown"))}</span></div>
+        <div class="detail-row"><span class="detail-key">${currentLanguage === "vi" ? "Dạng số trong nước" : "National format"}:</span><span class="detail-val">${escapeHtml(ph.national_format || "-")}</span></div>
+        <div class="detail-row"><span class="detail-key">${currentLanguage === "vi" ? "Loại số" : "Number type"}:</span><span class="detail-val">${escapeHtml(currentLanguage === "vi" ? (ph.number_type_label_vi || ph.number_type) : ph.number_type || "-")}</span></div>
+        <div class="detail-row"><span class="detail-key">${currentLanguage === "vi" ? "Đầu số nhận diện" : "Detected prefix"}:</span><span class="detail-val">${escapeHtml(ph.detected_prefix || (currentLanguage === "vi" ? "Không áp dụng" : "Not applicable"))}</span></div>
+        <div class="detail-row"><span class="detail-key">${currentLanguage === "vi" ? "Nhà mạng được phân bổ đầu số ban đầu" : "Original prefix allocation"}:</span><span class="detail-val">${escapeHtml(ph.original_allocation || (currentLanguage === "vi" ? "Chưa rõ" : "Unknown"))}</span></div>
       </div>
       <p class="scope-note">${currentLanguage === "vi" ? "Phân bổ đầu số không chứng minh nhà mạng hiện tại, người dùng hiện tại hay chủ thuê bao." : "Prefix allocation does not prove the current carrier, current user, or subscriber."}</p>
       <div style="margin-top:14px;">
         <div class="detail-key">${currentLanguage === "vi" ? "Liên hệ công khai có bằng chứng" : "Publicly evidenced links"}:</div>
-        ${candidates.length ? `<ul class="detail-list">${candidates.map(item => `<li><strong>${escapeHtml(item.type)}:</strong> ${escapeHtml(item.value)}<br><small>${escapeHtml((item.rank_reasons || []).join(" · "))}</small></li>`).join("")}</ul>` :
+        ${candidates.length ? `<ul class="detail-list">${candidates.map(renderCandidate).join("")}</ul>` :
           `<em>${currentLanguage === "vi" ? "Chưa có liên hệ công khai được ghi nhận. Điều này không xác định hay phủ định chủ số." : "No public link has been recorded. This neither identifies nor rules out a subscriber."}</em>`}
       </div>
       ${(digest.contradictions || []).length ? `<p class="warning-text">${currentLanguage === "vi" ? "Có ứng viên công khai cạnh tranh; SPIDER không chọn một người làm chủ số." : "Competing public candidates exist; SPIDER does not select a subscriber."}</p>` : ""}

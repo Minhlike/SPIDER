@@ -17,6 +17,10 @@ def test_vietnam_offline_example_normalization_and_portability():
     assert NormalizedObservable(type=T.PHONE, value=local).canonical_value == expected
     metadata = phone_metadata(local)
     assert metadata["number_type"] == "MOBILE"
+    assert metadata["number_type_label_vi"] == "Di động"
+    assert metadata["country_calling_code"] == 84
+    assert metadata["detected_prefix"].startswith("0")
+    assert metadata["national_format"]
     assert metadata["current_carrier"] == "UNKNOWN" and not metadata["assignment_verified"]
 
 

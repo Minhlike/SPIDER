@@ -183,16 +183,42 @@ def test_public_phone_search_snippet_projects_only_an_evidence_url():
             "candidate_url": "https://zalo.me/s/public-article",
             "source_url": "https://zalo.me/s/public-article"})]
     result = public_phone_candidates(rows, phone)
-    assert result["candidates"] == [{
-        "type": "URL", "value": "https://zalo.me/s/public-article",
-        "evidence_ids": ["search-observation"], "evidence_classes": ["SEARCH_SNIPPET"],
-        "first_seen": "2026-01-04T00:00:00+00:00",
-        "last_seen": "2026-01-04T00:00:00+00:00",
-        "independence": "NOT_YET_VERIFIED",
-        "rank_reasons": ["best_public_evidence=SEARCH_SNIPPET", "evidence_count=1",
-                         "mirror_mentions=0", "independent_clusters=0", "recency=captured_at"]}]
+    candidate = result["candidates"][0]
+    assert candidate["type"] == "URL"
+    assert candidate["value"] == "https://zalo.me/s/public-article"
+    assert candidate["evidence_ids"] == ["search-observation"]
+    assert candidate["evidence_classes"] == ["SEARCH_SNIPPET"]
+    assert candidate["source_hosts"] == ["zalo.me"]
+    assert candidate["freshness"] == "CAPTURE_TIME_ONLY"
+    assert result["unknowns"] == ["NO_NAMED_PUBLIC_IDENTITY_CANDIDATE"]
+    assert result["next_action"]["action"] == "VERIFY_SEARCH_LEADS"
     assert result["identity_verified"] is False
     assert not result["contradictions"]
+
+
+def test_public_phone_candidates_deduplicate_case_and_rank_distinct_sources():
+    phone = "+84901234567"
+    rows = [
+        SimpleNamespace(id="a", created_at=datetime(2026, 2, 1, tzinfo=timezone.utc),
+            raw_data_json={"phone_e164": phone, "evidence_class": "BUSINESS_CONTACT",
+                "candidate_organization": "Công ty Hoa Mai",
+                "source_url": "https://business.example.vn/contact"}),
+        SimpleNamespace(id="b", created_at=datetime(2026, 2, 2, tzinfo=timezone.utc),
+            raw_data_json={"phone_e164": phone, "evidence_class": "DIRECTORY_ENTRY",
+                "candidate_organization": "  công ty hoa mai ",
+                "source_url": "https://directory.example.vn/hoa-mai",
+                "source_date": "2026-01-20"}),
+    ]
+
+    result = public_phone_candidates(rows, phone)
+    organizations = [candidate for candidate in result["candidates"]
+                     if candidate["type"] == "ORGANIZATION"]
+    assert len(organizations) == 1
+    assert organizations[0]["evidence_ids"] == ["a", "b"]
+    assert organizations[0]["source_count"] == 2
+    assert organizations[0]["freshness"] == "SOURCE_DATE_REPORTED"
+    assert result["summary"]["named_candidates"] == 1
+    assert result["unknowns"] == []
 
 
 @pytest.mark.asyncio
@@ -210,6 +236,9 @@ async def test_phone_seed_report_keeps_raw_and_canonical_without_owner_claim(tmp
         assert report["original_seed"] == "0901 234 567"
         assert report["e164"] == "+84901234567"
         assert report["region"] == "VN" and report["number_type"] == "MOBILE"
+        assert report["number_type_label_vi"] == "Di động"
+        assert report["detected_prefix"] == "090"
+        assert report["country_calling_code"] == 84
         assert report["current_carrier"] == "UNKNOWN"
         assert report["assignment_verified"] is False
         assert "owner" not in report and "subscriber" not in report

@@ -121,13 +121,16 @@ def test_phone_browser_flow_renders_literal_public_evidence_without_owner_claim(
     report = page.locator("#type-specific-container")
     expect(report).to_contain_text("+84327152369")
     expect(report).to_contain_text("https://zalo.me/s/synthetic-public-mention")
-    expect(report).to_contain_text("SEARCH_SNIPPET")
+    expect(report).to_contain_text("Doanh nghiệp Hoa Mai")
+    expect(report).to_contain_text("Đà Nẵng")
+    expect(report).to_contain_text("Tổ chức hoặc doanh nghiệp")
     expect(report).not_to_contain_text("Chủ sở hữu")
     insights = page.request.get(
         f"{base_url}/api/cases/{queued['case_id']}/insights").json()
     digest = insights["phone_insights"]["public_candidate_digest"]
     assert digest["identity_verified"] is False
-    assert digest["candidates"][0]["type"] == "URL"
+    assert {candidate["type"] for candidate in digest["candidates"]} == {
+        "ORGANIZATION", "LOCATION_TEXT", "URL"}
     assert not errors
 
 

@@ -10,8 +10,9 @@ from spider.providers.browser.coccoc import (
     CocCocBrowserAdapter, apply_negative_control, classify_direct_candidate, classify_direct_result,
     apply_indexed_profile_candidates, browser_start_reason, candidate_has_username, coccoc_profile,
     coccoc_search_url, DIRECT_USERNAME_SOURCES, SEARCH_ENGINE_NAME, host_matches, indexed_profile_candidates,
-    PHONE_SEARCH_SOURCES, phone_literal_match, phone_search_variants,
-    gather_rows_until, safe_result_url, select_search_candidate,
+    PHONE_SEARCH_SOURCES, normalize_search_result_url, phone_literal_match,
+    phone_search_query, phone_search_snippet_fields, phone_search_variants,
+    gather_rows_until, safe_result_url, select_search_candidate, select_search_candidates,
 )
 
 
@@ -117,7 +118,9 @@ def test_email_search_candidate_cannot_be_proved_by_query_echo():
 
 def test_phone_variants_and_literal_match_accept_only_the_same_number():
     phone = "+84327152369"
-    assert phone_search_variants(phone) == ("+84327152369", "0327152369")
+    assert phone_search_variants(phone) == (
+        "+84327152369", "0327152369", "+84 327 152 369", "0327 152 369")
+    assert phone_search_query(phone) == '"0327 152 369"'
     assert phone_literal_match("Liên hệ +84 327 152 369", phone)
     assert phone_literal_match("Hotline 0327.152.369", phone)
     assert not phone_literal_match("Hotline 0327.152.368", phone)
@@ -134,6 +137,116 @@ def test_phone_search_candidate_requires_link_local_literal_evidence():
     assert select_search_candidate(
         matching, "zalo.me", phone, True, phone_literal_match) == \
         "https://zalo.me/s/public-article"
+
+
+def test_search_result_redirect_unwrap_is_safe_and_host_checked_afterwards():
+    wrapped = ("https://duckduckgo.com/l/?uddg="
+               "https%3A%2F%2Ftrangvangvietnam.com%2Fcompany%2Fsunsmart%3Ftracking%3D1")
+    assert normalize_search_result_url(wrapped) == \
+        "https://trangvangvietnam.com/company/sunsmart"
+    assert select_search_candidates(
+        [{"href": wrapped, "text": "Hotline 0365 365 666"}],
+        "trangvangvietnam.com", "+84365365666", True, phone_literal_match) == [
+            "https://trangvangvietnam.com/company/sunsmart"]
+
+
+def test_phone_directory_snippet_extracts_candidate_without_owner_claim():
+    fields = phone_search_snippet_fields(
+        "Công Ty CP Phụ Kiện Công Nghệ Sunsmart\nCập nhật 13/4/2021\nHotline 0365 365 666",
+        "+84365365666", "Trang Vàng Việt Nam")
+    assert fields == {"candidate_organization": "Công Ty CP Phụ Kiện Công Nghệ Sunsmart",
+                      "source_date": "13/4/2021"}
+    assert phone_search_snippet_fields(
+        "Nguyễn Văn A\nHotline 0365 365 666", "+84365365666", "Facebook") == {}
+
+
+def test_phone_search_keeps_up_to_three_unique_mentions_per_site():
+    phone = "+84327152369"
+    links = [
+        {"href": f"https://voz.vn/t/public-{index}/", "text": "Liên hệ 0327 152 369"}
+        for index in range(5)
+    ] + [{"href": "https://voz.vn/t/public-0/?tracking=1", "text": "0327152369"}]
+    assert select_search_candidates(
+        links, "voz.vn", phone, True, phone_literal_match, limit=3) == [
+            "https://voz.vn/t/public-0/", "https://voz.vn/t/public-1/",
+            "https://voz.vn/t/public-2/"]
+
+
+@pytest.mark.asyncio
+async def test_phone_search_uses_secondary_engine_inside_coccoc_after_challenge():
+    phone = "+84365365666"
+
+    class Locator:
+        def __init__(self, page):
+            self.page = page
+
+        async def inner_text(self, **_kwargs):
+            return self.page.body
+
+        async def evaluate_all(self, _script):
+            return self.page.links
+
+    class Page:
+        def __init__(self):
+            self.body = ""
+            self.links = []
+
+        async def goto(self, url, **_kwargs):
+            if "coccoc.com" in url:
+                self.body = "Kiểm tra bảo mật"
+                self.links = []
+            else:
+                self.body = "Public search result"
+                self.links = [{"href": "https://trangvangvietnam.com/company/sunsmart",
+                               "text": "Hotline 0365 365 666"}]
+
+        async def wait_for_timeout(self, _milliseconds):
+            return None
+
+        def locator(self, _selector):
+            return Locator(self)
+
+    rows = await CocCocBrowserAdapter()._search_phone_index(
+        Page(), "Trang Vàng Việt Nam", "trangvangvietnam.com", phone,
+        "0365365666", 1000)
+
+    assert len(rows) == 1
+    assert rows[0]["state"] == "CANDIDATE"
+    assert rows[0]["reason"] == "SEARCH_RESULT"
+    assert rows[0]["search_engine"] == "DuckDuckGo Search"
+    assert rows[0]["search_attempts"] == [
+        {"engine": "Cốc Cốc Search", "outcome": "HUMAN_REQUIRED"},
+        {"engine": "DuckDuckGo Search", "outcome": "CANDIDATE"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_phone_search_reports_challenge_instead_of_false_no_result():
+    class Locator:
+        async def inner_text(self, **_kwargs):
+            return "Security check - verify you are human"
+
+        async def evaluate_all(self, _script):
+            return []
+
+    class Page:
+        async def goto(self, _url, **_kwargs):
+            return None
+
+        async def wait_for_timeout(self, _milliseconds):
+            return None
+
+        def locator(self, _selector):
+            return Locator()
+
+    rows = await CocCocBrowserAdapter()._search_phone_index(
+        Page(), "Trang Vàng Việt Nam", "trangvangvietnam.com", "+84365365666",
+        "0365365666", 1000)
+
+    assert rows[0]["state"] == "BLOCKED"
+    assert rows[0]["reason"] == "SEARCH_CHALLENGE"
+    assert [attempt["outcome"] for attempt in rows[0]["search_attempts"]] == [
+        "HUMAN_REQUIRED", "HUMAN_REQUIRED", "HUMAN_REQUIRED"]
 
 
 @pytest.mark.asyncio
@@ -199,20 +312,102 @@ async def test_phone_sources_use_at_most_three_parallel_tabs(monkeypatch):
         async def new_page(self):
             return Page()
 
-    async def search(_page, source, _host, _phone, _timeout_ms, **_kwargs):
+    async def search(_page, source, _host, _phone, _query, _timeout_ms, **_kwargs):
         nonlocal active, peak
         active += 1
         peak = max(peak, active)
         await asyncio.sleep(0.02)
         active -= 1
-        return {"kind": "site", "source": source, "state": "UNKNOWN",
-                "reason": "NO_EXACT_SEARCH_RESULT", "url": None}
+        return [{"kind": "site", "source": source, "state": "UNKNOWN",
+                 "reason": "NO_EXACT_SEARCH_RESULT", "url": None}]
 
-    monkeypatch.setattr(adapter, "_search_one", search)
+    monkeypatch.setattr(adapter, "_search_phone_index", search)
     rows = await adapter._collect_phone_sources(
         Context(), "+84327152369", lambda: False, 1000, parallel_tabs=3)
     assert len(rows) == len(PHONE_SEARCH_SOURCES)
     assert peak == 3
+
+
+@pytest.mark.asyncio
+async def test_phone_sources_keep_one_unprocessed_row_per_source_when_budget_is_exhausted():
+    rows = await CocCocBrowserAdapter()._collect_phone_sources(
+        object(), "+84327152369", lambda: True, 1000, parallel_tabs=3)
+    assert len(rows) == len(PHONE_SEARCH_SOURCES)
+    assert all(row["state"] == "UNPROCESSED" and row["reason"] == "REQUEST_LIMIT"
+               for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_phone_search_lead_is_promoted_only_after_page_literal_revalidation(monkeypatch):
+    adapter = CocCocBrowserAdapter()
+    phone = "+84327152369"
+    rows = [{"kind": "search_lead", "source": "Facebook", "state": "CANDIDATE",
+             "reason": "COCCOC_SEARCH_RESULT", "url": "https://facebook.com/shop",
+             "phone_e164": phone, "evidence_class": "SEARCH_SNIPPET"}]
+
+    async def inspect(_context, _lead, _phone, _timeout_ms):
+        return {"kind": "site", "source": "Facebook", "state": "CANDIDATE",
+                "reason": "PHONE_LITERAL_REVALIDATED", "url": "https://facebook.com/shop",
+                "phone_e164": phone, "evidence_class": "PUBLIC_SELF_PUBLISHED",
+                "candidate_account": "shop@facebook", "candidate_name": "Cửa hàng",
+                "candidate_url": "https://facebook.com/shop",
+                "source_url": "https://facebook.com/shop"}
+
+    monkeypatch.setattr(adapter, "_inspect_phone_lead", inspect)
+    result = await adapter._revalidate_phone_leads(
+        object(), phone, rows, lambda: False, 1000)
+    assert result[0]["reason"] == "PHONE_LITERAL_REVALIDATED"
+    assert result[0]["candidate_account"] == "shop@facebook"
+
+
+@pytest.mark.asyncio
+async def test_phone_failed_revalidation_keeps_search_snippet_partial(monkeypatch):
+    adapter = CocCocBrowserAdapter()
+    phone = "+84327152369"
+    rows = [{"kind": "search_lead", "source": "VOZ", "state": "CANDIDATE",
+             "reason": "COCCOC_SEARCH_RESULT", "url": "https://voz.vn/t/old/",
+             "phone_e164": phone, "evidence_class": "SEARCH_SNIPPET"}]
+
+    async def inspect(_context, _lead, _phone, _timeout_ms):
+        return {"state": "UNKNOWN", "reason": "PHONE_NOT_PRESENT_ON_PAGE"}
+
+    monkeypatch.setattr(adapter, "_inspect_phone_lead", inspect)
+    result = await adapter._revalidate_phone_leads(
+        object(), phone, rows, lambda: False, 1000)
+    assert result[0]["evidence_class"] == "SEARCH_SNIPPET"
+    assert result[0]["revalidation_reason"] == "PHONE_NOT_PRESENT_ON_PAGE"
+
+
+@pytest.mark.asyncio
+async def test_phone_revalidation_is_parallel_bounded_and_prioritizes_first_result(monkeypatch):
+    adapter = CocCocBrowserAdapter()
+    active = 0
+    peak = 0
+    inspected = []
+    rows = [{"kind": "search_lead", "source": source, "state": "CANDIDATE",
+             "reason": "COCCOC_SEARCH_RESULT", "url": f"https://{host}/result-{rank}",
+             "result_rank": rank, "phone_e164": "+84327152369",
+             "evidence_class": "SEARCH_SNIPPET"}
+            for rank in (1, 2) for source, host in PHONE_SEARCH_SOURCES[:4]]
+
+    async def inspect(_context, lead, _phone, _timeout_ms):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        inspected.append((lead["result_rank"], lead["source"]))
+        await asyncio.sleep(0.01)
+        active -= 1
+        return {"state": "UNKNOWN", "reason": "PHONE_NOT_PRESENT_ON_PAGE"}
+
+    monkeypatch.setattr(adapter, "_inspect_phone_lead", inspect)
+    result = await adapter._revalidate_phone_leads(
+        object(), "+84327152369", rows, lambda: False, 1000,
+        parallel_tabs=3, max_leads=4)
+
+    assert peak == 3
+    assert {rank for rank, _source in inspected} == {1}
+    assert sum(row.get("revalidation_reason") == "PHONE_REVALIDATION_LIMIT"
+               for row in result) == 4
 
 
 @pytest.mark.asyncio
@@ -385,8 +580,8 @@ def test_search_result_remains_a_url_lead_until_profile_revalidation():
 def test_phone_search_result_is_url_evidence_without_owner_or_account_claim():
     phone = "+84327152369"
     raw = json.dumps({"kind": "search_lead", "source": "Zalo", "state": "CANDIDATE",
-        "reason": "COCCOC_SEARCH_RESULT", "account_candidate": False,
-        "url": "https://zalo.me/s/public-article", "search_engine": "Cốc Cốc",
+        "reason": "SEARCH_RESULT", "account_candidate": False,
+        "url": "https://zalo.me/s/public-article", "search_engine": "DuckDuckGo Search",
         "phone_e164": phone, "evidence_class": "SEARCH_SNIPPET"}).encode()
     lineage = SourceLineage(case_id="c", run_id="r", task_id="t",
         provider_id="coccoc_browser", provider_version="local-coccoc",
@@ -399,6 +594,30 @@ def test_phone_search_result_is_url_evidence_without_owner_or_account_claim():
     assert observations[0].raw_data["phone_e164"] == phone
     assert observations[0].raw_data["evidence_class"] == "SEARCH_SNIPPET"
     assert observations[0].raw_data["identity_verified"] is False
+    assert observations[0].raw_data["match_basis"] == "browser_search_lead"
+
+
+def test_revalidated_phone_page_preserves_structured_candidates_without_owner_claim():
+    phone = "+84327152369"
+    raw = json.dumps({"kind": "site", "source": "Trang Vàng Việt Nam",
+        "state": "CANDIDATE", "reason": "PHONE_LITERAL_REVALIDATED",
+        "url": "https://trangvangvietnam.com/listing/hoa", "phone_e164": phone,
+        "evidence_class": "BUSINESS_CONTACT", "candidate_organization": "Công ty Hoa",
+        "candidate_location_text": "Đà Nẵng", "literal_basis": "JSONLD_TELEPHONE",
+        "source_url": "https://trangvangvietnam.com/listing/hoa"}).encode()
+    lineage = SourceLineage(case_id="c", run_id="r", task_id="t",
+        provider_id="coccoc_browser", provider_version="local-coccoc",
+        parent_observable_value=phone, parent_observable_type=ObservableType.PHONE)
+
+    observations = CocCocBrowserAdapter().parse(raw, lineage)
+
+    assert len(observations) == 1
+    evidence = observations[0].raw_data
+    assert evidence["candidate_organization"] == "Công ty Hoa"
+    assert evidence["candidate_location_text"] == "Đà Nẵng"
+    assert evidence["verification_state"] == "PHONE_LITERAL_REVALIDATED_IDENTITY_UNVERIFIED"
+    assert observations[0].confidence == 0.75
+    assert "owner" not in evidence and "subscriber" not in evidence
 
 
 @pytest.mark.asyncio
