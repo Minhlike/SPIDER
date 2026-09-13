@@ -21,7 +21,9 @@ ROOT = Path(__file__).resolve().parents[2]
 PYTHON = ROOT / "runtime/venv/Scripts/python.exe"
 DATA = ROOT / "data"
 STATE = DATA / "launcher.json"
-URL = "http://127.0.0.1:8765"
+HOST = "127.0.0.1"
+PORT = 8876
+URL = f"http://{HOST}:{PORT}"
 
 
 def winapi():
@@ -115,7 +117,7 @@ def port_available():
     with socket.socket() as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         try:
-            sock.bind(("127.0.0.1", 8765))
+            sock.bind((HOST, PORT))
             return True
         except OSError:
             return False
@@ -140,7 +142,7 @@ def start(open_browser=True):
         state = read_state()
         if not state:
             if not port_available():
-                raise RuntimeError("Port 8765 is occupied by an unmanaged process; it was left untouched.")
+                raise RuntimeError(f"Port {PORT} is occupied by an unmanaged process; it was left untouched.")
             if not PYTHON.exists():
                 raise RuntimeError("Project-local Python runtime is missing.")
             nonce = uuid.uuid4().hex
@@ -196,7 +198,7 @@ def serve(nonce):
         raise RuntimeError("Cannot create shutdown event.")
     state = {**process_identity(os.getpid()), "root": str(ROOT), "stop_event": event_name, "nonce": nonce}
     server = uvicorn.Server(uvicorn.Config("spider.web.app:create_app", factory=True,
-                                         host="127.0.0.1", port=8765, access_log=False,
+                                         host=HOST, port=PORT, access_log=False,
                                          timeout_graceful_shutdown=30))
     finished = threading.Event()
     def watch_stop():

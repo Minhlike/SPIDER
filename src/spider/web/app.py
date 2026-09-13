@@ -141,7 +141,7 @@ def create_app() -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://127.0.0.1:8765", "http://localhost:8765", "http://127.0.0.1", "http://localhost"],
+        allow_origins=["http://127.0.0.1:8876", "http://localhost:8876", "http://127.0.0.1", "http://localhost"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

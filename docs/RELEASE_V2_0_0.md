@@ -16,7 +16,7 @@ The gate exposed broken existing UI/API connections. Repairs restore observation
 
 ## Windows launcher: PASS
 
-`run_spider.bat` uses the project venv, binds `127.0.0.1:8765`, serializes concurrent starts, records the backend's own PID plus creation time and executable identity, waits for database readiness, then opens the default browser. `start_spider.bat` remains an alias. `stop_spider.bat` signals an instance-specific Windows event and lets Uvicorn shut down. It never kills by executable name or forces termination of a foreign process.
+`run_spider.bat` uses the project venv, binds `127.0.0.1:8876`, serializes concurrent starts, records the backend's own PID plus creation time and executable identity, waits for database readiness, then opens the default browser. `start_spider.bat` remains an alias. `stop_spider.bat` signals an instance-specific Windows event and lets Uvicorn shut down. It never kills by executable name or forces termination of a foreign process.
 
 Manual Windows verification: two simultaneous repeat starts reused the same backend PID; its PID matched the listening socket and PID file. Stop logged application shutdown completion, removed state, and released the port. The prior idle legacy backend was separately identified and retired once; the new launcher does not adopt arbitrary existing servers.
 

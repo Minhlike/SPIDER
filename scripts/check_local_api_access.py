@@ -55,7 +55,7 @@ def child(search):
     output = {"schema": {name: bool(value) for name, value in keys.items()}, "engines": {}}
     with tempfile.TemporaryDirectory(prefix="spider-api-check-", dir=ROOT / "runtime") as directory:
         settings.SETTINGS_FILE = Path(directory) / "settings.json"
-        client = TestClient(create_app(), base_url="http://127.0.0.1:8765")
+        client = TestClient(create_app(), base_url="http://127.0.0.1:8876")
         response = client.post("/api/settings", json={"api_keys": keys})
         if response.status_code != 200 or access.contains_secret(response.text, keys):
             raise RuntimeError("Protected save check failed")

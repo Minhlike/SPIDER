@@ -5,7 +5,7 @@ thay đổi mới. Bản phát hành `v2.0.0` và HEAD/remote `a3c2a5e` được
 
 ## Chạy thử
 
-Mở **http://127.0.0.1:8765**, hoặc nhấp đúp `run_spider.bat` trong thư mục
+Mở **http://127.0.0.1:8876**, hoặc nhấp đúp `run_spider.bat` trong thư mục
 `D:\PhanMem_Tools\SPIDER`. Dừng bằng `stop_spider.bat`.
 
 Chọn **Cuộc điều tra mới**, nhập email hoặc username. Phạm vi username có ba mức:

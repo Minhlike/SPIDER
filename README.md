@@ -48,7 +48,7 @@ Simply double-click or run:
 ```cmd
 run_spider.bat
 ```
-This automatically starts the backend on 127.0.0.1:8765 and opens your default browser.
+This automatically starts the backend on 127.0.0.1:8876 and opens your default browser.
 The launcher waits for database readiness, reuses the verified backend PID, and refuses to touch an unrelated port occupant. `start_spider.bat` remains a compatibility alias.
 To stop the server cleanly:
 ```cmd
