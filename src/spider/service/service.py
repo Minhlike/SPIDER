@@ -39,6 +39,9 @@ class SpiderService:
         self.artifact_repo = ArtifactRepository(artifacts_dir=artifacts_dir)
         self.ingest_queue = IngestQueue(self.db_writer)
         self.provider_manager = ProviderManager(self.artifact_repo, self.ingest_queue, self.db_writer)
+        from spider.providers.limits import OriginLimits
+        self.provider_manager.origin_limits = OriginLimits(
+            persistence_path=self.db_manager.db_path.parent / "origin-cooldowns.json")
         self.capability_registry = CapabilityRegistry(config_path=capabilities_path)
         self.policy_engine = PolicyEngine(config_path=policies_path)
         self.resolution_engine = EntityResolutionEngine()
@@ -67,7 +70,8 @@ class SpiderService:
             old_plane = self.provider_manager.http_plane
             self.provider_manager.http_plane = HTTPPlane(factory=old_plane.factory, clock=old_plane.clock)
             # A restarted service may be attached to a new event loop.
-            self.provider_manager.origin_limits = OriginLimits()
+            self.provider_manager.origin_limits = OriginLimits(
+                persistence_path=self.db_manager.db_path.parent / "origin-cooldowns.json")
             self.provider_manager._global_slots = asyncio.Semaphore(4)
             self.provider_manager._provider_slots = {
                 pid: asyncio.Semaphore(1) for pid in self.provider_manager.adapters

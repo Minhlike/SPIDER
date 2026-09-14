@@ -6,6 +6,7 @@ import secrets
 import time
 import hashlib
 from collections import Counter
+from contextvars import ContextVar
 from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, unquote, urlsplit, urlunsplit
 
@@ -17,6 +18,7 @@ from spider.models.base import utc_now
 from spider.providers.base import BaseProviderAdapter, ProviderExecutionResult, ProviderHealth
 from spider.providers.maigret.profile_metadata import public_metadata
 from spider.providers.browser.phone_page import extract_phone_page_evidence
+from spider.providers.browser.challenges import browser_challenges
 
 
 DIRECT_USERNAME_SOURCES = (
@@ -61,6 +63,7 @@ FATAL_BROWSER_REASONS = frozenset({
     "PROFILE_IN_USE", "MISSING_RUNTIME", "BROWSER_CLOSED", "BROWSER_START_FAILED",
     "BROWSER_NETWORK_UNAVAILABLE",
 })
+_browser_run_context = ContextVar("spider_browser_run_context", default=None)
 
 
 async def close_page_bounded(page, timeout_seconds=2.0):
@@ -378,7 +381,7 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
 
     def provider_id(self): return "coccoc_browser"
     def version(self): return "local-coccoc"
-    def adapter_version(self): return "1.5.0"
+    def adapter_version(self): return "1.6.0"
     def capabilities(self): return ["BROWSER_PERSONAL_DISCOVERY"]
     def network_class(self): return NetworkClass.THIRD_PARTY_ONLY
     def accepts(self): return [ObservableType.EMAIL, ObservableType.PHONE, ObservableType.USERNAME]
@@ -396,6 +399,37 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
             message=("Cốc Cốc is available; signed-in search requires explicit user action"
                      if ready else "Cốc Cốc executable or user profile was not found"),
         )
+
+    async def _resolve_human_challenge(self, page, source, status, page_text, timeout_ms):
+        """Keep the current tab open and resume only after the user confirms."""
+        if not any(marker in page_text.casefold() for marker in CHALLENGE_MARKERS):
+            return status, False
+        context = _browser_run_context.get()
+        if not context:
+            return status, True
+        deadline = time.monotonic() + context["human_wait_seconds"]
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                if context.get("origin_limits"):
+                    context["origin_limits"].feedback(
+                        urlsplit(page.url).hostname or "unknown", "CHALLENGE")
+                return status, True
+            decision = await browser_challenges.wait(context["run_id"], source, remaining)
+            if decision != "CONTINUE":
+                if context.get("origin_limits"):
+                    context["origin_limits"].feedback(
+                        urlsplit(page.url).hostname or "unknown", "CHALLENGE")
+                return status, True
+            try:
+                response = await page.reload(wait_until="domcontentloaded", timeout=timeout_ms)
+                status = response.status if response else status
+                await page.wait_for_timeout(500)
+                page_text = await page.locator("body").inner_text(timeout=3000)
+            except Exception:
+                return status, True
+            if not any(marker in page_text.casefold() for marker in CHALLENGE_MARKERS):
+                return status, False
 
     async def _collect(self, target, options):
         try:
@@ -452,9 +486,11 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                         )
                     await route.continue_()
 
-                async def finish(request, outcome):
-                    if origin_limits and outcome == "HTTP_429":
-                        origin_limits.feedback(urlsplit(request.url).hostname or "unknown", 429)
+                async def finish(request, outcome, retry_after=None):
+                    if origin_limits and request.resource_type == "document":
+                        status = int(outcome[5:]) if outcome.startswith("HTTP_") else "NETWORK_ERROR"
+                        origin_limits.feedback(urlsplit(request.url).hostname or "unknown",
+                                               status, retry_after)
                     receipt = receipts.pop(id(request), None)
                     if receipt and recorder:
                         await recorder.finish(receipt, outcome)
@@ -467,7 +503,8 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 context.on("requestfinished", release)
                 context.on("requestfailed", release)
                 context.on("response", lambda response: finish_tasks.append(
-                    asyncio.create_task(finish(response.request, f"HTTP_{response.status}"))))
+                    asyncio.create_task(finish(response.request, f"HTTP_{response.status}",
+                                               response.headers.get("retry-after")))))
                 context.on("requestfailed", lambda request: finish_tasks.append(
                     asyncio.create_task(finish(request, "NETWORK_ERROR"))))
                 await context.route("http://**/*", intercept)
@@ -478,8 +515,10 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 for initial in list(context.pages):
                     await close_page_bounded(initial)
                 rows = []
-                workflow_seconds = min(60.0, max(20.0,
-                    float(options.get("timeout_seconds", 180)) * 0.4))
+                requested_seconds = float(options.get("timeout_seconds", 180))
+                human_wait_seconds = min(120.0, max(1.0, requested_seconds - 10.0))
+                workflow_seconds = min(requested_seconds, max(20.0,
+                    requested_seconds * 0.4, human_wait_seconds + 10.0))
                 workflow_deadline = time.monotonic() + workflow_seconds
                 timeout_ms = int(min(10, max(3, options.get("timeout_seconds", 180) / 18)) * 1000)
 
@@ -614,6 +653,15 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 body = await page.locator("body").inner_text(timeout=3000)
             except Exception:
                 body = ""
+            status, challenge_unresolved = await self._resolve_human_challenge(
+                page, source, status, f"{title}\n{body}", timeout_ms)
+            if not challenge_unresolved and any(
+                    marker in f"{title}\n{body}".casefold() for marker in CHALLENGE_MARKERS):
+                try:
+                    title = await page.title()
+                    body = await page.locator("body").inner_text(timeout=3000)
+                except Exception:
+                    pass
             final_url = page.url
             try:
                 declared_urls = await page.locator(
@@ -717,10 +765,7 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
         query = f"site:{host} {query_identifier}"
         attempts, content_hash = [], hashlib.sha256(b"").hexdigest()
         for engine_name, template in PHONE_SEARCH_ENGINES:
-            async def read_page():
-                await page.goto(template.format(query=quote_plus(query)),
-                                wait_until="domcontentloaded", timeout=timeout_ms)
-                await page.wait_for_timeout(500)
+            async def extract_page():
                 text = (await page.locator("body").inner_text(timeout=2000)).casefold()
                 anchors = await page.locator("a[href]").evaluate_all(
                     "els => els.slice(0, 500).map(a => {"
@@ -732,6 +777,12 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                     "} return {href:a.href,text:parts.join('\\n').slice(0,2400)};})")
                 return text, anchors
 
+            async def read_page():
+                await page.goto(template.format(query=quote_plus(query)),
+                                wait_until="domcontentloaded", timeout=timeout_ms)
+                await page.wait_for_timeout(500)
+                return await extract_page()
+
             try:
                 limit = engine_limits.get(engine_name) if engine_limits else None
                 if limit:
@@ -742,8 +793,16 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
             except Exception:
                 attempts.append({"engine": engine_name, "outcome": "NETWORK_ERROR"})
                 continue
+            _status, challenge_unresolved = await self._resolve_human_challenge(
+                page, engine_name, None, page_text, timeout_ms)
+            if not challenge_unresolved and any(
+                    marker in page_text for marker in CHALLENGE_MARKERS):
+                try:
+                    page_text, links = await extract_page()
+                except Exception:
+                    challenge_unresolved = True
             content_hash = hashlib.sha256(page_text.encode("utf-8", "replace")).hexdigest()
-            if any(marker in page_text for marker in CHALLENGE_MARKERS):
+            if challenge_unresolved or any(marker in page_text for marker in CHALLENGE_MARKERS):
                 attempts.append({"engine": engine_name, "outcome": "HUMAN_REQUIRED"})
                 continue
             if any(marker in page_text for marker in RATE_LIMIT_MARKERS):
@@ -807,6 +866,16 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
                 body = await page.locator("body").inner_text(timeout=3000)
             except Exception:
                 pass
+            status, challenge_unresolved = await self._resolve_human_challenge(
+                page, lead.get("source") or "unknown", status,
+                f"{title}\n{body}", timeout_ms)
+            if not challenge_unresolved and any(
+                    marker in f"{title}\n{body}".casefold() for marker in CHALLENGE_MARKERS):
+                try:
+                    title = await page.title()
+                    body = await page.locator("body").inner_text(timeout=3000)
+                except Exception:
+                    pass
             final_url = safe_result_url(page.url)
             if not final_url or not host_matches(final_url, expected_host):
                 return {"state": "UNKNOWN", "reason": "RESULT_REDIRECTED_OUTSIDE_SOURCE"}
@@ -823,7 +892,7 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
             page_text = f"{title}\n{body[:100000]}".casefold()
             if status == 429 or any(marker in page_text for marker in RATE_LIMIT_MARKERS):
                 return {"state": "RATE_LIMITED", "reason": "RATE_LIMIT"}
-            if status in (401, 403) or any(marker in page_text for marker in CHALLENGE_MARKERS):
+            if challenge_unresolved or status in (401, 403) or any(marker in page_text for marker in CHALLENGE_MARKERS):
                 return {"state": "BLOCKED", "reason": "CHALLENGE_OR_ACCESS_DENIED"}
             login_surface = f"{title}\n{urlsplit(final_url).path}".casefold()
             if any(marker in login_surface for marker in LOGIN_MARKERS):
@@ -894,6 +963,11 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
         try:
             await page.goto(coccoc_search_url(f'"{username}"'), wait_until="domcontentloaded",
                             timeout=min(timeout_ms, 8000))
+            page_text = (await page.locator("body").inner_text(timeout=2000)).casefold()
+            _status, challenge_unresolved = await self._resolve_human_challenge(
+                page, SEARCH_ENGINE_NAME, None, page_text, min(timeout_ms, 8000))
+            if challenge_unresolved:
+                return apply_indexed_profile_candidates(direct_rows, {}, "SEARCH_CHALLENGE")
             links = await page.locator("a[href]").evaluate_all(
                 "els => els.slice(0, 500).map(a => ({href: a.href, text: a.innerText || a.textContent || ''}))"
             )
@@ -956,6 +1030,16 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
             await page.goto(coccoc_search_url(query),
                             wait_until="domcontentloaded", timeout=timeout_ms)
             page_text = (await page.locator("body").inner_text(timeout=2000)).casefold()
+            _status, challenge_unresolved = await self._resolve_human_challenge(
+                page, SEARCH_ENGINE_NAME, None, page_text, timeout_ms)
+            if challenge_unresolved:
+                return {"kind": "site", "source": source, "state": "BLOCKED",
+                        "reason": "SEARCH_CHALLENGE", "url": None,
+                        "search_engine": SEARCH_ENGINE_NAME,
+                        "content_sha256": hashlib.sha256(
+                            page_text.encode("utf-8", "replace")).hexdigest()}
+            if any(marker in page_text for marker in CHALLENGE_MARKERS):
+                page_text = (await page.locator("body").inner_text(timeout=2000)).casefold()
             links = await page.locator("a[href]").evaluate_all(
                 "els => els.slice(0, 500).map(a => ({href: a.href, text: a.innerText || a.textContent || ''}))"
             )
@@ -994,7 +1078,16 @@ class CocCocBrowserAdapter(BaseProviderAdapter):
 
     async def execute(self, target, lineage, **kwargs):
         started = time.perf_counter()
-        rows, reason = await self._collect(target, kwargs)
+        requested_seconds = float(kwargs.get("timeout_seconds", 180))
+        token = _browser_run_context.set({
+            "run_id": lineage.run_id,
+            "human_wait_seconds": min(120.0, max(1.0, requested_seconds - 10.0)),
+            "origin_limits": kwargs.get("origin_limits"),
+        })
+        try:
+            rows, reason = await self._collect(target, kwargs)
+        finally:
+            _browser_run_context.reset(token)
         workflow_steps = self._workflow_steps(rows, lineage, kwargs.get("browser_parent_observation_id"),
                                               kwargs.get("browser_action_id"))
         raw = "\n".join(json.dumps(row, ensure_ascii=False) for row in rows).encode("utf-8")

@@ -14,6 +14,7 @@ def client(monkeypatch):
 @pytest.mark.parametrize("path,method", [("/", "GET"), ("/api/cases", "GET"),
     ("/api/investigate", "POST"), ("/api/cases/fixture", "DELETE"),
     ("/api/cases/fixture/graph/actions/run-capability", "POST"),
+    ("/api/runs/fixture/browser-challenges/continue", "POST"),
     ("/api/providers/native_dns/test", "POST"), ("/api/settings", "POST"),
     ("/api/system/shutdown", "POST")])
 @pytest.mark.parametrize("headers", [{"host": "attacker.test:8876"},

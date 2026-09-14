@@ -96,7 +96,7 @@ async def test_origin_limits_bound_requests_and_release_cancelled_waiter():
 
 
 @pytest.mark.asyncio
-async def test_429_backoff_is_per_origin_bounded_and_does_not_add_requests():
+async def test_429_retry_after_is_honored_per_origin_and_does_not_add_requests():
     now, sleeps = [0], []
     async def sleep(delay):
         sleeps.append(delay)
@@ -107,7 +107,32 @@ async def test_429_backoff_is_per_origin_bounded_and_does_not_add_requests():
     (await limits.acquire("b")).release()
     assert not sleeps
     (await limits.acquire("a")).release()
-    assert sleeps == [30]
+    assert sleeps == [86400]
+
+
+@pytest.mark.asyncio
+async def test_origin_cooldown_survives_restart_without_storing_request_data(tmp_path):
+    now, monotonic, sleeps = [1000.0], [0.0], []
+    path = tmp_path / "origin-cooldowns.json"
+    first = OriginLimits(clock=lambda: monotonic[0], wall_clock=lambda: now[0],
+                         persistence_path=path)
+    (await first.acquire("Example.COM")).release()
+    first.feedback("Example.COM", 429, "120")
+
+    second = OriginLimits(clock=lambda: monotonic[0], wall_clock=lambda: now[0],
+                          sleep=lambda delay: _record_sleep(delay, now, sleeps),
+                          persistence_path=path)
+    (await second.acquire("example.com")).release()
+
+    assert sleeps == [120]
+    payload = path.read_text(encoding="utf-8")
+    assert "example.com" in payload
+    assert "http" not in payload and "token" not in payload and "query" not in payload
+
+
+async def _record_sleep(delay, now, sleeps):
+    sleeps.append(delay)
+    now[0] += delay
 
 
 @pytest.mark.asyncio

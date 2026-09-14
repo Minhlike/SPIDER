@@ -77,7 +77,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
-        if request.url.path.startswith("/api/settings"):
+        if (request.url.path.startswith("/api/settings")
+                or "/browser-challenges" in request.url.path):
             response.headers["Cache-Control"] = "no-store"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "

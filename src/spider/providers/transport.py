@@ -31,6 +31,8 @@ class MeteredTransport(httpx.AsyncBaseTransport):
         except BaseException:
             if response is not None:
                 await response.aclose()
+            elif self.origin_limits:
+                self.origin_limits.feedback(request.url.host, "NETWORK_ERROR")
             raise
         finally:
             if lease:

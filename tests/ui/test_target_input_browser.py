@@ -227,6 +227,35 @@ def test_per_run_stop_control_is_visible_only_for_active_run(offline_page):
     assert not errors
 
 
+def test_human_browser_checkpoint_is_clear_and_resumes_same_run(offline_page):
+    page, _, errors = offline_page
+    page.evaluate("document.getElementById('view-case_detail').classList.add('active')")
+    page.evaluate("""async () => {
+      currentRunId = 'fixture-run';
+      const originalFetch = window.fetch;
+      window.fetch = async () => ({ok: true, json: async () => ({
+        state: 'HUMAN_REQUIRED', items: [{source: 'Cốc Cốc Search'}]
+      })});
+      await loadBrowserChallengeState('fixture-run', 'RUNNING');
+      window.fetch = originalFetch;
+    }""")
+    expect(page.locator("#browser-challenge-banner")).to_be_visible()
+    expect(page.locator("#browser-challenge-message")).to_contain_text(
+        "hoàn tất kiểm tra bảo mật")
+    expect(page.locator("#btn-browser-continue")).to_have_text(
+        "Tôi đã xác nhận, tiếp tục")
+
+    page.evaluate("""async () => {
+      const originalFetch = window.fetch;
+      window.fetch = async (_url, options) => ({ok: options.method === 'POST',
+        json: async () => ({state: 'CONTINUE_REQUESTED', continued: 1})});
+      await continueBrowserChecks();
+      window.fetch = originalFetch;
+    }""")
+    expect(page.locator("#browser-challenge-banner")).to_be_hidden()
+    assert not errors
+
+
 def test_domain_report_renders_only_collected_security_and_service_facts(offline_page):
     page, _, errors = offline_page
     page.evaluate("""() => renderTypeSpecificInsights({

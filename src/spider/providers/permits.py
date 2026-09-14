@@ -56,8 +56,11 @@ class RequestPermits:
                 r"HTTP_[1-5][0-9]{2}|CONNECTION_FAILED|UNKNOWN_AFTER_DISPATCH", outcome):
             raise ValueError("Invalid request outcome")
         destination = self.destinations.pop(sequence, None)
-        if destination and self.origin_limits and outcome == "HTTP_429":
-            self.origin_limits.feedback(destination, 429)
+        if destination and self.origin_limits:
+            if outcome == "HTTP_429":
+                self.origin_limits.feedback(destination, 429)
+            elif outcome in {"CONNECTION_FAILED", "UNKNOWN_AFTER_DISPATCH"}:
+                self.origin_limits.feedback(destination, "NETWORK_ERROR")
         lease = self.leases.pop(sequence, None)
         if lease:
             lease.release()

@@ -289,6 +289,63 @@ function updateRunControls(status, resumable = false) {
   resume.disabled = false;
 }
 
+function hideBrowserChallenge() {
+  const banner = document.getElementById("browser-challenge-banner");
+  if (banner) banner.style.display = "none";
+}
+
+async function loadBrowserChallengeState(runId, status) {
+  if (!runId || !["QUEUED", "RUNNING", "PENDING"].includes(status)) {
+    hideBrowserChallenge();
+    return;
+  }
+  try {
+    const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/browser-challenges`);
+    if (!response.ok) {
+      hideBrowserChallenge();
+      return;
+    }
+    const result = await response.json();
+    const items = Array.isArray(result.items) ? result.items : [];
+    if (!items.length || runId !== currentRunId) {
+      hideBrowserChallenge();
+      return;
+    }
+    const sources = [...new Set(items.map(item => friendlyLabel(item.source)).filter(Boolean))];
+    document.getElementById("browser-challenge-message").textContent = currentLanguage === "vi"
+      ? `Cốc Cốc đang chờ bạn hoàn tất kiểm tra bảo mật${sources.length ? ` (${sources.join(", ")})` : ""}. Xử lý trong tab đang mở rồi bấm nút bên cạnh.`
+      : `Cốc Cốc is waiting for you to complete a security check${sources.length ? ` (${sources.join(", ")})` : ""}. Finish it in the open tab, then continue.`;
+    const button = document.getElementById("btn-browser-continue");
+    button.disabled = false;
+    button.textContent = currentLanguage === "vi" ? "Tôi đã xác nhận, tiếp tục" : "I am done, continue";
+    document.getElementById("browser-challenge-banner").style.display = "flex";
+  } catch (_) {
+    hideBrowserChallenge();
+  }
+}
+
+async function continueBrowserChecks() {
+  if (!currentRunId) return;
+  const button = document.getElementById("btn-browser-continue");
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/runs/${encodeURIComponent(currentRunId)}/browser-challenges/continue`, {
+      method: "POST"
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail?.message || "Continue failed");
+    hideBrowserChallenge();
+    showNotification(currentLanguage === "vi"
+      ? "SPIDER đang kiểm tra lại đúng trang vừa bị chặn."
+      : "SPIDER is rechecking the page that was blocked.");
+  } catch (_) {
+    button.disabled = false;
+    showNotification(currentLanguage === "vi"
+      ? "Tab này không còn chờ xác nhận; trạng thái sẽ được cập nhật lại."
+      : "This tab is no longer waiting; its state will refresh.");
+  }
+}
+
 async function stopCurrentRun() {
   if (!currentRunId) return;
   const button = document.getElementById("btn-stop-run");
@@ -919,6 +976,7 @@ async function loadCaseDetail(caseId) {
     statusBadge.textContent = friendlyLabel(status);
     statusBadge.className = `badge badge-${status.toLowerCase()}`;
     updateRunControls(status, insightsRes.resumable === true);
+    await loadBrowserChallengeState(currentRunId, status);
 
     const created = caseRes.created_at ? new Date(caseRes.created_at).toLocaleString() : "-";
     document.getElementById("case-meta").innerHTML = `

@@ -13,6 +13,7 @@ from spider.storage.schema import ProviderRunRecord
 from spider.models.base import utc_now
 from spider.capability.scopes import resolve_investigation_mode
 from spider.service.resume import prepare_resume, ResumeError
+from spider.providers.browser.challenges import browser_challenges
 
 router = APIRouter(tags=["Investigation"])
 
@@ -108,6 +109,40 @@ async def _broadcast_cancelled_run(service: SpiderService, case_id: str, run_id:
         "entities_count": len(entities),
         "assertions_count": len(assertions),
     })
+
+
+@router.get("/runs/{run_id}/browser-challenges", response_model=Dict[str, Any])
+async def list_browser_challenges(run_id: str, service: SpiderService = Depends(get_srv)):
+    async with service.db_manager.session_factory() as session:
+        run = await session.get(ProviderRunRecord, run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail={
+                "code": "run_not_found", "message": "Investigation run was not found",
+            })
+    items = browser_challenges.list_for_run(run_id)
+    return {"run_id": run_id,
+            "state": "HUMAN_REQUIRED" if items else "NONE",
+            "items": items}
+
+
+@router.post("/runs/{run_id}/browser-challenges/continue", response_model=Dict[str, Any])
+async def continue_browser_challenges(run_id: str, service: SpiderService = Depends(get_srv)):
+    async with service.db_manager.session_factory() as session:
+        run = await session.get(ProviderRunRecord, run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail={
+                "code": "run_not_found", "message": "Investigation run was not found",
+            })
+        if run.status not in {"QUEUED", "RUNNING"}:
+            raise HTTPException(status_code=409, detail={
+                "code": "run_not_active", "message": "Investigation run is not active",
+            })
+    continued = browser_challenges.continue_run(run_id)
+    if not continued:
+        raise HTTPException(status_code=409, detail={
+            "code": "challenge_not_pending", "message": "No browser check is waiting",
+        })
+    return {"run_id": run_id, "state": "CONTINUE_REQUESTED", "continued": continued}
 
 
 @router.post("/runs/{run_id}/stop", response_model=Dict[str, Any])
